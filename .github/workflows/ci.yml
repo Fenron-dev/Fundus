@@ -37,10 +37,13 @@ jobs:
         run: dart analyze
 
       - name: Test core
-        run: dart test packages/core
+        working-directory: packages/core
+        run: dart test
 
       - name: Test server
-        run: dart test packages/server
+        working-directory: packages/server
+        run: dart test
 
       - name: Test Flutter app
-        run: flutter test app
+        working-directory: app
+        run: flutter test

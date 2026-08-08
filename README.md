@@ -29,9 +29,9 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 ```sh
 flutter pub get
 dart analyze
-dart test packages/core
-dart test packages/server
-flutter test app
+(cd packages/core && dart test)
+(cd packages/server && dart test)
+(cd app && flutter test)
 (cd app && flutter run -d macos)
 ```
 
