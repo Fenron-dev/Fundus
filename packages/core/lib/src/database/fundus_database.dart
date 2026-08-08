@@ -5,6 +5,8 @@ import 'package:sqlite3/sqlite3.dart';
 
 import '../import/abs_importer.dart';
 import '../model/fundus_id.dart';
+import '../model/media_position.dart';
+import '../playback/library_playback.dart';
 import '../scan/library_scanner.dart';
 
 final class LibraryWorkSummary {
@@ -34,7 +36,7 @@ final class LibraryWorkSummary {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 1;
+  static const schemaVersion = 2;
 
   final Database _database;
 
@@ -64,6 +66,14 @@ final class FundusDatabase {
       [name],
     );
     return result.isNotEmpty;
+  }
+
+  bool columnExists(String table, String column) {
+    final safeTable = table.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '');
+    if (safeTable != table) return false;
+    return _database
+        .select('PRAGMA table_info($safeTable)')
+        .any((row) => row['name'] == column);
   }
 
   T transaction<T>(T Function() action) {
@@ -215,6 +225,138 @@ final class FundusDatabase {
         .toList(growable: false);
   }
 
+  List<
+    ({String fileId, String path, String title, int position, int? durationMs})
+  >
+  playbackTracks(String workId) {
+    final rows = _database.select(
+      '''
+      SELECT f.id, f.path, f.filename, wf.position, f.duration_ms
+      FROM work_files wf
+      JOIN files f ON f.id = wf.file_id
+      WHERE wf.work_id = ? AND wf.role = 'content' AND f.status = 'available'
+      ORDER BY wf.position, f.filename COLLATE NOCASE
+      ''',
+      [workId],
+    );
+    return rows
+        .map(
+          (row) => (
+            fileId: row['id'] as String,
+            path: row['path'] as String,
+            title: row['filename'] as String,
+            position: row['position'] as int,
+            durationMs: row['duration_ms'] as int?,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  LibraryPlaybackProgress? loadProgress(String workId) {
+    final rows = _database.select(
+      'SELECT * FROM progress WHERE work_id = ? AND user_id = ?',
+      [workId, 'default'],
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    return LibraryPlaybackProgress(
+      workId: workId,
+      fileId: row['file_id'] as String?,
+      position: MediaPosition.fromJson({
+        'kind': row['position_kind'] as String,
+        'numeric_value': row['numeric_value'] as num?,
+        'key': row['position_key'] as String?,
+        'label': row['position_label'] as String?,
+        'total': row['total'] as num?,
+        'file_id': row['file_id'] as String?,
+      }),
+      finished: (row['finished'] as int) == 1,
+      revision: row['revision'] as int,
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
+    );
+  }
+
+  LibraryPlaybackProgress saveProgress({
+    required String workId,
+    required String fileId,
+    required Duration position,
+    Duration? duration,
+    required bool finished,
+    required String deviceId,
+    required String operationId,
+  }) {
+    return transaction(() {
+      final processed = _database.select(
+        'SELECT 1 FROM progress_revisions WHERE operation_id = ?',
+        [operationId],
+      );
+      if (processed.isNotEmpty) {
+        return loadProgress(workId) ??
+            (throw StateError(
+              'Verarbeitete Fortschrittsoperation ohne Zustand.',
+            ));
+      }
+      final revision = (loadProgress(workId)?.revision ?? 0) + 1;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final mediaPosition = MediaPosition(
+        kind: MediaPositionKind.time,
+        numericValue: position.inMilliseconds / 1000,
+        total: duration == null ? null : duration.inMilliseconds / 1000,
+        fileId: fileId,
+      );
+      final snapshot = jsonEncode({
+        'work_id': workId,
+        'position': mediaPosition.toJson(),
+        'finished': finished,
+        'device_id': deviceId,
+      });
+      _database.execute(
+        '''
+        INSERT INTO progress (
+          work_id, user_id, file_id, position_kind, numeric_value,
+          position_key, position_label, total, finished, revision,
+          updated_at, device_id, operation_id
+        ) VALUES (?, 'default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(work_id, user_id) DO UPDATE SET
+          file_id = excluded.file_id,
+          position_kind = excluded.position_kind,
+          numeric_value = excluded.numeric_value,
+          position_key = excluded.position_key,
+          position_label = excluded.position_label,
+          total = excluded.total,
+          finished = excluded.finished,
+          revision = excluded.revision,
+          updated_at = excluded.updated_at,
+          device_id = excluded.device_id,
+          operation_id = excluded.operation_id
+        ''',
+        [
+          workId,
+          fileId,
+          mediaPosition.kind.name,
+          mediaPosition.numericValue,
+          mediaPosition.key,
+          mediaPosition.label,
+          mediaPosition.total,
+          finished ? 1 : 0,
+          revision,
+          now,
+          deviceId,
+          operationId,
+        ],
+      );
+      _database.execute(
+        '''
+        INSERT INTO progress_revisions (
+          work_id, user_id, revision, operation_id, snapshot_json, created_at
+        ) VALUES (?, 'default', ?, ?, ?, ?)
+        ''',
+        [workId, revision, operationId, snapshot, now],
+      );
+      return loadProgress(workId)!;
+    });
+  }
+
   void markUnseenFilesMissing(Set<String> seenPaths) {
     _database.execute("UPDATE files SET status = 'missing'");
     for (final path in seenPaths) {
@@ -292,6 +434,7 @@ final class FundusDatabase {
       }
       _migrateToVersion1();
     }
+    if (_database.userVersion == 1 && !readOnly) _migrateToVersion2();
   }
 
   void _migrateToVersion1() {
@@ -300,7 +443,24 @@ final class FundusDatabase {
       for (final statement in _version1Statements) {
         _database.execute(statement);
       }
-      _database.userVersion = schemaVersion;
+      _database.userVersion = 1;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  void _migrateToVersion2() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      _database.execute(
+        'ALTER TABLE progress_revisions ADD COLUMN operation_id TEXT',
+      );
+      _database.execute(
+        'CREATE UNIQUE INDEX progress_revisions_operation_idx ON progress_revisions(operation_id)',
+      );
+      _database.userVersion = 2;
       _database.execute('COMMIT');
     } catch (_) {
       _database.execute('ROLLBACK');

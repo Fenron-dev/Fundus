@@ -21,6 +21,8 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - rekursiver, abbrechbarer Dateiscan mit portablen relativen Pfaden
 - Import der ABS-Struktur `Autor/Serie/01 - Titel`
 - persistierte Serien-, Cover- und Track-Zuordnung
+- durchgehende Desktop-Audiowiedergabe mit Tracknavigation und Geschwindigkeit
+- persistenter Resume-Punkt über Dateigrenzen mit Revisionshistorie
 - responsive Flutter-Oberfläche für Desktop, Tablet und Mobile
 - Grundgerüst für den token-geschützten lokalen HTTP-Server
 
@@ -38,3 +40,7 @@ dart analyze
 Für einen nativen macOS-Build werden eine vollständige Xcode-Installation und
 CocoaPods benötigt. Die vollständige Produktspezifikation steht in
 [`Dokumentation/KONZEPT.md`](Dokumentation/KONZEPT.md).
+
+Ein nicht signierter macOS-Vorschaubuild kann außerdem manuell über den Workflow
+`Build macOS Preview` erzeugt und anschließend als Actions-Artefakt geladen
+werden.

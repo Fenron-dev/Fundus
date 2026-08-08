@@ -1,9 +1,12 @@
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 import '../database/fundus_database.dart';
 import '../import/abs_importer.dart';
 import '../model/fundus_id.dart';
 import '../model/library_manifest.dart';
+import '../playback/library_playback.dart';
 import '../scan/library_scanner.dart';
 import '../search/library_work_query.dart';
 
@@ -93,6 +96,51 @@ final class FundusLibrary {
   List<LibraryWorkSummary> searchWorks([
     LibraryWorkQuery query = const LibraryWorkQuery(),
   ]) => LibraryWorkSearch.apply(_database.listWorks(), query);
+
+  List<LibraryPlaybackTrack> playbackTracks(String workId) {
+    return _database
+        .playbackTracks(workId)
+        .map((track) {
+          final absolutePath = p.normalize(p.join(root.path, track.path));
+          if (!p.isWithin(root.path, absolutePath)) {
+            throw StateError(
+              'Unsicherer Medienpfad im Bibliotheksindex: ${track.path}',
+            );
+          }
+          return LibraryPlaybackTrack(
+            fileId: track.fileId,
+            relativePath: track.path,
+            absolutePath: absolutePath,
+            title: track.title,
+            index: track.position,
+            duration: track.durationMs == null
+                ? null
+                : Duration(milliseconds: track.durationMs!),
+          );
+        })
+        .toList(growable: false);
+  }
+
+  LibraryPlaybackProgress? loadProgress(String workId) =>
+      _database.loadProgress(workId);
+
+  LibraryPlaybackProgress saveProgress({
+    required String workId,
+    required String fileId,
+    required Duration position,
+    Duration? duration,
+    bool finished = false,
+    String deviceId = 'desktop-local',
+    String? operationId,
+  }) => _database.saveProgress(
+    workId: workId,
+    fileId: fileId,
+    position: position,
+    duration: duration,
+    finished: finished,
+    deviceId: deviceId,
+    operationId: operationId ?? FundusId.generate(),
+  );
 
   Stream<LibraryIndexEvent> index({
     LibraryScanner? scanner,

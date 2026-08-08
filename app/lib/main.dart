@@ -3,8 +3,15 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:fundus_core/fundus_core.dart';
+import 'package:media_kit/media_kit.dart';
 
-void main() => runApp(const FundusApp());
+import 'playback/fundus_player_controller.dart';
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  MediaKit.ensureInitialized();
+  runApp(const FundusApp());
+}
 
 class FundusApp extends StatefulWidget {
   const FundusApp({super.key, this.initialWorks});
@@ -22,6 +29,7 @@ class _FundusAppState extends State<FundusApp> {
   FundusLibrary? _library;
   List<LibraryWorkSummary>? _works;
   LibraryIndexEvent? _indexEvent;
+  FundusPlayerController? _player;
   String? _error;
   bool _busy = false;
 
@@ -33,6 +41,7 @@ class _FundusAppState extends State<FundusApp> {
 
   @override
   void dispose() {
+    _player?.dispose();
     _library?.close();
     super.dispose();
   }
@@ -61,6 +70,8 @@ class _FundusAppState extends State<FundusApp> {
               indexEvent: _indexEvent,
               onRescan: _library == null || _busy ? null : _scan,
               onClose: _library == null ? null : _closeLibrary,
+              player: _player,
+              onPlay: _library == null ? null : _startPlayback,
               onToggleTheme: _toggleTheme,
             ),
     );
@@ -87,6 +98,7 @@ class _FundusAppState extends State<FundusApp> {
       final library = create
           ? await FundusLibrary.create(Directory(path))
           : await FundusLibrary.open(Directory(path));
+      await _stopPlayer();
       _library?.close();
       _library = library;
       _works = library.listWorks();
@@ -119,8 +131,26 @@ class _FundusAppState extends State<FundusApp> {
     }
   }
 
-  void _closeLibrary() {
+  Future<void> _startPlayback(LibraryWorkSummary work) async {
+    final library = _library;
+    if (library == null) return;
+    final player = _player ?? FundusPlayerController();
+    if (_player == null) setState(() => _player = player);
+    await player.open(library, work);
+  }
+
+  Future<void> _stopPlayer() async {
+    final player = _player;
+    if (player == null) return;
+    await player.close();
+    player.dispose();
+    _player = null;
+  }
+
+  Future<void> _closeLibrary() async {
+    await _stopPlayer();
     _library?.close();
+    if (!mounted) return;
     setState(() {
       _library = null;
       _works = null;
@@ -256,6 +286,8 @@ class LibraryShell extends StatefulWidget {
     this.indexEvent,
     this.onRescan,
     this.onClose,
+    this.player,
+    this.onPlay,
   });
 
   final List<LibraryWorkSummary> works;
@@ -264,6 +296,8 @@ class LibraryShell extends StatefulWidget {
   final LibraryIndexEvent? indexEvent;
   final VoidCallback? onRescan;
   final VoidCallback? onClose;
+  final FundusPlayerController? player;
+  final ValueChanged<LibraryWorkSummary>? onPlay;
 
   @override
   State<LibraryShell> createState() => _LibraryShellState();
@@ -294,6 +328,9 @@ class _LibraryShellState extends State<LibraryShell> {
         ? null
         : works[_selectedIndex.clamp(0, works.length - 1)];
     return Scaffold(
+      bottomNavigationBar: widget.player == null
+          ? null
+          : _PlayerBar(controller: widget.player!),
       body: SafeArea(
         child: Column(
           children: [
@@ -312,7 +349,10 @@ class _LibraryShellState extends State<LibraryShell> {
                   const VerticalDivider(width: 1),
                   Expanded(child: _library(context)),
                   const VerticalDivider(width: 1),
-                  SizedBox(width: 368, child: _DetailPanel(work: selected)),
+                  SizedBox(
+                    width: 368,
+                    child: _DetailPanel(work: selected, onPlay: widget.onPlay),
+                  ),
                 ],
               ),
             ),
@@ -324,6 +364,9 @@ class _LibraryShellState extends State<LibraryShell> {
 
   Widget _medium(BuildContext context) {
     return Scaffold(
+      bottomNavigationBar: widget.player == null
+          ? null
+          : _PlayerBar(controller: widget.player!),
       body: SafeArea(
         child: Column(
           children: [
@@ -383,21 +426,31 @@ class _LibraryShellState extends State<LibraryShell> {
         ],
       ),
       body: pages[_mobileDestination],
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _mobileDestination,
-        onDestinationSelected: (value) =>
-            setState(() => _mobileDestination = value),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.library_books_outlined),
-            label: 'Bibliothek',
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (widget.player != null)
+            _PlayerBar(controller: widget.player!, compact: true),
+          NavigationBar(
+            selectedIndex: _mobileDestination,
+            onDestinationSelected: (value) =>
+                setState(() => _mobileDestination = value),
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.library_books_outlined),
+                label: 'Bibliothek',
+              ),
+              NavigationDestination(icon: Icon(Icons.search), label: 'Suche'),
+              NavigationDestination(
+                icon: Icon(Icons.download_outlined),
+                label: 'Downloads',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.more_horiz),
+                label: 'Mehr',
+              ),
+            ],
           ),
-          NavigationDestination(icon: Icon(Icons.search), label: 'Suche'),
-          NavigationDestination(
-            icon: Icon(Icons.download_outlined),
-            label: 'Downloads',
-          ),
-          NavigationDestination(icon: Icon(Icons.more_horiz), label: 'Mehr'),
         ],
       ),
     );
@@ -485,7 +538,10 @@ class _LibraryShellState extends State<LibraryShell> {
                             showDragHandle: true,
                             builder: (context) => FractionallySizedBox(
                               heightFactor: .82,
-                              child: _DetailPanel(work: work),
+                              child: _DetailPanel(
+                                work: work,
+                                onPlay: widget.onPlay,
+                              ),
                             ),
                           );
                         }
@@ -765,9 +821,10 @@ class _WorkCard extends StatelessWidget {
 }
 
 class _DetailPanel extends StatelessWidget {
-  const _DetailPanel({required this.work});
+  const _DetailPanel({required this.work, this.onPlay});
 
   final LibraryWorkSummary? work;
+  final ValueChanged<LibraryWorkSummary>? onPlay;
 
   @override
   Widget build(BuildContext context) {
@@ -792,7 +849,7 @@ class _DetailPanel extends StatelessWidget {
         Text('${selectedWork.fileCount} Mediendatei(en)'),
         const SizedBox(height: 12),
         FilledButton.icon(
-          onPressed: () {},
+          onPressed: onPlay == null ? null : () => onPlay!(selectedWork),
           icon: const Icon(Icons.play_arrow),
           label: const Text('Weiterhören'),
         ),
@@ -824,6 +881,199 @@ class _DetailPanel extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+class _PlayerBar extends StatelessWidget {
+  const _PlayerBar({required this.controller, this.compact = false});
+
+  final FundusPlayerController controller;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, child) {
+        final work = controller.work;
+        final track = controller.track;
+        final maximum = controller.duration.inMilliseconds.toDouble();
+        final current = controller.position.inMilliseconds
+            .clamp(0, maximum > 0 ? maximum : 1)
+            .toDouble();
+        if (compact) {
+          return Material(
+            elevation: 3,
+            child: SizedBox(
+              height: 68,
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: controller.loading
+                        ? null
+                        : controller.playOrPause,
+                    icon: controller.loading
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            controller.playing ? Icons.pause : Icons.play_arrow,
+                          ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          work?.title ?? 'Wiedergabe',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Text(
+                          '${track?.title ?? ''} · ${_time(controller.position)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: controller.next,
+                    tooltip: 'Nächster Track',
+                    icon: const Icon(Icons.skip_next),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+        return Material(
+          elevation: 4,
+          child: SizedBox(
+            height: controller.error == null ? 88 : 112,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Column(
+                children: [
+                  Expanded(
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 210,
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                work?.title ?? 'Wiedergabe',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Text(
+                                track?.title ?? '',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: controller.previous,
+                          tooltip: 'Vorheriger Track',
+                          icon: const Icon(Icons.skip_previous),
+                        ),
+                        IconButton(
+                          onPressed: () => controller.seekRelative(
+                            const Duration(seconds: -15),
+                          ),
+                          tooltip: '15 Sekunden zurück',
+                          icon: const Icon(Icons.replay_10),
+                        ),
+                        IconButton.filled(
+                          onPressed: controller.loading
+                              ? null
+                              : controller.playOrPause,
+                          tooltip: controller.playing ? 'Pause' : 'Abspielen',
+                          icon: controller.loading
+                              ? const SizedBox.square(
+                                  dimension: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Icon(
+                                  controller.playing
+                                      ? Icons.pause
+                                      : Icons.play_arrow,
+                                ),
+                        ),
+                        IconButton(
+                          onPressed: () => controller.seekRelative(
+                            const Duration(seconds: 30),
+                          ),
+                          tooltip: '30 Sekunden vor',
+                          icon: const Icon(Icons.forward_30),
+                        ),
+                        IconButton(
+                          onPressed: controller.next,
+                          tooltip: 'Nächster Track',
+                          icon: const Icon(Icons.skip_next),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(_time(controller.position)),
+                        Expanded(
+                          child: Slider(
+                            value: current,
+                            max: maximum > 0 ? maximum : 1,
+                            onChanged: maximum <= 0
+                                ? null
+                                : (value) => controller.seek(
+                                    Duration(milliseconds: value.round()),
+                                  ),
+                          ),
+                        ),
+                        Text(_time(controller.duration)),
+                        const SizedBox(width: 8),
+                        PopupMenuButton<double>(
+                          tooltip: 'Geschwindigkeit',
+                          initialValue: controller.rate,
+                          onSelected: controller.setRate,
+                          itemBuilder: (context) => [
+                            for (final rate in const [.75, 1.0, 1.25, 1.5, 2.0])
+                              PopupMenuItem(value: rate, child: Text('$rate×')),
+                          ],
+                          child: Chip(label: Text('${controller.rate}×')),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (controller.error case final error?)
+                    Text(
+                      error,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  static String _time(Duration duration) {
+    final hours = duration.inHours;
+    final minutes = (duration.inMinutes % 60).toString().padLeft(2, '0');
+    final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
+    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
   }
 }
 

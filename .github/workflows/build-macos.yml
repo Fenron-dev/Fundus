@@ -1,0 +1,48 @@
+name: Build macOS Preview
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-macos-preview
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.23.0
+        with:
+          flutter-version: 3.41.4
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Build macOS release
+        working-directory: app
+        run: flutter build macos --release
+
+      - name: Package application
+        working-directory: app
+        run: >-
+          ditto -c -k --sequesterRsrc --keepParent
+          build/macos/Build/Products/Release/fundus.app
+          Fundus-macOS.zip
+
+      - name: Upload preview
+        uses: actions/upload-artifact@v7
+        with:
+          name: Fundus-macOS-${{ github.sha }}
+          path: app/Fundus-macOS.zip
+          if-no-files-found: error
+          retention-days: 14

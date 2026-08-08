@@ -26,12 +26,38 @@ void main() {
     expect(works.single.seriesSequence, 1);
     expect(works.single.fileCount, 2);
     expect(works.single.coverPath, endsWith('cover.jpg'));
+
+    final tracks = library.playbackTracks(works.single.id);
+    expect(tracks.map((track) => track.title), [
+      '01 - Kapitel.mp3',
+      '02 - Kapitel.mp3',
+    ]);
+    final saved = library.saveProgress(
+      workId: works.single.id,
+      fileId: tracks[1].fileId,
+      position: const Duration(minutes: 12, seconds: 7),
+      duration: const Duration(minutes: 30),
+      operationId: 'playback-operation-1',
+    );
+    expect(saved.revision, 1);
+    expect(saved.position.displayValue, '00:12:07');
+    final duplicate = library.saveProgress(
+      workId: works.single.id,
+      fileId: tracks[1].fileId,
+      position: const Duration(minutes: 20),
+      operationId: 'playback-operation-1',
+    );
+    expect(duplicate.revision, 1);
+    expect(duplicate.position.displayValue, '00:12:07');
     library.close();
 
     final reopened = await FundusLibrary.open(root);
     addTearDown(reopened.close);
     expect(reopened.manifest.libraryId, isNotEmpty);
     expect(reopened.listWorks().single.title, 'Winnetou I');
+    final resumed = reopened.loadProgress(works.single.id)!;
+    expect(resumed.fileId, tracks[1].fileId);
+    expect(resumed.position.displayValue, '00:12:07');
   });
 
   test('open rejects a directory without a manifest', () async {
