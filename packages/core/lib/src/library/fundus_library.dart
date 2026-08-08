@@ -5,6 +5,7 @@ import '../import/abs_importer.dart';
 import '../model/fundus_id.dart';
 import '../model/library_manifest.dart';
 import '../scan/library_scanner.dart';
+import '../search/library_work_query.dart';
 
 enum LibraryIndexPhase { scanning, importing, completed, cancelled }
 
@@ -88,6 +89,10 @@ final class FundusLibrary {
   }
 
   List<LibraryWorkSummary> listWorks() => _database.listWorks();
+
+  List<LibraryWorkSummary> searchWorks([
+    LibraryWorkQuery query = const LibraryWorkQuery(),
+  ]) => LibraryWorkSearch.apply(_database.listWorks(), query);
 
   Stream<LibraryIndexEvent> index({
     LibraryScanner? scanner,

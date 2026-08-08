@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/main.dart';
 import 'package:fundus_core/fundus_core.dart';
 
-const testWorks = [
+final testWorks = [
   LibraryWorkSummary(
     id: 'work-1',
     kind: 'audiobook',
@@ -11,6 +11,15 @@ const testWorks = [
     author: 'Karl May',
     series: 'Winnetou',
     fileCount: 2,
+    addedAt: DateTime(2026),
+  ),
+  LibraryWorkSummary(
+    id: 'work-2',
+    kind: 'audiobook',
+    title: 'Der Ölprinz',
+    author: 'Karl May',
+    fileCount: 1,
+    addedAt: DateTime(2026, 2),
   ),
 ];
 
@@ -23,7 +32,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(const FundusApp(initialWorks: testWorks));
+    await tester.pumpWidget(FundusApp(initialWorks: testWorks));
     await tester.pumpAndSettle();
 
     expect(find.text('Fundus'), findsOneWidget);
@@ -39,7 +48,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(const FundusApp(initialWorks: testWorks));
+    await tester.pumpWidget(FundusApp(initialWorks: testWorks));
     await tester.pumpAndSettle();
 
     expect(find.text('Weiterhören'), findsNothing);
@@ -52,5 +61,20 @@ void main() {
 
     expect(find.text('Bibliothek anlegen'), findsOneWidget);
     expect(find.text('Bibliothek öffnen'), findsOneWidget);
+  });
+
+  testWidgets('desktop search tolerates a misspelled title', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(FundusApp(initialWorks: testWorks));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(SearchBar), 'Winetu');
+    await tester.pump();
+
+    expect(find.text('Winnetou I'), findsWidgets);
+    expect(find.text('Der Ölprinz'), findsNothing);
   });
 }

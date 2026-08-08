@@ -270,8 +270,12 @@ class LibraryShell extends StatefulWidget {
 }
 
 class _LibraryShellState extends State<LibraryShell> {
-  int _selectedIndex = 2;
+  int _selectedIndex = 0;
   int _mobileDestination = 0;
+  LibraryWorkQuery _query = const LibraryWorkQuery();
+
+  List<LibraryWorkSummary> get _visibleWorks =>
+      LibraryWorkSearch.apply(widget.works, _query);
 
   @override
   Widget build(BuildContext context) {
@@ -285,9 +289,10 @@ class _LibraryShellState extends State<LibraryShell> {
   }
 
   Widget _desktop(BuildContext context) {
-    final selected = widget.works.isEmpty
+    final works = _visibleWorks;
+    final selected = works.isEmpty
         ? null
-        : widget.works[_selectedIndex.clamp(0, widget.works.length - 1)];
+        : works[_selectedIndex.clamp(0, works.length - 1)];
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -298,6 +303,7 @@ class _LibraryShellState extends State<LibraryShell> {
               indexEvent: widget.indexEvent,
               onRescan: widget.onRescan,
               onClose: widget.onClose,
+              onSearch: _setSearch,
             ),
             Expanded(
               child: Row(
@@ -327,6 +333,7 @@ class _LibraryShellState extends State<LibraryShell> {
               indexEvent: widget.indexEvent,
               onRescan: widget.onRescan,
               onClose: widget.onClose,
+              onSearch: _setSearch,
             ),
             Expanded(
               child: Row(
@@ -360,7 +367,7 @@ class _LibraryShellState extends State<LibraryShell> {
   Widget _mobile(BuildContext context) {
     final pages = [
       _library(context, detailAsDialog: true),
-      const Center(child: Text('Suche und Filter')),
+      _library(context, detailAsDialog: true, showSearch: true),
       const Center(child: Text('Downloads')),
       const Center(child: Text('Einstellungen')),
     ];
@@ -396,9 +403,23 @@ class _LibraryShellState extends State<LibraryShell> {
     );
   }
 
-  Widget _library(BuildContext context, {bool detailAsDialog = false}) {
+  Widget _library(
+    BuildContext context, {
+    bool detailAsDialog = false,
+    bool showSearch = false,
+  }) {
+    final works = _visibleWorks;
     return Column(
       children: [
+        if (showSearch)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: SearchBar(
+              leading: const Icon(Icons.search),
+              hintText: 'Titel, Person oder Serie …',
+              onChanged: _setSearch,
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
           child: Row(
@@ -408,26 +429,39 @@ class _LibraryShellState extends State<LibraryShell> {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const Spacer(),
+              _MediaFilterButton(
+                selectedKinds: _query.kinds,
+                onChanged: _setKinds,
+              ),
+              const SizedBox(width: 8),
               MenuAnchor(
                 builder: (context, controller, child) => OutlinedButton.icon(
                   onPressed: controller.isOpen
                       ? controller.close
                       : controller.open,
                   icon: const Icon(Icons.sort, size: 18),
-                  label: const Text('Zuletzt gehört'),
+                  label: Text(_sortLabel(_query.sort)),
                 ),
-                menuChildren: const [
-                  MenuItemButton(child: Text('Titel A–Z')),
-                  MenuItemButton(child: Text('Bewertung')),
-                  MenuItemButton(child: Text('Fortschritt')),
+                menuChildren: [
+                  for (final sort in LibraryWorkSort.values)
+                    MenuItemButton(
+                      onPressed: () => _setSort(sort),
+                      leadingIcon: _query.sort == sort
+                          ? const Icon(Icons.check)
+                          : const SizedBox(width: 24),
+                      child: Text(_sortLabel(sort)),
+                    ),
                 ],
               ),
             ],
           ),
         ),
         Expanded(
-          child: widget.works.isEmpty
-              ? const _EmptyLibrary()
+          child: works.isEmpty
+              ? _EmptyLibrary(
+                  searchActive:
+                      _query.text.isNotEmpty || _query.kinds.isNotEmpty,
+                )
               : GridView.builder(
                   padding: const EdgeInsets.all(16),
                   gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
@@ -436,9 +470,9 @@ class _LibraryShellState extends State<LibraryShell> {
                     mainAxisSpacing: 14,
                     crossAxisSpacing: 14,
                   ),
-                  itemCount: widget.works.length,
+                  itemCount: works.length,
                   itemBuilder: (context, index) {
-                    final work = widget.works[index];
+                    final work = works[index];
                     return _WorkCard(
                       work: work,
                       selected: !detailAsDialog && index == _selectedIndex,
@@ -463,6 +497,29 @@ class _LibraryShellState extends State<LibraryShell> {
       ],
     );
   }
+
+  void _setSearch(String value) => setState(() {
+    _selectedIndex = 0;
+    _query = _query.copyWith(text: value);
+  });
+
+  void _setKinds(Set<String> value) => setState(() {
+    _selectedIndex = 0;
+    _query = _query.copyWith(kinds: value);
+  });
+
+  void _setSort(LibraryWorkSort value) => setState(() {
+    _selectedIndex = 0;
+    _query = _query.copyWith(sort: value);
+  });
+
+  static String _sortLabel(LibraryWorkSort sort) => switch (sort) {
+    LibraryWorkSort.relevance => 'Relevanz',
+    LibraryWorkSort.recentlyAdded => 'Zuletzt hinzugefügt',
+    LibraryWorkSort.title => 'Titel A–Z',
+    LibraryWorkSort.author => 'Autor A–Z',
+    LibraryWorkSort.series => 'Serie & Reihenfolge',
+  };
 }
 
 class _TopBar extends StatelessWidget {
@@ -472,6 +529,7 @@ class _TopBar extends StatelessWidget {
     this.indexEvent,
     this.onRescan,
     this.onClose,
+    required this.onSearch,
   });
 
   final VoidCallback onToggleTheme;
@@ -479,6 +537,7 @@ class _TopBar extends StatelessWidget {
   final LibraryIndexEvent? indexEvent;
   final VoidCallback? onRescan;
   final VoidCallback? onClose;
+  final ValueChanged<String> onSearch;
 
   @override
   Widget build(BuildContext context) {
@@ -495,11 +554,12 @@ class _TopBar extends StatelessWidget {
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const Spacer(),
-            const SizedBox(
+            SizedBox(
               width: 320,
               child: SearchBar(
-                leading: Icon(Icons.search),
+                leading: const Icon(Icons.search),
                 hintText: 'Suchen und filtern …',
+                onChanged: onSearch,
               ),
             ),
             if (indexEvent != null)
@@ -526,6 +586,61 @@ class _TopBar extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _MediaFilterButton extends StatelessWidget {
+  const _MediaFilterButton({
+    required this.selectedKinds,
+    required this.onChanged,
+  });
+
+  final Set<String> selectedKinds;
+  final ValueChanged<Set<String>> onChanged;
+
+  static const kinds = {
+    'audiobook': 'Hörbücher',
+    'video': 'Videos',
+    'ebook': 'E-Books',
+    'image': 'Bilder',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return MenuAnchor(
+      builder: (context, controller, child) => IconButton.filledTonal(
+        onPressed: controller.isOpen ? controller.close : controller.open,
+        tooltip: 'Medientyp filtern',
+        icon: Badge(
+          isLabelVisible: selectedKinds.isNotEmpty,
+          label: Text('${selectedKinds.length}'),
+          child: const Icon(Icons.filter_list),
+        ),
+      ),
+      menuChildren: [
+        MenuItemButton(
+          onPressed: () => onChanged({}),
+          leadingIcon: selectedKinds.isEmpty
+              ? const Icon(Icons.check)
+              : const SizedBox(width: 24),
+          child: const Text('Alle Medientypen'),
+        ),
+        for (final entry in kinds.entries)
+          MenuItemButton(
+            onPressed: () {
+              final next = {...selectedKinds};
+              next.contains(entry.key)
+                  ? next.remove(entry.key)
+                  : next.add(entry.key);
+              onChanged(next);
+            },
+            leadingIcon: selectedKinds.contains(entry.key)
+                ? const Icon(Icons.check)
+                : const SizedBox(width: 24),
+            child: Text(entry.value),
+          ),
+      ],
     );
   }
 }
@@ -713,14 +828,18 @@ class _DetailPanel extends StatelessWidget {
 }
 
 class _EmptyLibrary extends StatelessWidget {
-  const _EmptyLibrary();
+  const _EmptyLibrary({this.searchActive = false});
+
+  final bool searchActive;
 
   @override
-  Widget build(BuildContext context) => const Center(
+  Widget build(BuildContext context) => Center(
     child: Padding(
-      padding: EdgeInsets.all(32),
+      padding: const EdgeInsets.all(32),
       child: Text(
-        'Noch keine unterstützten Medien gefunden.\nLege Hörbücher nach Autor/Serie/01 - Titel ab und lies den Ordner neu ein.',
+        searchActive
+            ? 'Keine Medien passen zu dieser Suche und den aktiven Filtern.'
+            : 'Noch keine unterstützten Medien gefunden.\nLege Hörbücher nach Autor/Serie/01 - Titel ab und lies den Ordner neu ein.',
         textAlign: TextAlign.center,
       ),
     ),

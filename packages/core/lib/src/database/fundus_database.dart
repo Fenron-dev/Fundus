@@ -14,6 +14,7 @@ final class LibraryWorkSummary {
     required this.title,
     required this.author,
     required this.fileCount,
+    required this.addedAt,
     this.series,
     this.seriesSequence,
     this.coverPath,
@@ -24,6 +25,7 @@ final class LibraryWorkSummary {
   final String title;
   final String author;
   final int fileCount;
+  final DateTime addedAt;
   final String? series;
   final double? seriesSequence;
   final String? coverPath;
@@ -180,7 +182,7 @@ final class FundusDatabase {
 
   List<LibraryWorkSummary> listWorks() {
     final rows = _database.select('''
-      SELECT w.id, w.kind, w.title, w.series_name, w.series_sequence,
+      SELECT w.id, w.kind, w.title, w.series_name, w.series_sequence, w.added_at,
              w.metadata_json, COUNT(wf.file_id) AS file_count,
              cover.path AS cover_path
       FROM works w
@@ -204,6 +206,9 @@ final class FundusDatabase {
             series: row['series_name'] as String?,
             seriesSequence: (row['series_sequence'] as num?)?.toDouble(),
             fileCount: row['file_count'] as int,
+            addedAt: DateTime.fromMillisecondsSinceEpoch(
+              row['added_at'] as int,
+            ),
             coverPath: row['cover_path'] as String?,
           );
         })
