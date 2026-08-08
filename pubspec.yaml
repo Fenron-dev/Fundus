@@ -1,0 +1,11 @@
+name: fundus_workspace
+description: Local-first media library workspace.
+publish_to: none
+
+environment:
+  sdk: ^3.11.1
+
+workspace:
+  - app
+  - packages/core
+  - packages/server

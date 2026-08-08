@@ -1,0 +1,17 @@
+name: fundus_core
+description: Platform-independent Fundus model, database, scanner and import.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.11.1
+
+resolution: workspace
+
+dependencies:
+  path: ^1.9.1
+  sqlite3: ^3.1.1
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.30.0

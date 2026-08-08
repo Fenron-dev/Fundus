@@ -1,0 +1,40 @@
+# Fundus
+
+Fundus ist eine lokale, portable Medienbibliothek für Desktop und Android. Die
+Desktop-App soll Bibliotheken zusätzlich für gekoppelte Geräte im lokalen Netz
+bereitstellen.
+
+## Workspace
+
+- `app/` — Flutter desktop and Android application
+- `packages/core/` — platform-independent model, database, scanner and import
+- `packages/server/` — embedded Shelf HTTP server
+- `Dokumentation/` — product concept and design source
+
+## Aktueller Stand
+
+Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
+
+- Bibliothek in einem Medienordner anlegen oder erneut öffnen
+- versioniertes Manifest unter `.library/version.json`
+- transaktionaler SQLite-Index unter `.library/index.db`
+- rekursiver, abbrechbarer Dateiscan mit portablen relativen Pfaden
+- Import der ABS-Struktur `Autor/Serie/01 - Titel`
+- persistierte Serien-, Cover- und Track-Zuordnung
+- responsive Flutter-Oberfläche für Desktop, Tablet und Mobile
+- Grundgerüst für den token-geschützten lokalen HTTP-Server
+
+## Entwicklung
+
+```sh
+flutter pub get
+dart analyze
+dart test packages/core
+dart test packages/server
+flutter test app
+(cd app && flutter run -d macos)
+```
+
+Für einen nativen macOS-Build werden eine vollständige Xcode-Installation und
+CocoaPods benötigt. Die vollständige Produktspezifikation steht in
+[`Dokumentation/KONZEPT.md`](Dokumentation/KONZEPT.md).
