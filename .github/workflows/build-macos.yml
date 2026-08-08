@@ -32,10 +32,16 @@ jobs:
         working-directory: app
         run: flutter build macos --release
 
+      - name: Verify application signature
+        working-directory: app
+        run: |
+          xattr -cr build/macos/Build/Products/Release/fundus.app
+          codesign --verify --deep --strict --verbose=2 build/macos/Build/Products/Release/fundus.app
+
       - name: Package application
         working-directory: app
         run: >-
-          ditto -c -k --sequesterRsrc --keepParent
+          ditto -c -k --keepParent
           build/macos/Build/Products/Release/fundus.app
           Fundus-macOS.zip
 
