@@ -856,32 +856,49 @@ class _DetailPanel extends StatelessWidget {
         const SizedBox(height: 20),
         Text('Erreichbar über', style: Theme.of(context).textTheme.labelMedium),
         const SizedBox(height: 8),
-        const Wrap(
+        Wrap(
           spacing: 6,
           runSpacing: 6,
           children: [
-            Chip(label: Text('Serie: Winnetou')),
-            Chip(label: Text('Autor: Karl May')),
-            Chip(label: Text('#Abenteuer')),
+            Chip(label: Text('Autor: ${selectedWork.author}')),
+            if (selectedWork.series case final series?)
+              Chip(
+                label: Text(
+                  selectedWork.seriesSequence == null
+                      ? 'Serie: $series'
+                      : 'Serie: $series · Band ${_sequence(selectedWork.seriesSequence!)}',
+                ),
+              ),
           ],
         ),
         const SizedBox(height: 20),
-        Text('Lesezeichen', style: Theme.of(context).textTheme.titleSmall),
-        const ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: Text('42:08'),
-          title: Text('Versammlung der Apachen'),
+        Text('Tags', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 6),
+        Text(
+          'Noch keine Tags vergeben.',
+          style: Theme.of(context).textTheme.bodySmall,
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 20),
+        Text('Lesezeichen', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 6),
+        Text(
+          'Noch keine Lesezeichen vorhanden.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 20),
         Text('Notizen', style: Theme.of(context).textTheme.titleSmall),
-        const TextField(
-          minLines: 4,
-          maxLines: 8,
-          decoration: InputDecoration(hintText: 'Notiz schreiben …'),
+        const SizedBox(height: 6),
+        Text(
+          'Noch keine Notizen vorhanden.',
+          style: Theme.of(context).textTheme.bodySmall,
         ),
       ],
     );
   }
+
+  static String _sequence(double value) => value == value.roundToDouble()
+      ? value.toInt().toString()
+      : value.toString().replaceAll('.', ',');
 }
 
 class _PlayerBar extends StatelessWidget {

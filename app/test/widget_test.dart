@@ -77,4 +77,34 @@ void main() {
     expect(find.text('Winnetou I'), findsWidgets);
     expect(find.text('Der Ölprinz'), findsNothing);
   });
+
+  testWidgets('detail panel uses work metadata instead of demo values', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final works = [
+      LibraryWorkSummary(
+        id: 'monster-arts',
+        kind: 'audiobook',
+        title: 'Master of Monster Arts',
+        author: 'Aaron Oster',
+        series: 'Master of Monster Arts',
+        seriesSequence: 1,
+        fileCount: 1,
+        addedAt: DateTime(2026),
+      ),
+    ];
+
+    await tester.pumpWidget(FundusApp(initialWorks: works));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Autor: Aaron Oster'), findsOneWidget);
+    expect(find.text('Serie: Master of Monster Arts · Band 1'), findsOneWidget);
+    expect(find.text('#Abenteuer'), findsNothing);
+    expect(find.text('Versammlung der Apachen'), findsNothing);
+    expect(find.text('Noch keine Tags vergeben.'), findsOneWidget);
+  });
 }
