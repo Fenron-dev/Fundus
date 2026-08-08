@@ -5,6 +5,8 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:media_kit/media_kit.dart';
 
 final class FundusPlayerController extends ChangeNotifier {
+  static const progressPersistInterval = Duration(seconds: 5);
+
   FundusPlayerController() : _player = Player() {
     _subscriptions.addAll([
       _player.stream.playing.listen((value) {
@@ -17,7 +19,7 @@ final class FundusPlayerController extends ChangeNotifier {
         notifyListeners();
         if (_ready && _playing && _lastPersistedAt != null) {
           final elapsed = DateTime.now().difference(_lastPersistedAt!);
-          if (elapsed >= const Duration(seconds: 30)) unawaited(persist());
+          if (elapsed >= progressPersistInterval) unawaited(persist());
         }
       }),
       _player.stream.duration.listen((value) {
@@ -102,7 +104,9 @@ final class FundusPlayerController extends ChangeNotifier {
       );
       if (progress != null && !progress.finished) {
         final seconds = progress.position.numericValue ?? 0;
-        await _player.seek(Duration(milliseconds: (seconds * 1000).round()));
+        final resumePosition = Duration(milliseconds: (seconds * 1000).round());
+        await _player.seek(resumePosition);
+        _position = resumePosition;
       }
       _ready = true;
       _loading = false;
@@ -136,16 +140,17 @@ final class FundusPlayerController extends ChangeNotifier {
 
   Future<void> seek(Duration value) => _player.seek(value);
 
-  Future<void> seekRelative(Duration delta) {
+  Future<void> seekRelative(Duration delta) async {
     final target = _position + delta;
     final maximum = _duration;
-    return _player.seek(
+    await _player.seek(
       target < Duration.zero
           ? Duration.zero
           : maximum > Duration.zero && target > maximum
           ? maximum
           : target,
     );
+    await persist();
   }
 
   Future<void> setRate(double value) async {

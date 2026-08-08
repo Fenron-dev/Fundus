@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show AppExitResponse;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -32,15 +34,26 @@ class _FundusAppState extends State<FundusApp> {
   FundusPlayerController? _player;
   String? _error;
   bool _busy = false;
+  late final AppLifecycleListener _lifecycleListener;
 
   @override
   void initState() {
     super.initState();
     _works = widget.initialWorks;
+    _lifecycleListener = AppLifecycleListener(
+      onInactive: () => unawaited(_player?.persist()),
+      onHide: () => unawaited(_player?.persist()),
+      onPause: () => unawaited(_player?.persist()),
+      onExitRequested: () async {
+        await _player?.persist();
+        return AppExitResponse.exit;
+      },
+    );
   }
 
   @override
   void dispose() {
+    _lifecycleListener.dispose();
     _player?.dispose();
     _library?.close();
     super.dispose();
@@ -797,9 +810,7 @@ class _WorkCard extends StatelessWidget {
                     ),
                     child: Stack(
                       fit: StackFit.expand,
-                      children: [
-                        const Center(child: Icon(Icons.music_note, size: 42)),
-                      ],
+                      children: [_WorkCover(work: work, iconSize: 42)],
                     ),
                   ),
                 ),
@@ -834,7 +845,15 @@ class _DetailPanel extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       children: [
         const SizedBox(height: 8),
-        const Icon(Icons.music_note, size: 72),
+        Center(
+          child: SizedBox.square(
+            dimension: 180,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: _WorkCover(work: selectedWork, iconSize: 72),
+            ),
+          ),
+        ),
         const SizedBox(height: 12),
         Text(
           selectedWork.title,
@@ -899,6 +918,28 @@ class _DetailPanel extends StatelessWidget {
   static String _sequence(double value) => value == value.roundToDouble()
       ? value.toInt().toString()
       : value.toString().replaceAll('.', ',');
+}
+
+class _WorkCover extends StatelessWidget {
+  const _WorkCover({required this.work, required this.iconSize});
+
+  final LibraryWorkSummary work;
+  final double iconSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final path = work.coverPath;
+    if (path == null || path.isEmpty) return _placeholder();
+    return Image.file(
+      File(path),
+      fit: BoxFit.cover,
+      filterQuality: FilterQuality.medium,
+      errorBuilder: (context, error, stackTrace) => _placeholder(),
+    );
+  }
+
+  Widget _placeholder() =>
+      Center(child: Icon(Icons.music_note, size: iconSize));
 }
 
 class _PlayerBar extends StatelessWidget {
@@ -1051,6 +1092,9 @@ class _PlayerBar extends StatelessWidget {
                                 : (value) => controller.seek(
                                     Duration(milliseconds: value.round()),
                                   ),
+                            onChangeEnd: maximum <= 0
+                                ? null
+                                : (_) => controller.persist(),
                           ),
                         ),
                         Text(_time(controller.duration)),

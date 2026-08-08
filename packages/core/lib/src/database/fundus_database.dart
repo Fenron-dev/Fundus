@@ -36,7 +36,7 @@ final class LibraryWorkSummary {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 2;
+  static const schemaVersion = 3;
 
   final Database _database;
 
@@ -148,6 +148,9 @@ final class FundusDatabase {
       seriesSequence: identity.sequence,
       metadata: {'author': identity.author},
     );
+    _database.execute('UPDATE works SET cover_file_id = NULL WHERE id = ?', [
+      workId,
+    ]);
     _database.execute('DELETE FROM work_files WHERE work_id = ?', [workId]);
     for (var index = 0; index < candidate.audioFiles.length; index++) {
       final file = candidate.audioFiles[index];
@@ -190,11 +193,18 @@ final class FundusDatabase {
     return workId;
   }
 
+  void setGeneratedCoverPath(String workId, String? path) {
+    _database.execute(
+      'UPDATE works SET generated_cover_path = ? WHERE id = ?',
+      [path, workId],
+    );
+  }
+
   List<LibraryWorkSummary> listWorks() {
     final rows = _database.select('''
       SELECT w.id, w.kind, w.title, w.series_name, w.series_sequence, w.added_at,
              w.metadata_json, COUNT(wf.file_id) AS file_count,
-             cover.path AS cover_path
+             COALESCE(cover.path, w.generated_cover_path) AS cover_path
       FROM works w
       LEFT JOIN work_files wf ON wf.work_id = w.id AND wf.role = 'content'
       LEFT JOIN files cover ON cover.id = w.cover_file_id
@@ -435,6 +445,7 @@ final class FundusDatabase {
       _migrateToVersion1();
     }
     if (_database.userVersion == 1 && !readOnly) _migrateToVersion2();
+    if (_database.userVersion == 2 && !readOnly) _migrateToVersion3();
   }
 
   void _migrateToVersion1() {
@@ -461,6 +472,20 @@ final class FundusDatabase {
         'CREATE UNIQUE INDEX progress_revisions_operation_idx ON progress_revisions(operation_id)',
       );
       _database.userVersion = 2;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  void _migrateToVersion3() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      _database.execute(
+        'ALTER TABLE works ADD COLUMN generated_cover_path TEXT',
+      );
+      _database.userVersion = 3;
       _database.execute('COMMIT');
     } catch (_) {
       _database.execute('ROLLBACK');

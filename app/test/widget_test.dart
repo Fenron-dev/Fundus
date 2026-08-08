@@ -93,6 +93,7 @@ void main() {
         author: 'Aaron Oster',
         series: 'Master of Monster Arts',
         seriesSequence: 1,
+        coverPath: '/tmp/fundus-test-cover.jpg',
         fileCount: 1,
         addedAt: DateTime(2026),
       ),
@@ -106,5 +107,6 @@ void main() {
     expect(find.text('#Abenteuer'), findsNothing);
     expect(find.text('Versammlung der Apachen'), findsNothing);
     expect(find.text('Noch keine Tags vergeben.'), findsOneWidget);
+    expect(find.byType(Image), findsWidgets);
   });
 }

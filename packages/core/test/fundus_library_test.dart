@@ -55,9 +55,30 @@ void main() {
     addTearDown(reopened.close);
     expect(reopened.manifest.libraryId, isNotEmpty);
     expect(reopened.listWorks().single.title, 'Winnetou I');
-    final resumed = reopened.loadProgress(works.single.id)!;
+    await reopened.index().drain<void>();
+    final rescannedWork = reopened.listWorks().single;
+    expect(rescannedWork.id, works.single.id);
+    final resumed = reopened.loadProgress(rescannedWork.id)!;
     expect(resumed.fileId, tracks[1].fileId);
     expect(resumed.position.displayValue, '00:12:07');
+  });
+
+  test('caches and resolves embedded M4B artwork', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-artwork-');
+    addTearDown(() => root.delete(recursive: true));
+    final book = Directory('${root.path}/Autor/Serie/01 - Titel');
+    await book.create(recursive: true);
+    await File('${book.path}/Titel.m4b').writeAsBytes(_m4bWithJpegCover());
+
+    final library = await FundusLibrary.create(root);
+    addTearDown(library.close);
+    await library.index().drain<void>();
+
+    final coverPath = library.listWorks().single.coverPath;
+    expect(coverPath, isNotNull);
+    expect(coverPath, endsWith('.jpg'));
+    final coverBytes = await File(coverPath!).readAsBytes();
+    expect(coverBytes.sublist(0, 3), [0xff, 0xd8, 0xff]);
   });
 
   test('open rejects a directory without a manifest', () async {
@@ -66,4 +87,47 @@ void main() {
 
     expect(() => FundusLibrary.open(root), throwsA(isA<FileSystemException>()));
   });
+}
+
+List<int> _m4bWithJpegCover() => _atom('moov', [
+  ..._atom('udta', [
+    ..._atom('meta', [
+      0,
+      0,
+      0,
+      0,
+      ..._atom('ilst', [
+        ..._atom('covr', [
+          ..._atom('data', [
+            0,
+            0,
+            0,
+            13,
+            0,
+            0,
+            0,
+            0,
+            0xff,
+            0xd8,
+            0xff,
+            0xe0,
+            0xff,
+            0xd9,
+          ]),
+        ]),
+      ]),
+    ]),
+  ]),
+]);
+
+List<int> _atom(String type, List<int> payload) {
+  final size = payload.length + 8;
+  return [
+    size >> 24,
+    (size >> 16) & 0xff,
+    (size >> 8) & 0xff,
+    size & 0xff,
+    ...type.codeUnits,
+    ...payload,
+  ];
 }

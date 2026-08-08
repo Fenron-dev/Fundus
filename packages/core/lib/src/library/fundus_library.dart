@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 
 import '../database/fundus_database.dart';
 import '../import/abs_importer.dart';
+import '../import/embedded_cover.dart';
 import '../model/fundus_id.dart';
 import '../model/library_manifest.dart';
 import '../playback/library_playback.dart';
@@ -91,11 +92,12 @@ final class FundusLibrary {
     );
   }
 
-  List<LibraryWorkSummary> listWorks() => _database.listWorks();
+  List<LibraryWorkSummary> listWorks() =>
+      _database.listWorks().map(_withAbsoluteCoverPath).toList(growable: false);
 
   List<LibraryWorkSummary> searchWorks([
     LibraryWorkQuery query = const LibraryWorkQuery(),
-  ]) => LibraryWorkSearch.apply(_database.listWorks(), query);
+  ]) => LibraryWorkSearch.apply(listWorks(), query);
 
   List<LibraryPlaybackTrack> playbackTracks(String workId) {
     return _database
@@ -179,16 +181,24 @@ final class FundusLibrary {
       fileCount: files.length,
       workCount: candidates.length,
     );
-    _database.transaction(() {
+    final indexedCandidates = _database.transaction(() {
       final ids = <String, String>{};
+      final indexed = <({AudiobookImportCandidate candidate, String workId})>[];
       for (final file in files) {
         ids[file.relativePath] = _database.upsertFile(file);
       }
       _database.markUnseenFilesMissing(ids.keys.toSet());
       for (final candidate in candidates) {
-        _database.upsertAudiobookCandidate(candidate, ids);
+        indexed.add((
+          candidate: candidate,
+          workId: _database.upsertAudiobookCandidate(candidate, ids),
+        ));
       }
+      return indexed;
     });
+    for (final indexed in indexedCandidates) {
+      await _cacheEmbeddedCover(indexed.candidate, indexed.workId);
+    }
     yield LibraryIndexEvent(
       phase: LibraryIndexPhase.completed,
       fileCount: files.length,
@@ -197,6 +207,70 @@ final class FundusLibrary {
   }
 
   void close() => _database.close();
+
+  LibraryWorkSummary _withAbsoluteCoverPath(LibraryWorkSummary work) {
+    final coverPath = work.coverPath;
+    if (coverPath == null) return work;
+    final absolutePath = p.normalize(p.join(root.path, coverPath));
+    if (!p.isWithin(root.path, absolutePath)) return work;
+    return LibraryWorkSummary(
+      id: work.id,
+      kind: work.kind,
+      title: work.title,
+      author: work.author,
+      fileCount: work.fileCount,
+      addedAt: work.addedAt,
+      series: work.series,
+      seriesSequence: work.seriesSequence,
+      coverPath: absolutePath,
+    );
+  }
+
+  Future<void> _cacheEmbeddedCover(
+    AudiobookImportCandidate candidate,
+    String workId,
+  ) async {
+    if (candidate.coverFiles.isNotEmpty) {
+      _database.setGeneratedCoverPath(workId, null);
+      return;
+    }
+    final coverDirectory = Directory(
+      p.join(root.path, metadataDirectoryName, 'covers'),
+    );
+    for (final extension in const ['jpg', 'png']) {
+      final existing = File(p.join(coverDirectory.path, '$workId.$extension'));
+      if (await existing.exists()) {
+        _database.setGeneratedCoverPath(
+          workId,
+          p.posix.join(metadataDirectoryName, 'covers', '$workId.$extension'),
+        );
+        return;
+      }
+    }
+
+    const extractor = EmbeddedCoverExtractor();
+    for (final audio in candidate.audioFiles) {
+      try {
+        final cover = await extractor.extract(File(audio.absolutePath));
+        if (cover == null) continue;
+        await coverDirectory.create(recursive: true);
+        final filename = '$workId.${cover.extension}';
+        await File(
+          p.join(coverDirectory.path, filename),
+        ).writeAsBytes(cover.bytes, flush: true);
+        _database.setGeneratedCoverPath(
+          workId,
+          p.posix.join(metadataDirectoryName, 'covers', filename),
+        );
+        return;
+      } on FileSystemException {
+        // A single unreadable media file must not abort the complete scan.
+      } on FormatException {
+        // Invalid embedded metadata falls back to the placeholder artwork.
+      }
+    }
+    _database.setGeneratedCoverPath(workId, null);
+  }
 
   static File _manifestFile(Directory root) =>
       File('${root.path}/$metadataDirectoryName/$manifestFileName');

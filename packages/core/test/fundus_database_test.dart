@@ -32,12 +32,19 @@ void main() {
         UNIQUE (work_id, user_id, revision)
       )
     ''');
+    legacy.execute('''
+      CREATE TABLE works (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL
+      )
+    ''');
     legacy.userVersion = 1;
     legacy.close();
 
     final migrated = FundusDatabase.openFile(file);
     addTearDown(migrated.close);
-    expect(migrated.userVersion, 2);
+    expect(migrated.userVersion, FundusDatabase.schemaVersion);
     expect(migrated.columnExists('progress_revisions', 'operation_id'), isTrue);
+    expect(migrated.columnExists('works', 'generated_cover_path'), isTrue);
   });
 }
