@@ -55,6 +55,9 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - token-geschützter lokaler Mehrbibliotheks-Server mit Werkliste, Details,
   Cover, ID-basiertem `Range`-Streaming und idempotentem Fortschrittsabgleich;
   absolute Medienpfade verlassen das Gerät nicht
+- App-Einstellungsdialog für Serverstatus und gleichzeitig freigegebene
+  Bibliotheken; derzeit absichtlich nur Loopback, bis Pairing und
+  Geräteberechtigungen die LAN-Freigabe absichern
 
 ## Entwicklung
 

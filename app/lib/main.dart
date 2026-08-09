@@ -13,6 +13,8 @@ import 'library/recent_library_store.dart';
 import 'library/security_scoped_bookmarks.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/playback_sleep_timer.dart';
+import 'server/fundus_peer_server_controller.dart';
+import 'server/server_settings.dart';
 
 typedef WorkPlaybackCallback =
     Future<void> Function(
@@ -65,12 +67,14 @@ class _FundusAppState extends State<FundusApp> {
   String? _error;
   bool _busy = false;
   final _recentStore = RecentLibraryStore.platformDefault();
+  late final FundusPeerServerController _peerServer;
   List<RecentLibraryEntry> _recentLibraries = const [];
   late final AppLifecycleListener _lifecycleListener;
 
   @override
   void initState() {
     super.initState();
+    _peerServer = FundusPeerServerController();
     _works = widget.initialWorks;
     if (widget.initialWorks == null) unawaited(_loadRecentLibraries());
     _lifecycleListener = AppLifecycleListener(
@@ -89,6 +93,7 @@ class _FundusAppState extends State<FundusApp> {
     _lifecycleListener.dispose();
     _player?.dispose();
     _library?.close();
+    _peerServer.dispose();
     super.dispose();
   }
 
@@ -109,6 +114,7 @@ class _FundusAppState extends State<FundusApp> {
               recentLibraries: _recentLibraries,
               onOpenRecent: _openRecentLibrary,
               onToggleTheme: _toggleTheme,
+              peerServer: _peerServer,
             )
           : LibraryShell(
               works: _works!,
@@ -123,6 +129,7 @@ class _FundusAppState extends State<FundusApp> {
               onPlay: _library == null ? null : _startPlayback,
               onExportDiagnostics: _library == null ? null : _exportDiagnostics,
               onToggleTheme: _toggleTheme,
+              peerServer: _peerServer,
             ),
     );
   }
@@ -197,6 +204,7 @@ class _FundusAppState extends State<FundusApp> {
         _recentLibraries,
         securityBookmark: securityBookmark,
       );
+      await _syncPeerSources();
       if (mounted) setState(() {});
       await _scan();
     } catch (error) {
@@ -233,8 +241,16 @@ class _FundusAppState extends State<FundusApp> {
       }
       entries = resolved;
     }
-    if (mounted) setState(() => _recentLibraries = entries);
+    _recentLibraries = entries;
+    await _syncPeerSources();
+    if (mounted) setState(() {});
   }
+
+  Future<void> _syncPeerSources() => _peerServer.setSources(
+    _recentLibraries.map(
+      (entry) => PeerLibrarySource(path: entry.path, name: entry.name),
+    ),
+  );
 
   Future<void> _scan() async {
     final library = _library;
@@ -356,6 +372,7 @@ class _LibraryWelcome extends StatelessWidget {
     required this.recentLibraries,
     required this.onOpenRecent,
     required this.onToggleTheme,
+    required this.peerServer,
   });
 
   final bool busy;
@@ -365,6 +382,7 @@ class _LibraryWelcome extends StatelessWidget {
   final List<RecentLibraryEntry> recentLibraries;
   final ValueChanged<RecentLibraryEntry> onOpenRecent;
   final VoidCallback onToggleTheme;
+  final FundusPeerServerController peerServer;
 
   @override
   Widget build(BuildContext context) {
@@ -372,6 +390,11 @@ class _LibraryWelcome extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Fundus'),
         actions: [
+          IconButton(
+            onPressed: () => showFundusServerSettings(context, peerServer),
+            tooltip: 'Server & Freigaben',
+            icon: const Icon(Icons.lan_outlined),
+          ),
           IconButton(
             onPressed: onToggleTheme,
             tooltip: 'Theme wechseln',
@@ -526,6 +549,7 @@ class LibraryShell extends StatefulWidget {
     this.player,
     this.onPlay,
     this.onExportDiagnostics,
+    this.peerServer,
   });
 
   final List<LibraryWorkSummary> works;
@@ -538,6 +562,7 @@ class LibraryShell extends StatefulWidget {
   final FundusPlayerController? player;
   final WorkPlaybackCallback? onPlay;
   final VoidCallback? onExportDiagnostics;
+  final FundusPeerServerController? peerServer;
 
   @override
   State<LibraryShell> createState() => _LibraryShellState();
@@ -635,6 +660,9 @@ class _LibraryShellState extends State<LibraryShell> {
               onClose: widget.onClose,
               onSearch: _setSearch,
               onExportDiagnostics: widget.onExportDiagnostics,
+              onOpenSettings: widget.peerServer == null
+                  ? null
+                  : () => _openServerSettings(context),
               detailPaneVisible: _detailPaneVisible,
               onToggleDetails: () => setState(() {
                 _detailPaneVisible = !_detailPaneVisible;
@@ -644,7 +672,14 @@ class _LibraryShellState extends State<LibraryShell> {
             Expanded(
               child: Row(
                 children: [
-                  SizedBox(width: _leftPaneWidth, child: const _Sidebar()),
+                  SizedBox(
+                    width: _leftPaneWidth,
+                    child: _Sidebar(
+                      onOpenSettings: widget.peerServer == null
+                          ? null
+                          : () => _openServerSettings(context),
+                    ),
+                  ),
                   _ResizeHandle(
                     onDrag: (delta) => setState(
                       () => _leftPaneWidth = (_leftPaneWidth + delta).clamp(
@@ -717,6 +752,9 @@ class _LibraryShellState extends State<LibraryShell> {
               onClose: widget.onClose,
               onSearch: _setSearch,
               onExportDiagnostics: widget.onExportDiagnostics,
+              onOpenSettings: widget.peerServer == null
+                  ? null
+                  : () => _openServerSettings(context),
             ),
             Expanded(
               child: Row(
@@ -766,7 +804,15 @@ class _LibraryShellState extends State<LibraryShell> {
       _library(context, detailAsDialog: true),
       _library(context, detailAsDialog: true, showSearch: true),
       const Center(child: Text('Downloads')),
-      const Center(child: Text('Einstellungen')),
+      Center(
+        child: FilledButton.icon(
+          onPressed: widget.peerServer == null
+              ? null
+              : () => _openServerSettings(context),
+          icon: const Icon(Icons.lan_outlined),
+          label: const Text('Server & Freigaben'),
+        ),
+      ),
     ];
     return Scaffold(
       appBar: AppBar(
@@ -892,6 +938,12 @@ class _LibraryShellState extends State<LibraryShell> {
         ),
       ],
     );
+  }
+
+  Future<void> _openServerSettings(BuildContext context) async {
+    final controller = widget.peerServer;
+    if (controller == null) return;
+    await showFundusServerSettings(context, controller);
   }
 
   Widget _libraryTitle(BuildContext context) => Row(
@@ -1387,6 +1439,7 @@ class _TopBar extends StatelessWidget {
     this.onExportDiagnostics,
     this.detailPaneVisible,
     this.onToggleDetails,
+    this.onOpenSettings,
   });
 
   final VoidCallback onToggleTheme;
@@ -1398,6 +1451,7 @@ class _TopBar extends StatelessWidget {
   final VoidCallback? onExportDiagnostics;
   final bool? detailPaneVisible;
   final VoidCallback? onToggleDetails;
+  final VoidCallback? onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -1442,6 +1496,12 @@ class _TopBar extends StatelessWidget {
                 onPressed: onExportDiagnostics,
                 tooltip: 'Diagnoseprotokoll exportieren',
                 icon: const Icon(Icons.bug_report_outlined),
+              ),
+            if (onOpenSettings != null)
+              IconButton(
+                onPressed: onOpenSettings,
+                tooltip: 'Server & Freigaben',
+                icon: const Icon(Icons.lan_outlined),
               ),
             if (onToggleDetails != null)
               IconButton(
@@ -1524,37 +1584,55 @@ class _MediaFilterButton extends StatelessWidget {
 }
 
 class _Sidebar extends StatelessWidget {
-  const _Sidebar();
+  const _Sidebar({this.onOpenSettings});
+
+  final VoidCallback? onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.all(10),
-      children: const [
-        _SectionLabel('Bibliothek'),
-        ListTile(
+      children: [
+        const _SectionLabel('Bibliothek'),
+        const ListTile(
           leading: Icon(Icons.headphones),
           title: Text('Hörbücher'),
           selected: true,
         ),
-        ListTile(
+        const ListTile(
           leading: Icon(Icons.movie_outlined),
           title: Text('Filme & Serien'),
         ),
-        ListTile(
+        const ListTile(
           leading: Icon(Icons.menu_book_outlined),
           title: Text('E-Books & PDFs'),
         ),
-        SizedBox(height: 12),
-        _SectionLabel('Entdecken'),
-        ListTile(
+        const SizedBox(height: 12),
+        const _SectionLabel('Entdecken'),
+        const ListTile(
           leading: Icon(Icons.account_tree_outlined),
           title: Text('Serien'),
         ),
-        ListTile(leading: Icon(Icons.people_outline), title: Text('Personen')),
-        ListTile(leading: Icon(Icons.tag), title: Text('Tags')),
-        ListTile(leading: Icon(Icons.star_outline), title: Text('Sammlungen')),
-        ListTile(leading: Icon(Icons.folder_outlined), title: Text('Ordner')),
+        const ListTile(
+          leading: Icon(Icons.people_outline),
+          title: Text('Personen'),
+        ),
+        const ListTile(leading: Icon(Icons.tag), title: Text('Tags')),
+        const ListTile(
+          leading: Icon(Icons.star_outline),
+          title: Text('Sammlungen'),
+        ),
+        const ListTile(
+          leading: Icon(Icons.folder_outlined),
+          title: Text('Ordner'),
+        ),
+        const SizedBox(height: 12),
+        const _SectionLabel('System'),
+        ListTile(
+          leading: const Icon(Icons.lan_outlined),
+          title: const Text('Server & Freigaben'),
+          onTap: onOpenSettings,
+        ),
       ],
     );
   }

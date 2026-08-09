@@ -95,6 +95,28 @@ void main() {
     expect(find.text('Bibliothek öffnen'), findsOneWidget);
   });
 
+  testWidgets('server settings explain the safe local sharing mode', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(FundusApp(initialWorks: testWorks));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Server & Freigaben').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Server & Freigaben'), findsWidgets);
+    expect(find.text('Server ist aus'), findsOneWidget);
+    expect(find.text('Freigegebene Bibliotheken'), findsOneWidget);
+    expect(
+      find.textContaining('ausschließlich auf diesem Gerät'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('desktop search tolerates a misspelled title', (tester) async {
     tester.view.physicalSize = const Size(1600, 1000);
     tester.view.devicePixelRatio = 1;
