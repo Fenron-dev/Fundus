@@ -43,6 +43,7 @@ final class PeerSharedLibraryStatus {
 enum PeerServerState { stopped, starting, running, stopping, failed }
 
 final class FundusPeerServerController extends ChangeNotifier {
+  static const preferredLanPort = 47891;
   FundusPeerServerController({
     String? serverId,
     String? token,
@@ -288,15 +289,16 @@ final class FundusPeerServerController extends ChangeNotifier {
         serverName: deviceName,
         registry: _registry,
         pairingAuthority: _pairingAuthority,
+        requestObserver: (request) => unawaited(
+          FundusDiagnostics.instance.record('server.request', {
+            'method': request.method,
+            'resource': request.resource,
+            'status': request.statusCode,
+          }),
+        ),
       );
       final securityContext = _lanEnabled ? _createSecurityContext() : null;
-      _server = await shelf_io.serve(
-        handler.handler,
-        _lanEnabled ? InternetAddress.anyIPv4 : InternetAddress.loopbackIPv4,
-        0,
-        shared: false,
-        securityContext: securityContext,
-      );
+      _server = await _serve(handler, securityContext);
       _networkUris = _lanEnabled
           ? await _findNetworkUris(_server!.port)
           : const [];
@@ -418,6 +420,41 @@ final class FundusPeerServerController extends ChangeNotifier {
     return SecurityContext()
       ..useCertificateChainBytes(utf8.encode(identity.certificatePem))
       ..usePrivateKeyBytes(utf8.encode(identity.privateKeyPem));
+  }
+
+  Future<HttpServer> _serve(
+    FundusServerHandler handler,
+    SecurityContext? securityContext,
+  ) async {
+    final address = _lanEnabled
+        ? InternetAddress.anyIPv4
+        : InternetAddress.loopbackIPv4;
+    if (!_lanEnabled) {
+      return shelf_io.serve(
+        handler.handler,
+        address,
+        0,
+        shared: false,
+        securityContext: securityContext,
+      );
+    }
+    try {
+      return await shelf_io.serve(
+        handler.handler,
+        address,
+        preferredLanPort,
+        shared: false,
+        securityContext: securityContext,
+      );
+    } on SocketException {
+      return shelf_io.serve(
+        handler.handler,
+        address,
+        0,
+        shared: false,
+        securityContext: securityContext,
+      );
+    }
   }
 
   static Future<List<Uri>> _findNetworkUris(int port) async {

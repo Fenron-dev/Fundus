@@ -43,6 +43,21 @@ final class FundusLibraryRegistry {
   }
 }
 
+final class FundusServerRequestEvent {
+  const FundusServerRequestEvent({
+    required this.method,
+    required this.resource,
+    required this.statusCode,
+  });
+
+  final String method;
+  final String resource;
+  final int statusCode;
+}
+
+typedef FundusServerRequestObserver =
+    void Function(FundusServerRequestEvent event);
+
 final class FundusServerHandler {
   FundusServerHandler({
     required this.token,
@@ -50,6 +65,7 @@ final class FundusServerHandler {
     this.serverName = 'Fundus',
     FundusLibraryRegistry? registry,
     this.pairingAuthority,
+    this.requestObserver,
   }) : registry = registry ?? FundusLibraryRegistry();
 
   final String token;
@@ -57,6 +73,7 @@ final class FundusServerHandler {
   final String serverName;
   final FundusLibraryRegistry registry;
   final FundusPairingAuthority? pairingAuthority;
+  final FundusServerRequestObserver? requestObserver;
 
   Handler get handler {
     final router = Router()
@@ -74,9 +91,40 @@ final class FundusServerHandler {
       ..get('/v1/libraries/<libraryId>/progress/<workId>', _progress)
       ..put('/v1/libraries/<libraryId>/progress/<workId>', _saveProgress);
     return Pipeline()
+        .addMiddleware(_requestDiagnostics())
         .addMiddleware(_authentication())
         .addMiddleware(_jsonErrors())
         .addHandler(router.call);
+  }
+
+  Middleware _requestDiagnostics() {
+    return (inner) {
+      return (request) async {
+        final response = await inner(request);
+        requestObserver?.call(
+          FundusServerRequestEvent(
+            method: request.method,
+            resource: _resourceType(request.url.pathSegments),
+            statusCode: response.statusCode,
+          ),
+        );
+        return response;
+      };
+    };
+  }
+
+  static String _resourceType(List<String> segments) {
+    if (segments.contains('content')) return 'content';
+    if (segments.contains('cover')) return 'cover';
+    if (segments.contains('progress')) return 'progress';
+    if (segments.contains('works')) return 'works';
+    if (segments.contains('libraries')) return 'libraries';
+    if (segments.contains('pairing')) return 'pairing';
+    if (segments.contains('capabilities') || segments.contains('info')) {
+      return 'capabilities';
+    }
+    if (segments.contains('health')) return 'health';
+    return 'other';
   }
 
   Response _health(Request request) =>

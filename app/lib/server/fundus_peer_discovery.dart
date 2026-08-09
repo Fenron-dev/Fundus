@@ -72,10 +72,15 @@ final class FundusDiscoveredPeer {
 }
 
 final class FundusPeerDiscovery {
-  FundusPeerDiscovery({FundusRemoteClient client = const FundusRemoteClient()})
-    : _client = client;
+  FundusPeerDiscovery({
+    FundusRemoteClient client = const FundusRemoteClient(),
+    Future<List<FundusDiscoveredPeer>> Function(Duration timeout)? discoverer,
+  }) : _client = client,
+       _discoverer = discoverer;
 
   final FundusRemoteClient _client;
+  final Future<List<FundusDiscoveredPeer>> Function(Duration timeout)?
+  _discoverer;
 
   Future<List<FundusDiscoveredPeer>> discover({
     Duration timeout = const Duration(seconds: 3),
@@ -131,30 +136,68 @@ final class FundusPeerDiscovery {
     Duration timeout = const Duration(seconds: 3),
   }) async {
     if (servers.isEmpty) return servers;
-    final discovered = {
-      for (final peer in await discover(timeout: timeout)) peer.deviceId: peer,
-    };
-    return Future.wait([
+    final verified = await Future.wait([
       for (final server in servers)
         () async {
-          final peer = discovered[server.id];
-          if (peer == null) return server;
-          for (final address in peer.addresses) {
-            final candidate = Uri(
-              scheme: 'https',
-              host: address,
-              port: peer.port,
-            );
-            try {
-              final verified = await _client.verifyEndpoint(server, candidate);
-              return verified.copyWith(serverName: peer.deviceName);
-            } catch (_) {
-              // Nur ein TLS-gepinnter Endpunkt mit passender device_id gilt.
-            }
+          try {
+            return await _client.verifyEndpoint(server, server.baseUri);
+          } catch (_) {
+            return null;
           }
-          return server;
         }(),
     ]);
+    if (verified.every((server) => server != null)) {
+      return verified.cast<FundusRemoteServer>();
+    }
+    final peers = {
+      for (final peer in await _discover(timeout)) peer.deviceId: peer,
+    };
+    return Future.wait([
+      for (var index = 0; index < servers.length; index++)
+        () async {
+          final current = verified[index];
+          if (current != null) return current;
+          return await _verifyPeer(servers[index], peers[servers[index].id]) ??
+              servers[index];
+        }(),
+    ]);
+  }
+
+  Future<FundusRemoteServer> resolve(
+    FundusRemoteServer server, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    Object? initialError;
+    try {
+      return await _client.verifyEndpoint(server, server.baseUri);
+    } catch (error) {
+      initialError = error;
+    }
+    final peers = await _discover(timeout);
+    final peer = peers.where((item) => item.deviceId == server.id).firstOrNull;
+    final verified = await _verifyPeer(server, peer);
+    if (verified != null) return verified;
+    throw initialError;
+  }
+
+  Future<List<FundusDiscoveredPeer>> _discover(Duration timeout) =>
+      _discoverer == null ? discover(timeout: timeout) : _discoverer(timeout);
+
+  Future<FundusRemoteServer?> _verifyPeer(
+    FundusRemoteServer server,
+    FundusDiscoveredPeer? peer,
+  ) async {
+    if (peer == null) return null;
+    for (final address in peer.addresses) {
+      final candidate = Uri(scheme: 'https', host: address, port: peer.port);
+      try {
+        final verified = await _client.verifyEndpoint(server, candidate);
+        return verified.copyWith(serverName: peer.deviceName);
+      } catch (_) {
+        // Nur ein TLS-gepinnter Endpunkt mit passender device_id gilt.
+      }
+    }
+    return null;
   }
 
   static bool _usableAddress(String value) {

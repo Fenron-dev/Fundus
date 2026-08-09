@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/server/fundus_remote_client.dart';
+import 'package:fundus/server/fundus_peer_discovery.dart';
 import 'package:fundus/server/fundus_remote_stream_proxy.dart';
 import 'package:fundus/server/fundus_offline_store.dart';
 import 'package:fundus/server/peer_server_identity_store.dart';
@@ -166,5 +167,33 @@ void main() {
       ),
       isNull,
     );
+
+    await server.close(force: true);
+    final relocatedServer = await shelf_io.serve(
+      FundusServerHandler(
+        token: 'loopback-test-token',
+        serverId: identity.serverId,
+        serverName: 'Test-Desktop',
+        registry: registry,
+        pairingAuthority: authority,
+      ).handler,
+      InternetAddress.loopbackIPv4,
+      0,
+      securityContext: context,
+    );
+    addTearDown(() => relocatedServer.close(force: true));
+    final discovery = FundusPeerDiscovery(
+      discoverer: (_) async => [
+        FundusDiscoveredPeer(
+          deviceId: identity.serverId,
+          deviceName: 'Test-Desktop',
+          port: relocatedServer.port,
+          addresses: const ['127.0.0.1'],
+        ),
+      ],
+    );
+    final relocated = await discovery.resolve(profile);
+    expect(relocated.id, profile.id);
+    expect(relocated.baseUri.port, relocatedServer.port);
   });
 }

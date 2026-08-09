@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../diagnostics/fundus_diagnostics.dart';
 import 'fundus_remote_client.dart';
 import 'fundus_peer_server_controller.dart';
 import 'fundus_remote_player_controller.dart';
@@ -245,10 +246,15 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       _works = const [];
     });
     try {
-      final libraries = await _client.libraries(server);
-      await _store.rememberLibraries(server, libraries);
+      final result = await _runWithReconnect(
+        server,
+        (active) => _client.libraries(active),
+      );
+      final libraries = result.value;
+      await _store.rememberLibraries(result.server, libraries);
       if (!mounted) return;
       setState(() {
+        _selectedServer = result.server;
         _libraries = libraries;
         _busy = false;
       });
@@ -276,24 +282,32 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       _selectedKind = null;
     });
     try {
-      final works = await _client.works(server, library.id);
+      final result = await _runWithReconnect(
+        server,
+        (active) => _client.works(active, library.id),
+      );
+      final activeServer = result.server;
+      final works = result.value;
       final offline = await Future.wait([
         for (final work in works)
           _offlineStore.lookup(
-            serverId: server.id,
+            serverId: activeServer.id,
             libraryId: library.id,
             workId: work.id,
           ),
       ]);
       if (!mounted) return;
       setState(() {
+        _selectedServer = activeServer;
         _works = works;
         _offlineKeys
-          ..removeWhere((key) => key.startsWith('${server.id}/${library.id}/'))
+          ..removeWhere(
+            (key) => key.startsWith('${activeServer.id}/${library.id}/'),
+          )
           ..addAll([
             for (var index = 0; index < works.length; index++)
               if (offline[index] != null)
-                _offlineKey(server, library, works[index]),
+                _offlineKey(activeServer, library, works[index]),
           ]);
         _busy = false;
       });
@@ -890,7 +904,22 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             workId: work.id,
           )
         : null;
-    await player.open(server, library, work, offlineWork: offlineWork);
+    if (offlineWork != null) {
+      await player.open(server, library, work, offlineWork: offlineWork);
+      return;
+    }
+    try {
+      final result = await _runWithReconnect(
+        server,
+        (active) => _client.verifyEndpoint(active, active.baseUri),
+      );
+      await player.open(result.server, library, work);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Serververbindung nicht verfügbar.')),
+      );
+    }
   }
 
   Future<void> _downloadWork(
@@ -905,18 +934,37 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       _downloadTotal = 0;
     });
     try {
-      final offline = await _offlineStore.download(
-        _client,
+      unawaited(
+        FundusDiagnostics.instance.record('remote.download_started', {
+          'server_id': server.id,
+          'library_id': library.id,
+          'work_id': work.id,
+        }),
+      );
+      final result = await _runWithReconnect(
         server,
-        library,
-        work,
-        onProgress: (completed, total) {
-          if (!mounted) return;
-          setState(() {
-            _downloadCompleted = completed;
-            _downloadTotal = total;
-          });
-        },
+        (active) => _offlineStore.download(
+          _client,
+          active,
+          library,
+          work,
+          onProgress: (completed, total) {
+            if (!mounted) return;
+            setState(() {
+              _downloadCompleted = completed;
+              _downloadTotal = total;
+            });
+          },
+        ),
+      );
+      final offline = result.value;
+      unawaited(
+        FundusDiagnostics.instance.record('remote.download_completed', {
+          'server_id': result.server.id,
+          'library_id': library.id,
+          'work_id': work.id,
+          'file_count': offline.tracks.length,
+        }),
       );
       if (!mounted) return;
       setState(() {
@@ -934,7 +982,15 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('„${work.title}“ ist jetzt offline verfügbar.')),
       );
-    } catch (_) {
+    } catch (error) {
+      unawaited(
+        FundusDiagnostics.instance.record('remote.download_failed', {
+          'server_id': server.id,
+          'library_id': library.id,
+          'work_id': work.id,
+          'reason': _safeNetworkError(error),
+        }),
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Offline-Download fehlgeschlagen.')),
@@ -943,6 +999,63 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       if (mounted) setState(() => _downloadingKey = null);
     }
   }
+
+  Future<({FundusRemoteServer server, T value})> _runWithReconnect<T>(
+    FundusRemoteServer server,
+    Future<T> Function(FundusRemoteServer server) operation,
+  ) async {
+    try {
+      return (server: server, value: await operation(server));
+    } catch (firstError) {
+      unawaited(
+        FundusDiagnostics.instance.record('remote.reconnect_started', {
+          'server_id': server.id,
+          'reason': _safeNetworkError(firstError),
+        }),
+      );
+      final relocated = await _peerDiscovery.resolve(server);
+      await _replaceServer(relocated);
+      try {
+        final value = await operation(relocated);
+        unawaited(
+          FundusDiagnostics.instance.record('remote.reconnect_completed', {
+            'server_id': server.id,
+            'endpoint_changed': relocated.baseUri != server.baseUri,
+          }),
+        );
+        return (server: relocated, value: value);
+      } catch (retryError) {
+        unawaited(
+          FundusDiagnostics.instance.record('remote.reconnect_failed', {
+            'server_id': server.id,
+            'reason': _safeNetworkError(retryError),
+          }),
+        );
+        rethrow;
+      }
+    }
+  }
+
+  Future<void> _replaceServer(FundusRemoteServer server) async {
+    final updated = [
+      for (final item in _servers) item.id == server.id ? server : item,
+    ];
+    await _store.save(updated);
+    if (!mounted) return;
+    setState(() {
+      _servers = updated;
+      if (_selectedServer?.id == server.id) _selectedServer = server;
+    });
+  }
+
+  static String _safeNetworkError(Object error) => switch (error) {
+    SocketException(:final osError) =>
+      'socket_${osError?.errorCode ?? 'unknown'}',
+    TlsException() => 'tls',
+    HttpException() => 'http',
+    FileSystemException() => 'filesystem',
+    _ => error.runtimeType.toString(),
+  };
 
   static String _offlineKey(
     FundusRemoteServer server,

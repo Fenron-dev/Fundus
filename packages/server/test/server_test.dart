@@ -62,6 +62,27 @@ void main() {
     expect(response.statusCode, 401);
   });
 
+  test('reports sanitized request diagnostics', () async {
+    FundusServerRequestEvent? observed;
+    final observedServer = FundusServerHandler(
+      token: 'secret',
+      serverId: 'server-test',
+      registry: registry,
+      requestObserver: (event) => observed = event,
+    );
+    final response = await observedServer.handler(
+      Request(
+        'GET',
+        Uri.parse('http://localhost/v1/libraries/private-id/works'),
+        headers: {'authorization': 'Bearer secret'},
+      ),
+    );
+    expect(response.statusCode, 404);
+    expect(observed?.method, 'GET');
+    expect(observed?.resource, 'works');
+    expect(observed?.statusCode, 404);
+  });
+
   test('pairs a device once and accepts its revocable token', () async {
     final authority = FundusPairingAuthority();
     final session = authority.begin(lifetime: const Duration(minutes: 1));

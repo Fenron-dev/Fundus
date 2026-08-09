@@ -221,11 +221,14 @@ final class FundusOfflineStore {
           libraryId: library.id,
           fileId: track.id,
         );
+        IOSink? sink;
         try {
-          final sink = partial.openWrite();
+          sink = partial.openWrite();
           await sink.addStream(remote.response);
           await sink.close();
+          sink = null;
         } finally {
+          await sink?.close();
           remote.close();
         }
         if (await destination.exists()) await destination.delete();
