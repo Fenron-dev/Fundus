@@ -52,7 +52,9 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - per Maus verstellbare Breite der linken und rechten Seitenleisten sowie
   sichtbarer Werk-Dateipfad in den Details; Doppelklick setzt die Breite zurück
 - rotierendes, exportierbares JSONL-Diagnoseprotokoll ohne absolute Medienpfade
-- Grundgerüst für den token-geschützten lokalen HTTP-Server
+- token-geschützter lokaler Mehrbibliotheks-Server mit Werkliste, Details,
+  Cover, ID-basiertem `Range`-Streaming und idempotentem Fortschrittsabgleich;
+  absolute Medienpfade verlassen das Gerät nicht
 
 ## Entwicklung
 

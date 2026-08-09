@@ -1,38 +1,225 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_server/fundus_server.dart';
 import 'package:shelf/shelf.dart';
 import 'package:test/test.dart';
 
 void main() {
-  final handler = FundusServerHandler(token: 'secret', serverId: 'server-test');
+  late Directory temporary;
+  late FundusLibraryRegistry registry;
+  late FundusServerHandler server;
+  late FundusLibrary firstLibrary;
+  late FundusLibrary secondLibrary;
+  late LibraryWorkSummary work;
+  late LibraryPlaybackTrack track;
 
-  test('health is public', () async {
-    final response = await handler.handler(
-      Request('GET', Uri.parse('http://localhost/health')),
+  setUp(() async {
+    temporary = await Directory.systemTemp.createTemp('fundus-server-');
+    firstLibrary = await _library(
+      Directory('${temporary.path}/Hoerbuecher'),
+      title: 'Der Server-Test',
+      bytes: List.generate(10, (index) => index),
+      withCover: true,
     );
+    secondLibrary = await _library(
+      Directory('${temporary.path}/Filme und mehr'),
+      title: 'Zweites Werk',
+      bytes: [10, 11, 12],
+    );
+    work = firstLibrary.listWorks().single;
+    track = firstLibrary.playbackTracks(work.id).single;
+    registry = FundusLibraryRegistry()
+      ..register(firstLibrary, name: 'Hörbücher')
+      ..register(secondLibrary, name: 'Filme und mehr');
+    server = FundusServerHandler(
+      token: 'secret',
+      serverId: 'server-test',
+      registry: registry,
+    );
+  });
+
+  tearDown(() async {
+    registry.close();
+    await temporary.delete(recursive: true);
+  });
+
+  test('health is public and reports all shared libraries', () async {
+    final response = await server.handler(
+      Request('GET', Uri.parse('http://localhost/v1/health')),
+    );
+    final body = await _json(response);
     expect(response.statusCode, 200);
+    expect(body['library_count'], 2);
   });
 
   test('API rejects missing token', () async {
-    final response = await handler.handler(
-      Request('GET', Uri.parse('http://localhost/api/v1/info')),
+    final response = await server.handler(
+      Request('GET', Uri.parse('http://localhost/v1/libraries')),
     );
     expect(response.statusCode, 401);
   });
 
-  test('API info exposes format versions with bearer token', () async {
-    final response = await handler.handler(
-      Request(
-        'GET',
-        Uri.parse('http://localhost/api/v1/info'),
-        headers: {'authorization': 'Bearer secret'},
-      ),
-    );
-    final body =
-        jsonDecode(await response.readAsString()) as Map<String, Object?>;
+  test('capabilities expose format versions and server features', () async {
+    final response = await _get(server, '/v1/capabilities');
+    final body = await _json(response);
     expect(response.statusCode, 200);
     expect(body['server_id'], 'server-test');
     expect(body['library_format_version'], 1);
+    expect(body['capabilities'], contains('multiple_libraries'));
+    expect(body['capabilities'], contains('range_streaming'));
+  });
+
+  test('lists multiple libraries without exposing local paths', () async {
+    final response = await _get(server, '/v1/libraries');
+    final source = await response.readAsString();
+    final body = jsonDecode(source) as Map<String, Object?>;
+    final libraries = body['libraries']! as List<dynamic>;
+    expect(libraries, hasLength(2));
+    expect(
+      libraries.map((value) => (value as Map<String, dynamic>)['name']),
+      containsAll(['Hörbücher', 'Filme und mehr']),
+    );
+    expect(source, isNot(contains(temporary.path)));
+  });
+
+  test('returns work details and opaque file IDs', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final response = await _get(
+      server,
+      '/v1/libraries/$libraryId/works/${work.id}',
+    );
+    final source = await response.readAsString();
+    final body = jsonDecode(source) as Map<String, Object?>;
+    final files = body['files']! as List<dynamic>;
+    expect(response.statusCode, 200);
+    expect(body['title'], 'Der Server-Test');
+    expect((files.single as Map<String, dynamic>)['id'], track.fileId);
+    expect(source, isNot(contains(temporary.path)));
+    expect(source, isNot(contains(track.relativePath)));
+  });
+
+  test('streams byte ranges with ETag and no path parameter', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final response = await server.handler(
+      Request(
+        'GET',
+        Uri.parse(
+          'http://localhost/v1/libraries/$libraryId/files/${track.fileId}/content',
+        ),
+        headers: {'authorization': 'Bearer secret', 'range': 'bytes=2-4'},
+      ),
+    );
+    final bytes = await response.read().expand((chunk) => chunk).toList();
+    expect(response.statusCode, HttpStatus.partialContent);
+    expect(bytes, [2, 3, 4]);
+    expect(response.headers['content-range'], 'bytes 2-4/10');
+    expect(response.headers['accept-ranges'], 'bytes');
+    expect(response.headers['etag'], isNotEmpty);
+  });
+
+  test('rejects an unsatisfiable range', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final response = await server.handler(
+      Request(
+        'GET',
+        Uri.parse(
+          'http://localhost/v1/libraries/$libraryId/files/${track.fileId}/content',
+        ),
+        headers: {'authorization': 'Bearer secret', 'range': 'bytes=20-30'},
+      ),
+    );
+    expect(response.statusCode, HttpStatus.requestedRangeNotSatisfiable);
+    expect(response.headers['content-range'], 'bytes */10');
+  });
+
+  test('serves a work cover through its opaque work ID', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final response = await _get(
+      server,
+      '/v1/libraries/$libraryId/works/${work.id}/cover',
+    );
+    expect(response.statusCode, 200);
+    expect(response.headers['content-type'], 'image/jpeg');
+    expect(await response.read().expand((chunk) => chunk).toList(), [
+      255,
+      216,
+      255,
+      217,
+    ]);
+  });
+
+  test('progress update is idempotent by operation ID', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final path = '/v1/libraries/$libraryId/progress/${work.id}';
+    final payload = jsonEncode({
+      'operation_id': 'client-operation-1',
+      'device_id': 'phone-test',
+      'file_id': track.fileId,
+      'position_seconds': 42.5,
+      'duration_seconds': 120,
+    });
+    final first = await _put(server, path, payload);
+    final repeated = await _put(server, path, payload);
+    final firstBody = await _json(first);
+    final repeatedBody = await _json(repeated);
+    expect(first.statusCode, 200);
+    expect(firstBody['revision'], 1);
+    expect(repeatedBody['revision'], 1);
+
+    final loaded = await _get(server, path);
+    final loadedBody = await _json(loaded);
+    final progress = loadedBody['progress']! as Map<String, dynamic>;
+    expect(progress['revision'], 1);
+    expect(
+      (progress['position']! as Map<String, dynamic>)['numeric_value'],
+      42.5,
+    );
   });
 }
+
+Future<FundusLibrary> _library(
+  Directory root, {
+  required String title,
+  required List<int> bytes,
+  bool withCover = false,
+}) async {
+  final work = Directory('${root.path}/Audiobooks/Autor/Serie/01 - $title');
+  await work.create(recursive: true);
+  await File('${work.path}/01 - $title.mp3').writeAsBytes(bytes);
+  if (withCover) {
+    await File('${work.path}/cover.jpg').writeAsBytes([255, 216, 255, 217]);
+  }
+  final library = await FundusLibrary.create(root);
+  await library.index().drain<void>();
+  return library;
+}
+
+Future<Response> _get(FundusServerHandler server, String path) async =>
+    await server.handler(
+      Request(
+        'GET',
+        Uri.parse('http://localhost$path'),
+        headers: {'authorization': 'Bearer secret'},
+      ),
+    );
+
+Future<Response> _put(
+  FundusServerHandler server,
+  String path,
+  String body,
+) async => await server.handler(
+  Request(
+    'PUT',
+    Uri.parse('http://localhost$path'),
+    headers: {
+      'authorization': 'Bearer secret',
+      'content-type': 'application/json',
+    },
+    body: body,
+  ),
+);
+
+Future<Map<String, Object?>> _json(Response response) async =>
+    jsonDecode(await response.readAsString()) as Map<String, Object?>;

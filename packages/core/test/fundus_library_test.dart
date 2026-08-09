@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:fundus_core/fundus_core.dart';
+import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -97,6 +98,30 @@ void main() {
     final coverBytes = await File(coverPath!).readAsBytes();
     expect(coverBytes.sublist(0, 3), [0xff, 0xd8, 0xff]);
   });
+
+  test(
+    'does not resolve a manipulated cover path outside the library',
+    () async {
+      final root = await Directory.systemTemp.createTemp('fundus-safe-cover-');
+      addTearDown(() => root.delete(recursive: true));
+      final book = Directory('${root.path}/Autor/Serie/01 - Titel');
+      await book.create(recursive: true);
+      await File('${book.path}/Titel.mp3').writeAsBytes([1, 2, 3]);
+      final library = await FundusLibrary.create(root);
+      await library.index().drain<void>();
+      library.close();
+
+      final database = sqlite3.open('${root.path}/.library/index.db');
+      database.execute(
+        "UPDATE works SET generated_cover_path = '../../private-cover.jpg'",
+      );
+      database.close();
+
+      final reopened = await FundusLibrary.open(root);
+      addTearDown(reopened.close);
+      expect(reopened.listWorks().single.coverPath, isNull);
+    },
+  );
 
   test('indexes audiobooks inside the standard mixed-library root', () async {
     final root = await Directory.systemTemp.createTemp('fundus-mixed-');

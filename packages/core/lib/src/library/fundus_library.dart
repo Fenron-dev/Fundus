@@ -466,7 +466,9 @@ final class FundusLibrary {
     final coverPath = work.coverPath;
     if (coverPath == null) return work;
     final absolutePath = p.normalize(p.join(root.path, coverPath));
-    if (!p.isWithin(root.path, absolutePath)) return work;
+    final safeCoverPath = p.isWithin(root.path, absolutePath)
+        ? absolutePath
+        : null;
     return LibraryWorkSummary(
       id: work.id,
       kind: work.kind,
@@ -477,7 +479,7 @@ final class FundusLibrary {
       addedAt: work.addedAt,
       series: work.series,
       seriesSequence: work.seriesSequence,
-      coverPath: absolutePath,
+      coverPath: safeCoverPath,
       language: work.language,
       subtitle: work.subtitle,
       description: work.description,
