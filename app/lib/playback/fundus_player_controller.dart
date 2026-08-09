@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:media_kit/media_kit.dart';
 
+import '../diagnostics/fundus_diagnostics.dart';
 import 'playback_sleep_timer.dart';
 import 'playback_resume_policy.dart';
 
@@ -72,6 +73,7 @@ final class FundusPlayerController extends ChangeNotifier {
       _tracks.isEmpty ? null : _tracks[_currentIndex];
   int get currentIndex => _currentIndex;
   int get trackCount => _tracks.length;
+  List<LibraryPlaybackTrack> get tracks => List.unmodifiable(_tracks);
   Duration get position => _position;
   Duration get duration => _duration;
   bool get playing => _playing;
@@ -111,6 +113,19 @@ final class FundusPlayerController extends ChangeNotifier {
     }
 
     final progress = library.loadProgress(work.id);
+    unawaited(
+      FundusDiagnostics.instance.record('playback.open', {
+        'work_id': work.id,
+        'track_count': _tracks.length,
+        'stored_file_id': progress?.fileId,
+        'stored_position_ms': progress == null
+            ? null
+            : ((progress.position.numericValue ?? 0) * 1000).round(),
+        'stored_finished': progress?.finished,
+        'explicit_file_id': startFileId,
+        'explicit_position_ms': startPosition?.inMilliseconds,
+      }),
+    );
     final targetFileId = startFileId ?? progress?.fileId;
     if (targetFileId case final fileId?) {
       final resumeIndex = _tracks.indexWhere((track) => track.fileId == fileId);
@@ -126,18 +141,34 @@ final class FundusPlayerController extends ChangeNotifier {
       );
       final resumePosition =
           startPosition ?? PlaybackResumePolicy.resumePosition(progress);
-      if (resumePosition != null) {
-        await _player.seek(resumePosition);
-        _position = resumePosition;
-      }
       _ready = true;
       _loading = false;
       _lastPersistedAt = DateTime.now();
       notifyListeners();
       await _player.play();
+      if (resumePosition != null && resumePosition > Duration.zero) {
+        await _player.seek(resumePosition);
+        _position = resumePosition;
+        notifyListeners();
+        unawaited(
+          FundusDiagnostics.instance.record('playback.resume_applied', {
+            'work_id': work.id,
+            'file_id': track?.fileId,
+            'track_index': _currentIndex,
+            'position_ms': resumePosition.inMilliseconds,
+            'player_position_ms': _player.state.position.inMilliseconds,
+          }),
+        );
+      }
     } catch (error) {
       _loading = false;
       _error = 'Wiedergabe konnte nicht gestartet werden: $error';
+      unawaited(
+        FundusDiagnostics.instance.record('playback.open_failed', {
+          'work_id': work.id,
+          'error': error.toString(),
+        }),
+      );
       notifyListeners();
     }
   }
@@ -155,6 +186,16 @@ final class FundusPlayerController extends ChangeNotifier {
     await persist();
     _skipNextTrackTransition = true;
     await _player.next();
+  }
+
+  Future<void> jumpToTrack(int index) async {
+    if (!_ready || index < 0 || index >= _tracks.length) return;
+    await persist();
+    _skipNextTrackTransition = true;
+    await _player.jump(index);
+    _currentIndex = index;
+    _position = Duration.zero;
+    notifyListeners();
   }
 
   Future<void> previous() async {
@@ -231,9 +272,25 @@ final class FundusPlayerController extends ChangeNotifier {
         finished: finished,
       );
       _lastPersistedAt = DateTime.now();
+      unawaited(
+        FundusDiagnostics.instance.record('playback.progress_saved', {
+          'work_id': work.id,
+          'file_id': currentTrack.fileId,
+          'track_index': _currentIndex,
+          'position_ms': _position.inMilliseconds,
+          'duration_ms': _duration.inMilliseconds,
+          'finished': finished,
+        }),
+      );
     } catch (error) {
       _error = 'Fortschritt konnte nicht gespeichert werden: $error';
       notifyListeners();
+      unawaited(
+        FundusDiagnostics.instance.record('playback.progress_failed', {
+          'work_id': work.id,
+          'error': error.toString(),
+        }),
+      );
     } finally {
       _persisting = false;
     }

@@ -25,6 +25,8 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
   `Audiobooks/Autor/Serie/01 - Titel`
 - persistierte Serien-, Cover- und Track-Zuordnung
 - durchgehende Desktop-Audiowiedergabe mit Tracknavigation und Geschwindigkeit
+- vergrößerbare Playeransicht mit Dateien, Chapters, Details und Playlist als
+  umschaltbarem Kontext
 - werkbezogener Resume-Punkt über Datei- und Hörbuchwechsel mit Revisionshistorie
 - Sleep-Timer mit festen Laufzeiten, Countdown und Stopp am Trackende
 - anspringbare Zeit-Lesezeichen mit optionalem Rücksprung-Lesezeichen
@@ -37,6 +39,8 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - stabile `work_id` und `base_kind` im Sidecar; Verschieben und Index-Neuaufbau
   erhalten Werkidentität, Resume, Tags, Notizen und Lesezeichen
 - responsive Flutter-Oberfläche für Desktop, Tablet und Mobile
+- ein-/ausblendbare Detailleiste und Inline-Details bei mittleren Fensterbreiten
+- rotierendes, exportierbares JSONL-Diagnoseprotokoll ohne absolute Medienpfade
 - Grundgerüst für den token-geschützten lokalen HTTP-Server
 
 ## Entwicklung

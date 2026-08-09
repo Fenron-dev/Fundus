@@ -43,7 +43,7 @@ void main() {
     expect(find.text('Weiterhören'), findsOneWidget);
   });
 
-  testWidgets('medium shell does not render the fixed detail panel', (
+  testWidgets('medium shell keeps navigation and opens details inline', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(900, 900);
@@ -61,7 +61,30 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Weiterhören'), findsOneWidget);
     expect(find.byType(BottomSheet), findsNothing);
-    expect(find.byType(CloseButton), findsOneWidget);
+    expect(find.byType(NavigationRail), findsOneWidget);
+    expect(find.byTooltip('Zurück zur Übersicht'), findsOneWidget);
+  });
+
+  testWidgets('desktop detail sidebar can be hidden and details open inline', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(FundusApp(initialWorks: testWorks));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Detailleiste ausblenden'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Weiterhören'), findsNothing);
+    await tester.tap(find.text('Winnetou I'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Weiterhören'), findsOneWidget);
+    expect(find.byTooltip('Zurück zur Übersicht'), findsOneWidget);
+    expect(find.text('Hörbücher'), findsWidgets);
   });
 
   testWidgets('regular start offers portable library actions', (tester) async {

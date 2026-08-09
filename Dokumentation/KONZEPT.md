@@ -288,6 +288,9 @@ Dazu von Anfang an: SemVer, GitHub-Releases mit Artefakten und SHA-256-Prüfsumm
 - Werk-Detailseite mit Klick auf Serie (zeigt alle Teile) und auf Person (zeigt alles von Autor/Sprecher/Regisseur)
 - Metadaten von Hand bearbeiten und online abgleichen (2.3)
 - Wiedergabe mit Resume auf Werk- und Playlist-Ebene, Abspielgeschwindigkeit, Sleep-Timer, Kapitelsprüngen
+- kompakter sowie vergrößerbarer Player: Navigation bleibt sichtbar, die Mitte
+  zeigt Wiedergabe und Cover, rechts sind Dateien, Chapters, Werkdetails und
+  Playlist umschaltbar
 - manuelle, smarte und serienbasierte Playlists über alle Medientypen; Queue und Sitzungs-Snapshot nach 2.4
 - Statistik aus `play_events`: Stunden pro Woche/Monat, meistgehört, zuletzt beendet
 
@@ -384,6 +387,13 @@ Fundus soll möglichst weitgehend an den eigenen Arbeitsablauf anpassbar sein, o
 | Server & Sync | Anzeigename, Interfaces, Pairing, Geräteschlüssel, Sync-Intervall, Konfliktverhalten, Revisionshistorie |
 | Notizen & Datenschutz | Editor, Wiki-Links, Anhänge, Diagnoseprotokoll, Verlauf und Statistik einzeln abschaltbar |
 | Erweitert | Sidecar-Verhalten, Cache-Limits, experimentelle Funktionen, Diagnose und Datenbankwartung |
+
+Das Diagnoseprotokoll wird als größenbegrenztes, rotierendes JSONL-Protokoll
+geführt und kann über die Oberfläche exportiert werden. Es erfasst Aktionen,
+Zustandswechsel und Fehler mit Zeit, Ereignistyp, Werk-/Datei-ID und relevanten
+Positionen, aber standardmäßig keine absoluten Medienpfade, Tokens oder Inhalte
+von Notizen. Logging-Stufe, Aufbewahrung, vollständiges Löschen und optional
+ausführlichere Diagnose sind über die Einstellungen steuerbar.
 
 Module wie Statistiken, Notizen, Online-Anreicherung, Duplikatprüfung oder Archive können in der Navigation ausgeblendet beziehungsweise funktional deaktiviert werden. Kritische Integritäts-, Sicherheits- und Backup-Prüfungen bleiben aktiv oder verlangen beim Abschalten eine verständliche Bestätigung. Gefährliche Optionen leben in einem expliziten Expertenmodus.
 

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:media_kit/media_kit.dart';
 
+import 'diagnostics/fundus_diagnostics.dart';
 import 'library/recent_library_store.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/playback_sleep_timer.dart';
@@ -118,6 +119,7 @@ class _FundusAppState extends State<FundusApp> {
               onClose: _library == null ? null : _closeLibrary,
               player: _player,
               onPlay: _library == null ? null : _startPlayback,
+              onExportDiagnostics: _library == null ? null : _exportDiagnostics,
               onToggleTheme: _toggleTheme,
             ),
     );
@@ -156,6 +158,11 @@ class _FundusAppState extends State<FundusApp> {
       await _stopPlayer();
       _library?.close();
       _library = library;
+      await FundusDiagnostics.instance.configure(library.root);
+      await FundusDiagnostics.instance.record('library.opened', {
+        'library_id': library.manifest.libraryId,
+        'create': create,
+      });
       _works = library.listWorks();
       _recentLibraries = await _recentStore.remember(path, _recentLibraries);
       if (mounted) setState(() {});
@@ -180,15 +187,36 @@ class _FundusAppState extends State<FundusApp> {
       _error = null;
     });
     try {
+      await FundusDiagnostics.instance.record('library.scan_started');
       await for (final event in library.index()) {
         if (!mounted) return;
         setState(() => _indexEvent = event);
       }
       if (mounted) setState(() => _works = library.listWorks());
+      await FundusDiagnostics.instance.record('library.scan_completed', {
+        'work_count': library.listWorks().length,
+        'file_count': _indexEvent?.fileCount,
+      });
     } catch (error) {
+      await FundusDiagnostics.instance.record('library.scan_failed', {
+        'error': error.toString(),
+      });
       if (mounted) setState(() => _error = error.toString());
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _exportDiagnostics() async {
+    final source = FundusDiagnostics.instance.file;
+    if (source == null || !await source.exists()) return;
+    final destination = await FilePicker.saveFile(
+      dialogTitle: 'Fundus-Diagnoseprotokoll exportieren',
+      fileName: 'fundus-diagnostics.log',
+      bytes: await source.readAsBytes(),
+    );
+    if (destination != null) {
+      await FundusDiagnostics.instance.record('diagnostics.exported');
     }
   }
 
@@ -421,6 +449,7 @@ class LibraryShell extends StatefulWidget {
     this.onClose,
     this.player,
     this.onPlay,
+    this.onExportDiagnostics,
   });
 
   final List<LibraryWorkSummary> works;
@@ -432,6 +461,7 @@ class LibraryShell extends StatefulWidget {
   final VoidCallback? onClose;
   final FundusPlayerController? player;
   final WorkPlaybackCallback? onPlay;
+  final VoidCallback? onExportDiagnostics;
 
   @override
   State<LibraryShell> createState() => _LibraryShellState();
@@ -445,6 +475,9 @@ class _LibraryShellState extends State<LibraryShell> {
   _LibraryGrouping _grouping = _LibraryGrouping.books;
   String? _selectedAuthor;
   String? _selectedSeries;
+  bool _detailPaneVisible = true;
+  bool _playerExpanded = false;
+  LibraryWorkSummary? _inlineDetailWork;
 
   List<LibraryWorkSummary> get _visibleWorks =>
       LibraryWorkSearch.apply(widget.works, _query);
@@ -496,9 +529,12 @@ class _LibraryShellState extends State<LibraryShell> {
         ? null
         : works[_selectedIndex.clamp(0, works.length - 1)];
     return Scaffold(
-      bottomNavigationBar: widget.player == null
+      bottomNavigationBar: widget.player == null || _playerExpanded
           ? null
-          : _PlayerBar(controller: widget.player!),
+          : _PlayerBar(
+              controller: widget.player!,
+              onExpand: () => setState(() => _playerExpanded = true),
+            ),
       body: SafeArea(
         child: Column(
           children: [
@@ -509,23 +545,43 @@ class _LibraryShellState extends State<LibraryShell> {
               onRescan: widget.onRescan,
               onClose: widget.onClose,
               onSearch: _setSearch,
+              onExportDiagnostics: widget.onExportDiagnostics,
+              detailPaneVisible: _detailPaneVisible,
+              onToggleDetails: () => setState(() {
+                _detailPaneVisible = !_detailPaneVisible;
+                if (_detailPaneVisible) _inlineDetailWork = null;
+              }),
             ),
             Expanded(
               child: Row(
                 children: [
                   const SizedBox(width: 236, child: _Sidebar()),
                   const VerticalDivider(width: 1),
-                  Expanded(child: _library(context)),
-                  const VerticalDivider(width: 1),
-                  SizedBox(
-                    width: 368,
-                    child: _DetailPanel(
-                      work: selected,
-                      library: widget.library,
-                      player: widget.player,
-                      onPlay: widget.onPlay,
-                    ),
+                  Expanded(
+                    child: _playerExpanded && widget.player != null
+                        ? _ExpandedPlayer(
+                            controller: widget.player!,
+                            library: widget.library,
+                            onCollapse: () =>
+                                setState(() => _playerExpanded = false),
+                            onPlay: widget.onPlay,
+                          )
+                        : !_detailPaneVisible && _inlineDetailWork != null
+                        ? _inlineDetail(_inlineDetailWork!)
+                        : _library(context),
                   ),
+                  if (_detailPaneVisible && !_playerExpanded) ...[
+                    const VerticalDivider(width: 1),
+                    SizedBox(
+                      width: 368,
+                      child: _DetailPanel(
+                        work: selected,
+                        library: widget.library,
+                        player: widget.player,
+                        onPlay: widget.onPlay,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -537,9 +593,12 @@ class _LibraryShellState extends State<LibraryShell> {
 
   Widget _medium(BuildContext context) {
     return Scaffold(
-      bottomNavigationBar: widget.player == null
+      bottomNavigationBar: widget.player == null || _playerExpanded
           ? null
-          : _PlayerBar(controller: widget.player!),
+          : _PlayerBar(
+              controller: widget.player!,
+              onExpand: () => setState(() => _playerExpanded = true),
+            ),
       body: SafeArea(
         child: Column(
           children: [
@@ -550,6 +609,7 @@ class _LibraryShellState extends State<LibraryShell> {
               onRescan: widget.onRescan,
               onClose: widget.onClose,
               onSearch: _setSearch,
+              onExportDiagnostics: widget.onExportDiagnostics,
             ),
             Expanded(
               child: Row(
@@ -570,7 +630,19 @@ class _LibraryShellState extends State<LibraryShell> {
                     ],
                   ),
                   const VerticalDivider(width: 1),
-                  Expanded(child: _library(context, detailAsDialog: true)),
+                  Expanded(
+                    child: _playerExpanded && widget.player != null
+                        ? _ExpandedPlayer(
+                            controller: widget.player!,
+                            library: widget.library,
+                            onCollapse: () =>
+                                setState(() => _playerExpanded = false),
+                            onPlay: widget.onPlay,
+                          )
+                        : _inlineDetailWork == null
+                        ? _library(context, detailAsDialog: true)
+                        : _inlineDetail(_inlineDetailWork!),
+                  ),
                 ],
               ),
             ),
@@ -699,7 +771,9 @@ class _LibraryShellState extends State<LibraryShell> {
                       selected: !detailAsDialog && index == _selectedIndex,
                       onTap: () {
                         setState(() => _selectedIndex = index);
-                        if (detailAsDialog) _openWorkDetails(work);
+                        if (detailAsDialog || !_detailPaneVisible) {
+                          _openWorkDetails(work);
+                        }
                       },
                     );
                   },
@@ -994,11 +1068,15 @@ class _LibraryShellState extends State<LibraryShell> {
 
   void _selectWork(LibraryWorkSummary work, int index, bool detailAsDialog) {
     setState(() => _selectedIndex = index);
-    if (!detailAsDialog) return;
+    if (!detailAsDialog && _detailPaneVisible) return;
     _openWorkDetails(work);
   }
 
   void _openWorkDetails(LibraryWorkSummary work) {
+    if (MediaQuery.sizeOf(context).width >= 760) {
+      setState(() => _inlineDetailWork = work);
+      return;
+    }
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
@@ -1016,6 +1094,27 @@ class _LibraryShellState extends State<LibraryShell> {
       ),
     );
   }
+
+  Widget _inlineDetail(LibraryWorkSummary work) => Column(
+    children: [
+      Align(
+        alignment: Alignment.centerLeft,
+        child: IconButton(
+          onPressed: () => setState(() => _inlineDetailWork = null),
+          tooltip: 'Zurück zur Übersicht',
+          icon: const Icon(Icons.arrow_back),
+        ),
+      ),
+      Expanded(
+        child: _DetailPanel(
+          work: work,
+          library: widget.library,
+          player: widget.player,
+          onPlay: widget.onPlay,
+        ),
+      ),
+    ],
+  );
 
   void _openGroup(_LibraryGroup group) => setState(() {
     _selectedIndex = 0;
@@ -1096,6 +1195,9 @@ class _TopBar extends StatelessWidget {
     this.onRescan,
     this.onClose,
     required this.onSearch,
+    this.onExportDiagnostics,
+    this.detailPaneVisible,
+    this.onToggleDetails,
   });
 
   final VoidCallback onToggleTheme;
@@ -1104,6 +1206,9 @@ class _TopBar extends StatelessWidget {
   final VoidCallback? onRescan;
   final VoidCallback? onClose;
   final ValueChanged<String> onSearch;
+  final VoidCallback? onExportDiagnostics;
+  final bool? detailPaneVisible;
+  final VoidCallback? onToggleDetails;
 
   @override
   Widget build(BuildContext context) {
@@ -1143,6 +1248,24 @@ class _TopBar extends StatelessWidget {
               tooltip: 'Theme wechseln',
               icon: const Icon(Icons.contrast),
             ),
+            if (onExportDiagnostics != null)
+              IconButton(
+                onPressed: onExportDiagnostics,
+                tooltip: 'Diagnoseprotokoll exportieren',
+                icon: const Icon(Icons.bug_report_outlined),
+              ),
+            if (onToggleDetails != null)
+              IconButton(
+                onPressed: onToggleDetails,
+                tooltip: detailPaneVisible ?? true
+                    ? 'Detailleiste ausblenden'
+                    : 'Detailleiste einblenden',
+                icon: Icon(
+                  detailPaneVisible ?? true
+                      ? Icons.view_sidebar_outlined
+                      : Icons.view_sidebar,
+                ),
+              ),
             if (onClose != null)
               IconButton(
                 onPressed: onClose,
@@ -1889,11 +2012,193 @@ class _WorkCover extends StatelessWidget {
       Center(child: Icon(Icons.music_note, size: iconSize));
 }
 
+enum _PlayerContextTab { files, chapters, details, playlist }
+
+class _ExpandedPlayer extends StatefulWidget {
+  const _ExpandedPlayer({
+    required this.controller,
+    required this.onCollapse,
+    this.library,
+    this.onPlay,
+  });
+
+  final FundusPlayerController controller;
+  final FundusLibrary? library;
+  final VoidCallback onCollapse;
+  final WorkPlaybackCallback? onPlay;
+
+  @override
+  State<_ExpandedPlayer> createState() => _ExpandedPlayerState();
+}
+
+class _ExpandedPlayerState extends State<_ExpandedPlayer> {
+  _PlayerContextTab _tab = _PlayerContextTab.files;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: widget.controller,
+      builder: (context, child) {
+        final work = widget.controller.work;
+        return Row(
+          children: [
+            Expanded(
+              child: Column(
+                children: [
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: IconButton(
+                      onPressed: widget.onCollapse,
+                      tooltip: 'Player verkleinern',
+                      icon: const Icon(Icons.close_fullscreen),
+                    ),
+                  ),
+                  Expanded(
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 900),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox.square(
+                              dimension: 260,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(18),
+                                child: work == null
+                                    ? const Icon(Icons.headphones, size: 96)
+                                    : _WorkCover(work: work, iconSize: 96),
+                              ),
+                            ),
+                            const SizedBox(height: 22),
+                            Text(
+                              work?.title ?? 'Wiedergabe',
+                              style: Theme.of(context).textTheme.headlineSmall,
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              widget.controller.track?.title ?? '',
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 14),
+                            LayoutBuilder(
+                              builder: (context, constraints) => _PlayerBar(
+                                controller: widget.controller,
+                                compact: constraints.maxWidth < 760,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const VerticalDivider(width: 1),
+            SizedBox(
+              width: 340,
+              child: Column(
+                children: [
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.all(8),
+                    child: SegmentedButton<_PlayerContextTab>(
+                      segments: const [
+                        ButtonSegment(
+                          value: _PlayerContextTab.files,
+                          icon: Icon(Icons.audio_file_outlined),
+                          label: Text('Dateien'),
+                        ),
+                        ButtonSegment(
+                          value: _PlayerContextTab.chapters,
+                          icon: Icon(Icons.list_alt),
+                          label: Text('Chapters'),
+                        ),
+                        ButtonSegment(
+                          value: _PlayerContextTab.details,
+                          icon: Icon(Icons.info_outline),
+                          label: Text('Details'),
+                        ),
+                        ButtonSegment(
+                          value: _PlayerContextTab.playlist,
+                          icon: Icon(Icons.queue_music),
+                          label: Text('Playlist'),
+                        ),
+                      ],
+                      selected: {_tab},
+                      onSelectionChanged: (selection) =>
+                          setState(() => _tab = selection.first),
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  Expanded(child: _context(work)),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _context(LibraryWorkSummary? work) => switch (_tab) {
+    _PlayerContextTab.files => _trackList('Dateien'),
+    _PlayerContextTab.playlist => _trackList('Aktuelle Playlist'),
+    _PlayerContextTab.chapters => const Center(
+      child: Padding(
+        padding: EdgeInsets.all(24),
+        child: Text(
+          'Für dieses Hörbuch wurden noch keine eingebetteten Chapters eingelesen.',
+          textAlign: TextAlign.center,
+        ),
+      ),
+    ),
+    _PlayerContextTab.details => _DetailPanel(
+      work: work,
+      library: widget.library,
+      player: widget.controller,
+      onPlay: widget.onPlay,
+    ),
+  };
+
+  Widget _trackList(String title) => ListView.builder(
+    padding: const EdgeInsets.symmetric(vertical: 8),
+    itemCount: widget.controller.tracks.length + 1,
+    itemBuilder: (context, index) {
+      if (index == 0) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+          child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+        );
+      }
+      final trackIndex = index - 1;
+      final track = widget.controller.tracks[trackIndex];
+      final selected = trackIndex == widget.controller.currentIndex;
+      return ListTile(
+        selected: selected,
+        leading: Text('$index'),
+        title: Text(track.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+        subtitle: track.duration == null
+            ? null
+            : Text(_PlayerBar._time(track.duration!)),
+        trailing: selected ? const Icon(Icons.graphic_eq) : null,
+        onTap: () => widget.controller.jumpToTrack(trackIndex),
+      );
+    },
+  );
+}
+
 class _PlayerBar extends StatelessWidget {
-  const _PlayerBar({required this.controller, this.compact = false});
+  const _PlayerBar({
+    required this.controller,
+    this.compact = false,
+    this.onExpand,
+  });
 
   final FundusPlayerController controller;
   final bool compact;
+  final VoidCallback? onExpand;
 
   @override
   Widget build(BuildContext context) {
@@ -2059,6 +2364,12 @@ class _PlayerBar extends StatelessWidget {
                           ],
                           child: Chip(label: Text('${controller.rate}×')),
                         ),
+                        if (onExpand != null)
+                          IconButton(
+                            onPressed: onExpand,
+                            tooltip: 'Player vergrößern',
+                            icon: const Icon(Icons.open_in_full),
+                          ),
                       ],
                     ),
                   ),
