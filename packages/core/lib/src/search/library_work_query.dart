@@ -49,7 +49,13 @@ final class LibraryWorkSearch {
   }
 
   static double _score(LibraryWorkSummary work, String needle) {
-    return _scoreFields([work.title, work.author, work.series ?? ''], needle);
+    return _scoreFields([
+      work.title,
+      work.author,
+      work.series ?? '',
+      if (work.seriesSequence case final sequence?)
+        'Band ${sequence == sequence.roundToDouble() ? sequence.toInt() : sequence}',
+    ], needle);
   }
 
   static double _scoreFields(Iterable<String> values, String needle) {

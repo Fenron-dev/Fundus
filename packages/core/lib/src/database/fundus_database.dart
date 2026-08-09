@@ -430,11 +430,10 @@ final class FundusDatabase {
     );
     final noteRows = _database.select(
       '''
-      SELECT markdown
+      SELECT id, markdown, updated_at
       FROM notes
       WHERE work_id = ? AND user_id = 'default'
-      ORDER BY updated_at DESC
-      LIMIT 1
+      ORDER BY updated_at DESC, rowid DESC
       ''',
       [workId],
     );
@@ -450,6 +449,17 @@ final class FundusDatabase {
     return WorkAnnotations(
       tags: tagRows.map((row) => row['name'] as String).toList(growable: false),
       note: noteRows.isEmpty ? '' : noteRows.first['markdown'] as String,
+      notes: noteRows
+          .map(
+            (row) => LibraryNote(
+              id: row['id'] as String,
+              markdown: row['markdown'] as String,
+              createdAt: DateTime.fromMillisecondsSinceEpoch(
+                row['updated_at'] as int,
+              ),
+            ),
+          )
+          .toList(growable: false),
       bookmarks: bookmarkRows
           .map(
             (row) => LibraryBookmark(
@@ -503,29 +513,13 @@ final class FundusDatabase {
   }
 
   void saveWorkNote(String workId, String markdown, {DateTime? updatedAt}) {
-    final existing = _database.select(
-      "SELECT id, revision FROM notes WHERE work_id = ? AND user_id = 'default' ORDER BY updated_at DESC LIMIT 1",
-      [workId],
-    );
     final now = (updatedAt ?? DateTime.now()).millisecondsSinceEpoch;
-    if (existing.isEmpty) {
-      _database.execute(
-        '''
-        INSERT INTO notes (id, work_id, user_id, markdown, revision, updated_at)
-        VALUES (?, ?, 'default', ?, 1, ?)
-        ''',
-        [FundusId.generate(), workId, markdown, now],
-      );
-      return;
-    }
     _database.execute(
-      'UPDATE notes SET markdown = ?, revision = ?, updated_at = ? WHERE id = ?',
-      [
-        markdown,
-        (existing.first['revision'] as int) + 1,
-        now,
-        existing.first['id'],
-      ],
+      '''
+      INSERT INTO notes (id, work_id, user_id, markdown, revision, updated_at)
+      VALUES (?, ?, 'default', ?, 1, ?)
+      ''',
+      [FundusId.generate(), workId, markdown, now],
     );
   }
 

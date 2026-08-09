@@ -96,6 +96,7 @@ void main() {
     final track = library.playbackTracks(work.id).single;
     await library.replaceWorkTags(work.id, ['Fantasy', 'Favorit']);
     await library.saveWorkNote(work.id, '# Eindruck\n\nSehr gutes Hörbuch.');
+    await library.saveWorkNote(work.id, 'Zweite Notiz');
     await library.addBookmark(
       workId: work.id,
       fileId: track.fileId,
@@ -105,7 +106,8 @@ void main() {
 
     final annotations = library.loadAnnotations(work.id);
     expect(annotations.tags, ['Fantasy', 'Favorit']);
-    expect(annotations.note, contains('Sehr gutes Hörbuch'));
+    expect(annotations.notes, hasLength(2));
+    expect(annotations.notes.first.markdown, 'Zweite Notiz');
     expect(
       annotations.bookmarks.single.position,
       const Duration(minutes: 12, seconds: 34),
@@ -113,6 +115,12 @@ void main() {
     final sidecars = Directory('${book.path}/_fundus');
     expect(await File('${sidecars.path}/meta.yaml').exists(), isTrue);
     expect(await File('${sidecars.path}/notes.md').exists(), isTrue);
+    final portableNotes = await File(
+      '${sidecars.path}/notes.md',
+    ).readAsString();
+    expect(portableNotes, contains('fundus-note:'));
+    expect(portableNotes, contains('Sehr gutes Hörbuch'));
+    expect(portableNotes, contains('Zweite Notiz'));
     expect(await File('${sidecars.path}/bookmarks.yaml').exists(), isTrue);
     library.close();
 
@@ -124,7 +132,11 @@ void main() {
     final restored = rebuilt.loadAnnotations(rebuiltWork.id);
 
     expect(restored.tags, ['Fantasy', 'Favorit']);
-    expect(restored.note, contains('Sehr gutes Hörbuch'));
+    expect(restored.notes, hasLength(2));
+    expect(
+      restored.notes.map((note) => note.markdown),
+      contains('Zweite Notiz'),
+    );
     expect(restored.bookmarks.single.label, 'Wichtige Stelle');
     expect(
       restored.bookmarks.single.position,

@@ -55,4 +55,13 @@ void main() {
     expect(LibraryFuzzySearch.matches('Science Fiction', 'Scince'), isTrue);
     expect(LibraryFuzzySearch.matches('Romantik', 'Krimi'), isFalse);
   });
+
+  test('filters series entries by volume number', () {
+    final result = LibraryWorkSearch.apply(
+      works,
+      const LibraryWorkQuery(text: 'Band 1'),
+    );
+
+    expect(result.map((work) => work.id), ['1']);
+  });
 }

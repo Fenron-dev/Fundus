@@ -12,6 +12,7 @@ final testWorks = [
     title: 'Winnetou I',
     author: 'Karl May',
     series: 'Winnetou',
+    seriesSequence: 1,
     fileCount: 2,
     addedAt: DateTime(2026),
   ),
@@ -55,6 +56,12 @@ void main() {
 
     expect(find.text('Weiterhören'), findsNothing);
     expect(find.byType(NavigationRail), findsOneWidget);
+
+    await tester.tap(find.text('Winnetou I'));
+    await tester.pumpAndSettle();
+    expect(find.text('Weiterhören'), findsOneWidget);
+    expect(find.byType(BottomSheet), findsNothing);
+    expect(find.byType(CloseButton), findsOneWidget);
   });
 
   testWidgets('regular start offers portable library actions', (tester) async {
@@ -148,8 +155,25 @@ void main() {
 
     expect(find.text('#Fantasy'), findsOneWidget);
     expect(find.text('Meine **Notiz**'), findsOneWidget);
+    expect(find.textContaining('Uhr'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Notiz speichern'),
+      300,
+      scrollable: find.byType(Scrollable).last,
+    );
     expect(find.text('Notiz speichern'), findsOneWidget);
     expect(find.byTooltip('Tag hinzufügen'), findsOneWidget);
+
+    await tester.enterText(find.byKey(const ValueKey('note-input')), 'Neu');
+    await tester.tap(find.text('Notiz speichern'));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pump();
+    final input = tester.widget<TextField>(
+      find.byKey(const ValueKey('note-input')),
+    );
+    expect(input.controller?.text, isEmpty);
   });
 
   testWidgets('browses from authors through series to books', (tester) async {
@@ -175,6 +199,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Winnetou I'), findsWidgets);
+    expect(find.text('Band 1'), findsOneWidget);
     expect(find.text('Der Ölprinz'), findsNothing);
 
     await tester.tap(find.byTooltip('Tabelle'));

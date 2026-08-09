@@ -27,6 +27,8 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - anspringbare Zeit-Lesezeichen mit optionalem Rücksprung-Lesezeichen
 - bearbeitbare Tags mit fuzzy gefilterten Vorschlägen und Markdown-Notizen
 - Kachel-/Tabellenansicht und Navigation nach Autor, Serie und Buch
+- bis zu zehn zuletzt verwendete Bibliotheken mit Verfügbarkeitsstatus
+- datierte Notiz-Historie mit portablem Markdown-Sidecar
 - Sprachimport aus Sidecars sowie M4B/M4A- und MP3-Metadaten
 - portabler Sidecar-Spiegel unter `_fundus/`, der einen Index-Neuaufbau überlebt
 - responsive Flutter-Oberfläche für Desktop, Tablet und Mobile

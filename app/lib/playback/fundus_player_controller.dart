@@ -87,7 +87,11 @@ final class FundusPlayerController extends ChangeNotifier {
     Duration? startPosition,
   }) async {
     if (_closed) return;
-    await persist();
+    if (_ready) {
+      await _pauseAndPersist();
+    } else {
+      await persist();
+    }
     _sleepTimer.cancel();
     _ready = false;
     _loading = true;
@@ -138,7 +142,13 @@ final class FundusPlayerController extends ChangeNotifier {
     }
   }
 
-  Future<void> playOrPause() => _player.playOrPause();
+  Future<void> playOrPause() async {
+    if (_player.state.playing) {
+      await _pauseAndPersist();
+    } else {
+      await _player.play();
+    }
+  }
 
   Future<void> next() async {
     if (_currentIndex >= _tracks.length - 1) return;
@@ -207,6 +217,10 @@ final class FundusPlayerController extends ChangeNotifier {
     final work = _work;
     final currentTrack = track;
     if (library == null || work == null || currentTrack == null) return;
+    final playerPosition = _player.state.position;
+    if (playerPosition > Duration.zero || _position == Duration.zero) {
+      _position = playerPosition;
+    }
     _persisting = true;
     try {
       library.saveProgress(
@@ -252,7 +266,16 @@ final class FundusPlayerController extends ChangeNotifier {
 
   Future<void> _pauseForSleepTimer() async {
     if (_closed) return;
+    await _pauseAndPersist();
+  }
+
+  Future<void> _pauseAndPersist() async {
     await _player.pause();
+    final playerPosition = _player.state.position;
+    if (playerPosition > Duration.zero || _position == Duration.zero) {
+      _position = playerPosition;
+    }
+    notifyListeners();
     await persist();
   }
 

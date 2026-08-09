@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:media_kit/media_kit.dart';
 
+import 'library/recent_library_store.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/playback_sleep_timer.dart';
 
@@ -60,12 +61,15 @@ class _FundusAppState extends State<FundusApp> {
   FundusPlayerController? _player;
   String? _error;
   bool _busy = false;
+  final _recentStore = RecentLibraryStore.platformDefault();
+  List<RecentLibraryEntry> _recentLibraries = const [];
   late final AppLifecycleListener _lifecycleListener;
 
   @override
   void initState() {
     super.initState();
     _works = widget.initialWorks;
+    if (widget.initialWorks == null) unawaited(_loadRecentLibraries());
     _lifecycleListener = AppLifecycleListener(
       onInactive: () => unawaited(_player?.persist()),
       onHide: () => unawaited(_player?.persist()),
@@ -99,6 +103,8 @@ class _FundusAppState extends State<FundusApp> {
               error: _error,
               onCreate: () => _chooseLibrary(create: true),
               onOpen: () => _chooseLibrary(create: false),
+              recentLibraries: _recentLibraries,
+              onOpenRecent: _openRecentLibrary,
               onToggleTheme: _toggleTheme,
             )
           : LibraryShell(
@@ -130,6 +136,15 @@ class _FundusAppState extends State<FundusApp> {
           : 'Fundus-Bibliothek öffnen',
     );
     if (path == null || !mounted) return;
+    await _openLibraryPath(path, create: create);
+  }
+
+  Future<void> _openRecentLibrary(RecentLibraryEntry entry) async {
+    if (!entry.available) return;
+    await _openLibraryPath(entry.path, create: false);
+  }
+
+  Future<void> _openLibraryPath(String path, {required bool create}) async {
     setState(() {
       _busy = true;
       _error = null;
@@ -142,6 +157,7 @@ class _FundusAppState extends State<FundusApp> {
       _library?.close();
       _library = library;
       _works = library.listWorks();
+      _recentLibraries = await _recentStore.remember(path, _recentLibraries);
       if (mounted) setState(() {});
       await _scan();
     } catch (error) {
@@ -149,6 +165,11 @@ class _FundusAppState extends State<FundusApp> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _loadRecentLibraries() async {
+    final entries = await _recentStore.load();
+    if (mounted) setState(() => _recentLibraries = entries);
   }
 
   Future<void> _scan() async {
@@ -239,6 +260,8 @@ class _LibraryWelcome extends StatelessWidget {
     required this.error,
     required this.onCreate,
     required this.onOpen,
+    required this.recentLibraries,
+    required this.onOpenRecent,
     required this.onToggleTheme,
   });
 
@@ -246,6 +269,8 @@ class _LibraryWelcome extends StatelessWidget {
   final String? error;
   final VoidCallback onCreate;
   final VoidCallback onOpen;
+  final List<RecentLibraryEntry> recentLibraries;
+  final ValueChanged<RecentLibraryEntry> onOpenRecent;
   final VoidCallback onToggleTheme;
 
   @override
@@ -262,66 +287,124 @@ class _LibraryWelcome extends StatelessWidget {
         ],
       ),
       body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.video_library_outlined,
-                  size: 72,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  'Deine Medien. Deine Daten.',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.headlineMedium,
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'Öffne eine portable Fundus-Bibliothek oder lege sie direkt in deinem Medienordner an.',
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 28),
-                Wrap(
-                  alignment: WrapAlignment.center,
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    FilledButton.icon(
-                      onPressed: busy ? null : onCreate,
-                      icon: const Icon(Icons.create_new_folder_outlined),
-                      label: const Text('Bibliothek anlegen'),
+        child: SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.video_library_outlined,
+                    size: 72,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    'Deine Medien. Deine Daten.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Öffne eine portable Fundus-Bibliothek oder lege sie direkt in deinem Medienordner an.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 28),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: busy ? null : onCreate,
+                        icon: const Icon(Icons.create_new_folder_outlined),
+                        label: const Text('Bibliothek anlegen'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: busy ? null : onOpen,
+                        icon: const Icon(Icons.folder_open),
+                        label: const Text('Bibliothek öffnen'),
+                      ),
+                    ],
+                  ),
+                  if (recentLibraries.isNotEmpty) ...[
+                    const SizedBox(height: 28),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Zuletzt verwendete Bibliotheken',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
                     ),
-                    OutlinedButton.icon(
-                      onPressed: busy ? null : onOpen,
-                      icon: const Icon(Icons.folder_open),
-                      label: const Text('Bibliothek öffnen'),
+                    const SizedBox(height: 8),
+                    Card(
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(
+                        children: [
+                          for (
+                            var index = 0;
+                            index < recentLibraries.length;
+                            index++
+                          ) ...[
+                            _RecentLibraryTile(
+                              entry: recentLibraries[index],
+                              onTap: busy
+                                  ? null
+                                  : () => onOpenRecent(recentLibraries[index]),
+                            ),
+                            if (index < recentLibraries.length - 1)
+                              const Divider(height: 1),
+                          ],
+                        ],
+                      ),
                     ),
                   ],
-                ),
-                if (busy) ...[
-                  const SizedBox(height: 24),
-                  const LinearProgressIndicator(),
-                ],
-                if (error != null) ...[
-                  const SizedBox(height: 20),
-                  Text(
-                    error!,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
+                  if (busy) ...[
+                    const SizedBox(height: 24),
+                    const LinearProgressIndicator(),
+                  ],
+                  if (error != null) ...[
+                    const SizedBox(height: 20),
+                    Text(
+                      error!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+class _RecentLibraryTile extends StatelessWidget {
+  const _RecentLibraryTile({required this.entry, required this.onTap});
+
+  final RecentLibraryEntry entry;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final available = entry.available;
+    return ListTile(
+      enabled: available && onTap != null,
+      onTap: available ? onTap : null,
+      leading: Icon(
+        Icons.circle,
+        size: 12,
+        color: available ? Colors.green : Theme.of(context).colorScheme.error,
+      ),
+      title: Text(entry.name),
+      subtitle: Text(entry.path, maxLines: 1, overflow: TextOverflow.ellipsis),
+      trailing: Text(available ? 'Verfügbar' : 'Nicht verfügbar'),
     );
   }
 }
@@ -382,6 +465,16 @@ class _LibraryShellState extends State<LibraryShell> {
     }
     if (series != null) {
       works = works.where((work) => (work.series ?? '') == series).toList();
+      if (_query.sort == LibraryWorkSort.relevance) {
+        works.sort((left, right) {
+          final sequence = (left.seriesSequence ?? double.infinity).compareTo(
+            right.seriesSequence ?? double.infinity,
+          );
+          return sequence != 0
+              ? sequence
+              : left.title.toLowerCase().compareTo(right.title.toLowerCase());
+        });
+      }
     }
     return works;
   }
@@ -606,22 +699,7 @@ class _LibraryShellState extends State<LibraryShell> {
                       selected: !detailAsDialog && index == _selectedIndex,
                       onTap: () {
                         setState(() => _selectedIndex = index);
-                        if (detailAsDialog) {
-                          showModalBottomSheet<void>(
-                            context: context,
-                            isScrollControlled: true,
-                            showDragHandle: true,
-                            builder: (context) => FractionallySizedBox(
-                              heightFactor: .82,
-                              child: _DetailPanel(
-                                work: work,
-                                library: widget.library,
-                                player: widget.player,
-                                onPlay: widget.onPlay,
-                              ),
-                            ),
-                          );
-                        }
+                        if (detailAsDialog) _openWorkDetails(work);
                       },
                     );
                   },
@@ -917,17 +995,23 @@ class _LibraryShellState extends State<LibraryShell> {
   void _selectWork(LibraryWorkSummary work, int index, bool detailAsDialog) {
     setState(() => _selectedIndex = index);
     if (!detailAsDialog) return;
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) => FractionallySizedBox(
-        heightFactor: .82,
-        child: _DetailPanel(
-          work: work,
-          library: widget.library,
-          player: widget.player,
-          onPlay: widget.onPlay,
+    _openWorkDetails(work);
+  }
+
+  void _openWorkDetails(LibraryWorkSummary work) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (context) => Scaffold(
+          appBar: AppBar(title: Text(work.title)),
+          body: SafeArea(
+            child: _DetailPanel(
+              work: work,
+              library: widget.library,
+              player: widget.player,
+              onPlay: widget.onPlay,
+            ),
+          ),
         ),
       ),
     );
@@ -1223,7 +1307,21 @@ class _WorkCard extends StatelessWidget {
                     ),
                     child: Stack(
                       fit: StackFit.expand,
-                      children: [_WorkCover(work: work, iconSize: 42)],
+                      children: [
+                        _WorkCover(work: work, iconSize: 42),
+                        if (work.seriesSequence case final sequence?)
+                          Positioned(
+                            left: 8,
+                            top: 8,
+                            child: Badge(
+                              largeSize: 28,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
+                              label: Text('Band ${_formatSequence(sequence)}'),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ),
@@ -1232,7 +1330,8 @@ class _WorkCard extends StatelessWidget {
                 Text(
                   work.series == null
                       ? work.author
-                      : '${work.author} · ${work.series}',
+                      : '${work.author} · ${work.series}'
+                            '${work.seriesSequence == null ? '' : ' · Band ${_formatSequence(work.seriesSequence!)}'}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
@@ -1302,7 +1401,7 @@ class _DetailPanelState extends State<_DetailPanel> {
     _annotations = work == null || library == null
         ? const WorkAnnotations()
         : library.loadAnnotations(work.id);
-    _noteController.text = _annotations.note;
+    _noteController.clear();
   }
 
   void _attachPlayer() {
@@ -1449,7 +1548,33 @@ class _DetailPanelState extends State<_DetailPanel> {
         const SizedBox(height: 20),
         Text('Notizen', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 6),
+        if (_annotations.notes.isEmpty)
+          Text(
+            'Noch keine Notizen vorhanden.',
+            style: Theme.of(context).textTheme.bodySmall,
+          )
+        else
+          for (final note in _annotations.notes)
+            Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _dateTime(note.createdAt),
+                      style: Theme.of(context).textTheme.labelSmall,
+                    ),
+                    const SizedBox(height: 6),
+                    SelectableText(note.markdown),
+                  ],
+                ),
+              ),
+            ),
+        const SizedBox(height: 8),
         TextField(
+          key: const ValueKey('note-input'),
           controller: _noteController,
           enabled: widget.library != null && !_saving,
           minLines: 3,
@@ -1546,10 +1671,14 @@ class _DetailPanelState extends State<_DetailPanel> {
     final library = widget.library;
     final work = widget.work;
     if (library == null || work == null) return;
-    await _runSave(
-      () => library.saveWorkNote(work.id, _noteController.text),
+    final markdown = _noteController.text.trim();
+    if (markdown.isEmpty) return;
+    _noteController.clear();
+    final saved = await _runSave(
+      () => library.saveWorkNote(work.id, markdown),
       successMessage: 'Notiz gespeichert.',
     );
+    if (!saved && mounted) _noteController.text = markdown;
   }
 
   Future<void> _addBookmark() async {
@@ -1614,7 +1743,14 @@ class _DetailPanelState extends State<_DetailPanel> {
     final player = widget.player;
     final currentWork = player?.work;
     final currentTrack = player?.track;
+    final sameBookmarkPosition =
+        currentWork?.id == selectedWork.id &&
+        (bookmark.fileId == null || bookmark.fileId == currentTrack?.fileId) &&
+        player != null &&
+        (player.position - bookmark.position).abs() <=
+            const Duration(seconds: 2);
     final hasReturnPosition =
+        !sameBookmarkPosition &&
         currentWork != null &&
         currentTrack != null &&
         player!.position > Duration.zero;
@@ -1685,28 +1821,29 @@ class _DetailPanelState extends State<_DetailPanel> {
     }
   }
 
-  Future<void> _runSave(
+  Future<bool> _runSave(
     Future<WorkAnnotations> Function() action, {
     String? successMessage,
   }) async {
     setState(() => _saving = true);
     try {
       final annotations = await action();
-      if (!mounted) return;
+      if (!mounted) return false;
       setState(() {
         _annotations = annotations;
-        _noteController.text = annotations.note;
       });
       if (successMessage != null) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(successMessage)));
       }
+      return true;
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) return false;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Speichern fehlgeschlagen: $error')),
       );
+      return false;
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -1717,6 +1854,14 @@ class _DetailPanelState extends State<_DetailPanel> {
     final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
     final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
     return '$hours:$minutes:$seconds';
+  }
+
+  static String _dateTime(DateTime value) {
+    final local = value.toLocal();
+    return '${local.day.toString().padLeft(2, '0')}.'
+        '${local.month.toString().padLeft(2, '0')}.${local.year}, '
+        '${local.hour.toString().padLeft(2, '0')}:'
+        '${local.minute.toString().padLeft(2, '0')} Uhr';
   }
 }
 

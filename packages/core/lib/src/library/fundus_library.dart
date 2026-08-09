@@ -164,7 +164,9 @@ final class FundusLibrary {
 
   Future<WorkAnnotations> saveWorkNote(String workId, String markdown) async {
     _ensureWritable();
-    _database.saveWorkNote(workId, markdown);
+    final normalized = markdown.trim();
+    if (normalized.isEmpty) return loadAnnotations(workId);
+    _database.saveWorkNote(workId, normalized);
     await _writeAnnotationSidecars(workId);
     return loadAnnotations(workId);
   }
@@ -358,7 +360,7 @@ final class FundusLibrary {
     final annotations = loadAnnotations(workId);
     await File(
       p.join(sidecarDirectory.path, 'notes.md'),
-    ).writeAsString(annotations.note, flush: true);
+    ).writeAsString(_serializeNotes(annotations.notes), flush: true);
     await File(p.join(sidecarDirectory.path, 'meta.yaml')).writeAsString(
       const JsonEncoder.withIndent('  ').convert({
         'format_version': 1,
@@ -400,12 +402,24 @@ final class FundusLibrary {
     if (!await sidecarDirectory.exists()) return;
     var annotations = loadAnnotations(workId);
     final noteFile = File(p.join(sidecarDirectory.path, 'notes.md'));
-    if (annotations.note.isEmpty && await noteFile.exists()) {
-      _database.saveWorkNote(
-        workId,
-        await noteFile.readAsString(),
-        updatedAt: await noteFile.lastModified(),
-      );
+    if (annotations.notes.isEmpty && await noteFile.exists()) {
+      final source = await noteFile.readAsString();
+      final notes = _parseNotes(source);
+      if (notes.isEmpty && source.trim().isNotEmpty) {
+        _database.saveWorkNote(
+          workId,
+          source.trim(),
+          updatedAt: await noteFile.lastModified(),
+        );
+      } else {
+        for (final note in notes) {
+          _database.saveWorkNote(
+            workId,
+            note.markdown,
+            updatedAt: note.createdAt,
+          );
+        }
+      }
     }
     final metaFile = File(p.join(sidecarDirectory.path, 'meta.yaml'));
     if (annotations.tags.isEmpty && await metaFile.exists()) {
@@ -493,6 +507,41 @@ final class FundusLibrary {
       _database.setWorkLanguage(workId, language);
       return;
     }
+  }
+
+  static String _serializeNotes(List<LibraryNote> notes) {
+    if (notes.isEmpty) return '';
+    return '${notes.map((note) {
+      final local = note.createdAt.toLocal();
+      final date = '${local.year.toString().padLeft(4, '0')}-'
+          '${local.month.toString().padLeft(2, '0')}-'
+          '${local.day.toString().padLeft(2, '0')} '
+          '${local.hour.toString().padLeft(2, '0')}:'
+          '${local.minute.toString().padLeft(2, '0')}';
+      return '<!-- fundus-note: ${note.createdAt.toUtc().toIso8601String()} -->\n'
+          '## $date\n\n${note.markdown.trim()}';
+    }).join('\n\n')}\n';
+  }
+
+  static List<({String markdown, DateTime createdAt})> _parseNotes(
+    String source,
+  ) {
+    final marker = RegExp(r'<!-- fundus-note: ([^>]+) -->\s*\n## [^\n]*\n\s*');
+    final matches = marker.allMatches(source).toList(growable: false);
+    if (matches.isEmpty) return const [];
+    final notes = <({String markdown, DateTime createdAt})>[];
+    for (var index = 0; index < matches.length; index++) {
+      final match = matches[index];
+      final createdAt = DateTime.tryParse(match.group(1)!.trim());
+      if (createdAt == null) continue;
+      final end = index + 1 < matches.length
+          ? matches[index + 1].start
+          : source.length;
+      final markdown = source.substring(match.end, end).trim();
+      if (markdown.isEmpty) continue;
+      notes.add((markdown: markdown, createdAt: createdAt));
+    }
+    return notes;
   }
 
   Directory _safeWorkDirectory(String sourcePath) {
