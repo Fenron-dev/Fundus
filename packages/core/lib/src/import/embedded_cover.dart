@@ -14,6 +14,13 @@ final class EmbeddedCover {
   final String mimeType;
 }
 
+final class EmbeddedAudioChapter {
+  const EmbeddedAudioChapter({required this.title, required this.position});
+
+  final String title;
+  final Duration position;
+}
+
 /// Reads common embedded audiobook artwork without loading the complete audio
 /// file into memory. M4A/M4B `covr` atoms and MP3 ID3 `APIC` frames are
 /// supported; callers can fall back to a neighboring cover image otherwise.
@@ -38,6 +45,106 @@ final class EmbeddedCoverExtractor {
       'mp3' => _extractMp3Language(file),
       _ => null,
     };
+  }
+
+  /// Reads Nero-style `chpl` chapter atoms used by M4A/M4B audiobooks.
+  /// Timestamps are stored in 100-nanosecond units.
+  Future<List<EmbeddedAudioChapter>> extractChapters(File file) async {
+    final extension = file.path.split('.').last.toLowerCase();
+    if (extension != 'm4a' && extension != 'm4b' && extension != 'mp4') {
+      return const [];
+    }
+    final input = await file.open();
+    try {
+      return await _walkMp4Chapters(input, 0, await input.length(), depth: 0);
+    } finally {
+      await input.close();
+    }
+  }
+
+  Future<List<EmbeddedAudioChapter>> _walkMp4Chapters(
+    RandomAccessFile input,
+    int start,
+    int end, {
+    required int depth,
+  }) async {
+    if (depth > 12 || start < 0 || end <= start) return const [];
+    var offset = start;
+    while (offset + 8 <= end) {
+      await input.setPosition(offset);
+      final header = await input.read(8);
+      if (header.length != 8) return const [];
+      var size = _uint32(header, 0);
+      final type = latin1.decode(header.sublist(4, 8), allowInvalid: true);
+      var headerSize = 8;
+      if (size == 1) {
+        final extended = await input.read(8);
+        if (extended.length != 8) return const [];
+        size = _uint64(extended, 0);
+        headerSize = 16;
+      } else if (size == 0) {
+        size = end - offset;
+      }
+      if (size < headerSize || offset + size > end) return const [];
+
+      final payloadStart = offset + headerSize;
+      final atomEnd = offset + size;
+      if (type == 'chpl') {
+        return _readChapterAtom(input, payloadStart, atomEnd);
+      }
+      const containers = {'moov', 'udta', 'meta'};
+      if (containers.contains(type)) {
+        final childStart = payloadStart + (type == 'meta' ? 4 : 0);
+        final chapters = await _walkMp4Chapters(
+          input,
+          childStart,
+          atomEnd,
+          depth: depth + 1,
+        );
+        if (chapters.isNotEmpty) return chapters;
+      }
+      offset = atomEnd;
+    }
+    return const [];
+  }
+
+  Future<List<EmbeddedAudioChapter>> _readChapterAtom(
+    RandomAccessFile input,
+    int start,
+    int end,
+  ) async {
+    if (end - start < 5) return const [];
+    await input.setPosition(start);
+    final fullBox = await input.read(4);
+    if (fullBox.length != 4) return const [];
+    final version = fullBox.first;
+    if (version != 0) {
+      if (await input.position() + 4 > end) return const [];
+      await input.setPosition(await input.position() + 4);
+    }
+    final countBytes = await input.read(1);
+    if (countBytes.length != 1) return const [];
+    final chapters = <EmbeddedAudioChapter>[];
+    for (var index = 0; index < countBytes.first; index++) {
+      if (await input.position() + 9 > end) return const [];
+      final timestamp = await input.read(8);
+      final titleLengthBytes = await input.read(1);
+      if (timestamp.length != 8 || titleLengthBytes.length != 1) {
+        return const [];
+      }
+      final titleLength = titleLengthBytes.first;
+      if (await input.position() + titleLength > end) return const [];
+      final titleBytes = await input.read(titleLength);
+      final title = utf8.decode(titleBytes, allowMalformed: true).trim();
+      final timestamp100Nanoseconds = _uint64(timestamp, 0);
+      chapters.add(
+        EmbeddedAudioChapter(
+          title: title.isEmpty ? 'Kapitel ${index + 1}' : title,
+          position: Duration(microseconds: timestamp100Nanoseconds ~/ 10),
+        ),
+      );
+    }
+    return chapters;
   }
 
   Future<EmbeddedCover?> _extractMp4(File file) async {

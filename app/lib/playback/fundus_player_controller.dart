@@ -55,6 +55,7 @@ final class FundusPlayerController extends ChangeNotifier {
   FundusLibrary? _library;
   LibraryWorkSummary? _work;
   List<LibraryPlaybackTrack> _tracks = [];
+  List<LibraryPlaybackChapter> _chapters = [];
   int _currentIndex = 0;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
@@ -74,6 +75,17 @@ final class FundusPlayerController extends ChangeNotifier {
   int get currentIndex => _currentIndex;
   int get trackCount => _tracks.length;
   List<LibraryPlaybackTrack> get tracks => List.unmodifiable(_tracks);
+  List<LibraryPlaybackChapter> get chapters => List.unmodifiable(_chapters);
+  int? get currentChapterIndex {
+    int? result;
+    for (var index = 0; index < _chapters.length; index++) {
+      final chapter = _chapters[index];
+      if (chapter.trackIndex != _currentIndex) continue;
+      if (chapter.position <= _position) result = index;
+    }
+    return result;
+  }
+
   Duration get position => _position;
   Duration get duration => _duration;
   bool get playing => _playing;
@@ -101,6 +113,7 @@ final class FundusPlayerController extends ChangeNotifier {
     _library = library;
     _work = work;
     _tracks = library.playbackTracks(work.id);
+    _chapters = await library.playbackChapters(work.id);
     _currentIndex = 0;
     _position = Duration.zero;
     notifyListeners();
@@ -201,6 +214,28 @@ final class FundusPlayerController extends ChangeNotifier {
     _currentIndex = index;
     _position = Duration.zero;
     notifyListeners();
+  }
+
+  Future<void> jumpToChapter(LibraryPlaybackChapter chapter) async {
+    if (!_ready ||
+        chapter.trackIndex < 0 ||
+        chapter.trackIndex >= _tracks.length) {
+      return;
+    }
+    await persist();
+    if (chapter.trackIndex != _currentIndex) {
+      _skipNextTrackTransition = true;
+      await _player.jump(chapter.trackIndex);
+      _currentIndex = chapter.trackIndex;
+    }
+    if (chapter.position > Duration.zero) {
+      _position = await _seekAndVerify(chapter.position);
+    } else {
+      await _player.seek(Duration.zero);
+      _position = Duration.zero;
+    }
+    notifyListeners();
+    await persist();
   }
 
   Future<void> previous() async {

@@ -27,6 +27,8 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - durchgehende Desktop-Audiowiedergabe mit Tracknavigation und Geschwindigkeit
 - vergrößerbare Playeransicht mit Dateien, Chapters, Details und Playlist als
   umschaltbarem Kontext
+- anspringbare Chapters aus eingebetteten M4B/M4A-`chpl`-Marken; bei
+  Mehrdatei-Hörbüchern dienen die sortierten Tracks als Kapitel
 - werkbezogener Resume-Punkt über Datei- und Hörbuchwechsel mit Revisionshistorie
 - Sleep-Timer mit festen Laufzeiten, Countdown und Stopp am Trackende
 - anspringbare Zeit-Lesezeichen mit optionalem Rücksprung-Lesezeichen

@@ -2273,15 +2273,7 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
   Widget _context(LibraryWorkSummary? work) => switch (_tab) {
     _PlayerContextTab.files => _trackList('Dateien'),
     _PlayerContextTab.playlist => _playlist(work),
-    _PlayerContextTab.chapters => const Center(
-      child: Padding(
-        padding: EdgeInsets.all(24),
-        child: Text(
-          'Für dieses Hörbuch wurden noch keine eingebetteten Chapters eingelesen.',
-          textAlign: TextAlign.center,
-        ),
-      ),
-    ),
+    _PlayerContextTab.chapters => _chapterList(),
     _PlayerContextTab.details => _DetailPanel(
       work: work,
       library: widget.library,
@@ -2317,6 +2309,64 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
         ),
       ],
     );
+  }
+
+  Widget _chapterList() {
+    final chapters = widget.controller.chapters;
+    if (chapters.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'Für dieses Hörbuch wurden keine Chapters gefunden.',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+    final currentChapter = widget.controller.currentChapterIndex;
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: chapters.length + 1,
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+            child: Text(
+              'Chapters',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          );
+        }
+        final chapterIndex = index - 1;
+        final chapter = chapters[chapterIndex];
+        final selected = chapterIndex == currentChapter;
+        return ListTile(
+          selected: selected,
+          leading: Text('$index'),
+          title: Text(
+            chapter.title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(_chapterSubtitle(chapter)),
+          trailing: selected ? const Icon(Icons.graphic_eq) : null,
+          onTap: () => widget.controller.jumpToChapter(chapter),
+        );
+      },
+    );
+  }
+
+  String _chapterSubtitle(LibraryPlaybackChapter chapter) {
+    final parts = <String>[];
+    if (widget.controller.trackCount > 1) {
+      parts.add('Datei ${chapter.trackIndex + 1}');
+    }
+    parts.add('ab ${_PlayerBar._time(chapter.position)}');
+    if (chapter.duration case final duration?) {
+      parts.add('Dauer ${_PlayerBar._time(duration)}');
+    }
+    return parts.join(' · ');
   }
 
   Widget _trackList(String title) => ListView.builder(

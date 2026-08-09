@@ -91,6 +91,41 @@ void main() {
 
     expect(await const EmbeddedCoverExtractor().extractLanguage(file), 'de-DE');
   });
+
+  test('extracts chapter titles and positions from an M4B chpl atom', () async {
+    final directory = await Directory.systemTemp.createTemp('fundus-chapters-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/book.m4b');
+    await file.writeAsBytes(
+      _atom('moov', [
+        ..._atom('udta', [
+          ..._atom('chpl', [
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            2,
+            ..._uint64(0),
+            ..._chapterTitle('Anfang'),
+            ..._uint64(75 * 10000000),
+            ..._chapterTitle('Weiter'),
+          ]),
+        ]),
+      ]),
+    );
+
+    final chapters = await const EmbeddedCoverExtractor().extractChapters(file);
+
+    expect(chapters, hasLength(2));
+    expect(chapters[0].title, 'Anfang');
+    expect(chapters[0].position, Duration.zero);
+    expect(chapters[1].title, 'Weiter');
+    expect(chapters[1].position, const Duration(minutes: 1, seconds: 15));
+  });
 }
 
 List<int> _atom(String type, List<int> payload) {
@@ -98,3 +133,10 @@ List<int> _atom(String type, List<int> payload) {
   final bytes = ByteData(4)..setUint32(0, size);
   return [...bytes.buffer.asUint8List(), ...type.codeUnits, ...payload];
 }
+
+List<int> _uint64(int value) {
+  final bytes = ByteData(8)..setUint64(0, value);
+  return bytes.buffer.asUint8List();
+}
+
+List<int> _chapterTitle(String value) => [value.length, ...value.codeUnits];

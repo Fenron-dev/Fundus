@@ -33,6 +33,12 @@ void main() {
       '01 - Kapitel.mp3',
       '02 - Kapitel.mp3',
     ]);
+    final chapters = await library.playbackChapters(works.single.id);
+    expect(chapters.map((chapter) => chapter.title), [
+      '01 - Kapitel',
+      '02 - Kapitel',
+    ]);
+    expect(chapters.map((chapter) => chapter.trackIndex), [0, 1]);
     final saved = library.saveProgress(
       workId: works.single.id,
       fileId: tracks[1].fileId,

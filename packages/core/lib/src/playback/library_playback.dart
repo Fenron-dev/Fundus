@@ -18,6 +18,22 @@ final class LibraryPlaybackTrack {
   final Duration? duration;
 }
 
+final class LibraryPlaybackChapter {
+  const LibraryPlaybackChapter({
+    required this.title,
+    required this.fileId,
+    required this.trackIndex,
+    required this.position,
+    this.duration,
+  });
+
+  final String title;
+  final String fileId;
+  final int trackIndex;
+  final Duration position;
+  final Duration? duration;
+}
+
 final class LibraryPlaybackProgress {
   const LibraryPlaybackProgress({
     required this.workId,

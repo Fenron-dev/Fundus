@@ -137,6 +137,53 @@ final class FundusLibrary {
         .toList(growable: false);
   }
 
+  Future<List<LibraryPlaybackChapter>> playbackChapters(String workId) async {
+    final tracks = playbackTracks(workId);
+    if (tracks.isEmpty) return const [];
+    if (tracks.length > 1) {
+      return [
+        for (var index = 0; index < tracks.length; index++)
+          LibraryPlaybackChapter(
+            title: p.basenameWithoutExtension(tracks[index].title),
+            fileId: tracks[index].fileId,
+            trackIndex: index,
+            position: Duration.zero,
+            duration: tracks[index].duration,
+          ),
+      ];
+    }
+
+    final track = tracks.single;
+    final embedded = await const EmbeddedCoverExtractor().extractChapters(
+      File(track.absolutePath),
+    );
+    if (embedded.isEmpty) {
+      return [
+        LibraryPlaybackChapter(
+          title: p.basenameWithoutExtension(track.title),
+          fileId: track.fileId,
+          trackIndex: 0,
+          position: Duration.zero,
+          duration: track.duration,
+        ),
+      ];
+    }
+    return [
+      for (var index = 0; index < embedded.length; index++)
+        LibraryPlaybackChapter(
+          title: embedded[index].title,
+          fileId: track.fileId,
+          trackIndex: 0,
+          position: embedded[index].position,
+          duration: index + 1 < embedded.length
+              ? embedded[index + 1].position - embedded[index].position
+              : track.duration == null
+              ? null
+              : track.duration! - embedded[index].position,
+        ),
+    ];
+  }
+
   String? workDirectoryPath(String workId) {
     final sourcePath = _database.workSourcePath(workId);
     return sourcePath == null ? null : _safeWorkDirectory(sourcePath).path;
