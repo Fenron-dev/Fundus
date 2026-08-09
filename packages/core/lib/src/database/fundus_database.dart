@@ -22,6 +22,16 @@ final class LibraryWorkSummary {
     this.seriesSequence,
     this.coverPath,
     this.language,
+    this.subtitle,
+    this.description,
+    this.narrators = const [],
+    this.genres = const [],
+    this.publisher,
+    this.publishedYear,
+    this.isbn,
+    this.asin,
+    this.explicit,
+    this.abridged,
   });
 
   final String id;
@@ -34,6 +44,16 @@ final class LibraryWorkSummary {
   final double? seriesSequence;
   final String? coverPath;
   final String? language;
+  final String? subtitle;
+  final String? description;
+  final List<String> narrators;
+  final List<String> genres;
+  final String? publisher;
+  final int? publishedYear;
+  final String? isbn;
+  final String? asin;
+  final bool? explicit;
+  final bool? abridged;
 }
 
 final class FundusDatabase {
@@ -133,7 +153,28 @@ final class FundusDatabase {
     Map<String, String> fileIds, {
     String? preferredWorkId,
   }) {
-    final identity = candidate.identity;
+    var identity = candidate.identity;
+    if (preferredWorkId != null &&
+        candidate.usesFallbackIdentity &&
+        candidate.absMetadata == null) {
+      final previous = _database.select(
+        'SELECT title, series_name, series_sequence, metadata_json '
+        'FROM works WHERE id = ?',
+        [preferredWorkId],
+      );
+      if (previous.isNotEmpty) {
+        final row = previous.first;
+        final metadata = jsonDecode(row['metadata_json'] as String);
+        identity = AbsBookIdentity(
+          author: metadata is Map && metadata['author'] is String
+              ? metadata['author'] as String
+              : identity.author,
+          title: row['title'] as String,
+          series: row['series_name'] as String?,
+          sequence: (row['series_sequence'] as num?)?.toDouble(),
+        );
+      }
+    }
     String? seriesId;
     if (identity.series case final series?) {
       seriesId = _upsertWork(
@@ -150,7 +191,10 @@ final class FundusDatabase {
       parentId: seriesId,
       seriesName: identity.series,
       seriesSequence: identity.sequence,
-      metadata: {'author': identity.author},
+      metadata: {
+        'author': identity.author,
+        ...?candidate.absMetadata?.toDatabaseMetadata(),
+      },
       preferredId: preferredWorkId,
     );
     final previousTracks = _database.select(
@@ -259,11 +303,14 @@ final class FundusDatabase {
   List<LibraryWorkSummary> listWorks() {
     final rows = _database.select('''
       SELECT w.id, w.kind, w.title, w.series_name, w.series_sequence, w.added_at,
-             w.metadata_json, COUNT(wf.file_id) AS file_count,
+             w.metadata_json, COUNT(content.id) AS file_count,
              COALESCE(cover.path, w.generated_cover_path) AS cover_path
       FROM works w
       LEFT JOIN work_files wf ON wf.work_id = w.id AND wf.role = 'content'
+      LEFT JOIN files content ON content.id = wf.file_id
+        AND content.status = 'available'
       LEFT JOIN files cover ON cover.id = w.cover_file_id
+        AND cover.status = 'available'
       WHERE w.kind != 'book_series' AND w.status = 'available'
       GROUP BY w.id
       ORDER BY COALESCE(w.series_name, w.title) COLLATE NOCASE,
@@ -287,10 +334,24 @@ final class FundusDatabase {
             ),
             coverPath: row['cover_path'] as String?,
             language: metadata['language'] as String?,
+            subtitle: metadata['subtitle'] as String?,
+            description: metadata['description'] as String?,
+            narrators: _metadataStrings(metadata['narrators']),
+            genres: _metadataStrings(metadata['genres']),
+            publisher: metadata['publisher'] as String?,
+            publishedYear: (metadata['published_year'] as num?)?.round(),
+            isbn: metadata['isbn'] as String?,
+            asin: metadata['asin'] as String?,
+            explicit: metadata['explicit'] as bool?,
+            abridged: metadata['abridged'] as bool?,
           );
         })
         .toList(growable: false);
   }
+
+  static List<String> _metadataStrings(Object? value) => value is List
+      ? value.whereType<String>().toList(growable: false)
+      : const [];
 
   List<
     ({String fileId, String path, String title, int position, int? durationMs})
@@ -642,6 +703,78 @@ final class FundusDatabase {
     }
   }
 
+  String? findMovedAudiobookWorkId(AudiobookImportCandidate candidate) {
+    final destination = _database.select(
+      'SELECT id FROM works WHERE source_path = ?',
+      [candidate.directory],
+    );
+    if (destination.isNotEmpty) return null;
+    final expected = _fileSignature(candidate.audioFiles);
+    final staleWorks = _database.select(
+      '''
+      SELECT w.id
+      FROM works w
+      WHERE w.kind = 'audiobook' AND w.source_path != ?
+        AND NOT EXISTS (
+          SELECT 1 FROM work_files wf
+          JOIN files f ON f.id = wf.file_id
+          WHERE wf.work_id = w.id AND wf.role = 'content'
+            AND f.status = 'available'
+        )
+    ''',
+      [candidate.directory],
+    );
+    final matches = <String>[];
+    for (final row in staleWorks) {
+      final workId = row['id'] as String;
+      final files = _database.select(
+        '''
+        SELECT f.filename, f.size
+        FROM work_files wf
+        JOIN files f ON f.id = wf.file_id
+        WHERE wf.work_id = ? AND wf.role = 'content'
+      ''',
+        [workId],
+      );
+      final actual = <String, int>{};
+      for (final file in files) {
+        final key = '${file['filename']}\u0000${file['size']}';
+        actual[key] = (actual[key] ?? 0) + 1;
+      }
+      if (_sameSignature(expected, actual)) matches.add(workId);
+    }
+    return matches.length == 1 ? matches.single : null;
+  }
+
+  void markWorksWithoutAvailableContentMissing() {
+    _database.execute('''
+      UPDATE works SET status = 'missing'
+      WHERE kind != 'book_series' AND NOT EXISTS (
+        SELECT 1 FROM work_files wf
+        JOIN files f ON f.id = wf.file_id
+        WHERE wf.work_id = works.id AND wf.role = 'content'
+          AND f.status = 'available'
+      )
+    ''');
+  }
+
+  static Map<String, int> _fileSignature(Iterable<ScannedFile> files) {
+    final signature = <String, int>{};
+    for (final file in files) {
+      final key = '${file.filename}\u0000${file.size}';
+      signature[key] = (signature[key] ?? 0) + 1;
+    }
+    return signature;
+  }
+
+  static bool _sameSignature(Map<String, int> left, Map<String, int> right) {
+    if (left.isEmpty || left.length != right.length) return false;
+    for (final entry in left.entries) {
+      if (right[entry.key] != entry.value) return false;
+    }
+    return true;
+  }
+
   String _upsertWork({
     required String kind,
     required String sourcePath,
@@ -659,6 +792,23 @@ final class FundusDatabase {
     final preferred = preferredId == null
         ? null
         : _database.select('SELECT id FROM works WHERE id = ?', [preferredId]);
+    final targetId = preferred?.isNotEmpty ?? false
+        ? preferredId
+        : existing.isEmpty
+        ? null
+        : existing.first['id'] as String;
+    final mergedMetadata = <String, Object?>{};
+    if (targetId != null) {
+      final previous = _database.select(
+        'SELECT metadata_json FROM works WHERE id = ?',
+        [targetId],
+      );
+      if (previous.isNotEmpty) {
+        final decoded = jsonDecode(previous.first['metadata_json'] as String);
+        if (decoded is Map<String, dynamic>) mergedMetadata.addAll(decoded);
+      }
+    }
+    mergedMetadata.addAll(metadata);
     if (preferred?.isNotEmpty ?? false) {
       if (existing.isNotEmpty && existing.first['id'] != preferredId) {
         throw StateError(
@@ -680,7 +830,7 @@ final class FundusDatabase {
           title.toLowerCase(),
           seriesName,
           seriesSequence,
-          jsonEncode(metadata),
+          jsonEncode(mergedMetadata),
           preferredId,
         ],
       );
@@ -714,7 +864,7 @@ final class FundusDatabase {
         title.toLowerCase(),
         seriesName,
         seriesSequence,
-        jsonEncode(metadata),
+        jsonEncode(mergedMetadata),
         DateTime.now().millisecondsSinceEpoch,
       ],
     );

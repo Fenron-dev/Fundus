@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:fundus_core/fundus_core.dart';
@@ -229,6 +230,7 @@ void main() {
       await original.create(recursive: true);
       await File('${original.path}/01 - Anfang.mp3').writeAsBytes([1, 2, 3]);
       await File('${original.path}/02 - Ende.mp3').writeAsBytes([4, 5, 6]);
+      await File('${original.path}/cover.jpg').writeAsBytes([0xff, 0xd8, 0xff]);
 
       final library = await FundusLibrary.create(root);
       addTearDown(library.close);
@@ -276,6 +278,84 @@ void main() {
       expect(annotations.bookmarks.single.label, 'Vor dem Verschieben');
     },
   );
+
+  test(
+    'recognizes a moved audiobook even when its sidecar is missing',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'fundus-move-no-sidecar-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final original = Directory(
+        '${root.path}/Autor/Serie/01 - Bleibender Titel',
+      );
+      await original.create(recursive: true);
+      await File('${original.path}/01 - Anfang.mp3').writeAsBytes([1, 2, 3]);
+      await File('${original.path}/02 - Ende.mp3').writeAsBytes([4, 5, 6]);
+      await File('${original.path}/cover.jpg').writeAsBytes([0xff, 0xd8, 0xff]);
+
+      final library = await FundusLibrary.create(root);
+      addTearDown(library.close);
+      await library.index().drain<void>();
+      final before = library.listWorks().single;
+      final beforeTracks = library.playbackTracks(before.id);
+      library.saveProgress(
+        workId: before.id,
+        fileId: beforeTracks[1].fileId,
+        position: const Duration(minutes: 9, seconds: 8),
+        operationId: 'move-without-sidecar',
+      );
+      await Directory('${original.path}/_fundus').delete(recursive: true);
+      await original.rename('${root.path}/Verschobenes Hörbuch');
+
+      await library.index().drain<void>();
+
+      final after = library.listWorks().single;
+      final afterTracks = library.playbackTracks(after.id);
+      expect(after.id, before.id);
+      expect(after.title, 'Bleibender Titel');
+      expect(after.coverPath, isNotNull);
+      expect(library.loadProgress(after.id)!.fileId, afterTracks[1].fileId);
+      expect(library.loadProgress(after.id)!.position.displayValue, '00:09:08');
+    },
+  );
+
+  test('imports ABS metadata and description for a loose audiobook', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-abs-json-');
+    addTearDown(() => root.delete(recursive: true));
+    final book = Directory('${root.path}/Neutraler Ordner');
+    await book.create(recursive: true);
+    await File('${book.path}/audio.mp3').writeAsBytes([1, 2, 3]);
+    await File('${book.path}/metadata.json').writeAsString(
+      jsonEncode({
+        'title': 'Titel aus ABS',
+        'authors': ['ABS Autor'],
+        'narrators': ['ABS Sprecher'],
+        'series': ['ABS Serie #2'],
+        'genres': ['Fantasy'],
+        'tags': ['Favorit'],
+        'language': 'de',
+        'description': '<p>Erster Absatz.</p><p>Zweiter Absatz.</p>',
+        'publisher': 'ABS Verlag',
+        'publishedYear': 2025,
+      }),
+    );
+
+    final library = await FundusLibrary.create(root);
+    addTearDown(library.close);
+    await library.index().drain<void>();
+
+    final work = library.listWorks().single;
+    expect(work.title, 'Titel aus ABS');
+    expect(work.author, 'ABS Autor');
+    expect(work.series, 'ABS Serie');
+    expect(work.seriesSequence, 2);
+    expect(work.description, 'Erster Absatz.\n\nZweiter Absatz.');
+    expect(work.narrators, ['ABS Sprecher']);
+    expect(work.publisher, 'ABS Verlag');
+    expect(work.publishedYear, 2025);
+    expect(library.loadAnnotations(work.id).tags, ['Fantasy', 'Favorit']);
+  });
 
   test('open rejects a directory without a manifest', () async {
     final root = await Directory.systemTemp.createTemp('fundus-empty-');

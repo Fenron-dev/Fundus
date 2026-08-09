@@ -53,6 +53,10 @@ final class LibraryWorkSearch {
       work.title,
       work.author,
       work.series ?? '',
+      work.subtitle ?? '',
+      work.description ?? '',
+      ...work.narrators,
+      ...work.genres,
       if (work.seriesSequence case final sequence?)
         'Band ${sequence == sequence.roundToDouble() ? sequence.toInt() : sequence}',
     ], needle);

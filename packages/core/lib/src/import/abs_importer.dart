@@ -1,5 +1,6 @@
 import 'package:path/path.dart' as p;
 
+import 'abs_metadata.dart';
 import '../scan/library_scanner.dart';
 
 final class AbsBookIdentity {
@@ -23,6 +24,7 @@ final class AudiobookImportCandidate {
     required this.audioFiles,
     required this.coverFiles,
     this.usesFallbackIdentity = false,
+    this.absMetadata,
   });
 
   final AbsBookIdentity identity;
@@ -30,15 +32,19 @@ final class AudiobookImportCandidate {
   final List<ScannedFile> audioFiles;
   final List<ScannedFile> coverFiles;
   final bool usesFallbackIdentity;
+  final AbsAudiobookMetadata? absMetadata;
 
-  AudiobookImportCandidate copyWith({AbsBookIdentity? identity}) =>
-      AudiobookImportCandidate(
-        identity: identity ?? this.identity,
-        directory: directory,
-        audioFiles: audioFiles,
-        coverFiles: coverFiles,
-        usesFallbackIdentity: usesFallbackIdentity,
-      );
+  AudiobookImportCandidate copyWith({
+    AbsBookIdentity? identity,
+    AbsAudiobookMetadata? absMetadata,
+  }) => AudiobookImportCandidate(
+    identity: identity ?? this.identity,
+    directory: directory,
+    audioFiles: audioFiles,
+    coverFiles: coverFiles,
+    usesFallbackIdentity: usesFallbackIdentity,
+    absMetadata: absMetadata ?? this.absMetadata,
+  );
 }
 
 final class AbsImporter {

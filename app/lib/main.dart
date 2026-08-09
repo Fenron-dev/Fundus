@@ -1703,6 +1703,8 @@ class _DetailPanelState extends State<_DetailPanel> {
           selectedWork.title,
           style: Theme.of(context).textTheme.headlineSmall,
         ),
+        if (selectedWork.subtitle case final subtitle?)
+          Text(subtitle, style: Theme.of(context).textTheme.titleSmall),
         Text(
           selectedWork.series == null
               ? selectedWork.author
@@ -1745,8 +1747,30 @@ class _DetailPanelState extends State<_DetailPanel> {
                       : 'Serie: $series · Band ${_formatSequence(selectedWork.seriesSequence!)}',
                 ),
               ),
+            if (selectedWork.narrators.isNotEmpty)
+              Chip(
+                label: Text(
+                  'Gelesen von: ${selectedWork.narrators.join(', ')}',
+                ),
+              ),
+            if (selectedWork.publisher case final publisher?)
+              Chip(
+                label: Text(
+                  selectedWork.publishedYear == null
+                      ? 'Verlag: $publisher'
+                      : 'Verlag: $publisher · ${selectedWork.publishedYear}',
+                ),
+              )
+            else if (selectedWork.publishedYear case final year?)
+              Chip(label: Text('Erschienen: $year')),
           ],
         ),
+        if (selectedWork.description case final description?) ...[
+          const SizedBox(height: 20),
+          Text('Beschreibung', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 6),
+          SelectableText(description),
+        ],
         const SizedBox(height: 20),
         Row(
           children: [

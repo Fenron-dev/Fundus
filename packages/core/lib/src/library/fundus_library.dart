@@ -6,6 +6,7 @@ import 'package:yaml/yaml.dart';
 
 import '../database/fundus_database.dart';
 import '../import/abs_importer.dart';
+import '../import/abs_metadata.dart';
 import '../import/embedded_cover.dart';
 import '../model/fundus_id.dart';
 import '../model/library_configuration.dart';
@@ -317,12 +318,14 @@ final class FundusLibrary {
     for (final grouped in groupedCandidates) {
       final portable = await _readPortableIdentity(grouped);
       portableIdentities[grouped.directory] = portable;
+      final withAbsMetadata = await _withAbsMetadata(grouped);
       if (portable.identity case final identity?) {
-        candidates.add(grouped.copyWith(identity: identity));
-      } else if (grouped.usesFallbackIdentity) {
-        candidates.add(await _withEmbeddedIdentity(grouped));
+        candidates.add(withAbsMetadata.copyWith(identity: identity));
+      } else if (withAbsMetadata.absMetadata == null &&
+          grouped.usesFallbackIdentity) {
+        candidates.add(await _withEmbeddedIdentity(withAbsMetadata));
       } else {
-        candidates.add(grouped);
+        candidates.add(withAbsMetadata);
       }
     }
     yield LibraryIndexEvent(
@@ -338,15 +341,18 @@ final class FundusLibrary {
       }
       _database.markUnseenFilesMissing(ids.keys.toSet());
       for (final candidate in candidates) {
+        final portableId = portableIdentities[candidate.directory]?.workId;
         indexed.add((
           candidate: candidate,
           workId: _database.upsertAudiobookCandidate(
             candidate,
             ids,
-            preferredWorkId: portableIdentities[candidate.directory]?.workId,
+            preferredWorkId:
+                portableId ?? _database.findMovedAudiobookWorkId(candidate),
           ),
         ));
       }
+      _database.markWorksWithoutAvailableContentMissing();
       return indexed;
     });
     for (final indexed in indexedCandidates) {
@@ -366,6 +372,7 @@ final class FundusLibrary {
       } on YamlException {
         // The user can repair malformed portable metadata and scan again.
       }
+      await _importAbsTags(indexed.candidate, indexed.workId);
       await _cacheEmbeddedCover(indexed.candidate, indexed.workId);
       if (portableIdentities[indexed.candidate.directory]?.writable ?? false) {
         await _writeMetadataSidecar(indexed.workId);
@@ -376,6 +383,45 @@ final class FundusLibrary {
       fileCount: files.length,
       workCount: candidates.length,
     );
+  }
+
+  Future<AudiobookImportCandidate> _withAbsMetadata(
+    AudiobookImportCandidate candidate,
+  ) async {
+    try {
+      final metadata = await const AbsMetadataReader().read(
+        File(
+          p.join(_safeWorkDirectory(candidate.directory).path, 'metadata.json'),
+        ),
+      );
+      if (metadata == null) return candidate;
+      return candidate.copyWith(
+        absMetadata: metadata,
+        identity: AbsBookIdentity(
+          author: metadata.author ?? candidate.identity.author,
+          title: metadata.title ?? candidate.identity.title,
+          series: metadata.series ?? candidate.identity.series,
+          sequence: metadata.sequence ?? candidate.identity.sequence,
+        ),
+      );
+    } on FileSystemException {
+      return candidate;
+    } on FormatException {
+      return candidate;
+    }
+  }
+
+  Future<void> _importAbsTags(
+    AudiobookImportCandidate candidate,
+    String workId,
+  ) async {
+    final metadata = candidate.absMetadata;
+    if (metadata == null) return;
+    final existing = loadAnnotations(workId);
+    if (existing.tags.isNotEmpty) return;
+    final tags = {...metadata.tags, ...metadata.genres};
+    if (tags.isEmpty) return;
+    _database.replaceWorkTags(workId, tags);
   }
 
   Future<AudiobookImportCandidate> _withEmbeddedIdentity(
@@ -432,6 +478,16 @@ final class FundusLibrary {
       seriesSequence: work.seriesSequence,
       coverPath: absolutePath,
       language: work.language,
+      subtitle: work.subtitle,
+      description: work.description,
+      narrators: work.narrators,
+      genres: work.genres,
+      publisher: work.publisher,
+      publishedYear: work.publishedYear,
+      isbn: work.isbn,
+      asin: work.asin,
+      explicit: work.explicit,
+      abridged: work.abridged,
     );
   }
 
@@ -674,6 +730,12 @@ final class FundusLibrary {
         _database.setWorkLanguage(workId, value['language'] as String);
         return;
       }
+    }
+
+    final absLanguage = candidate.absMetadata?.language;
+    if (absLanguage != null && absLanguage.trim().isNotEmpty) {
+      _database.setWorkLanguage(workId, absLanguage);
+      return;
     }
 
     final sourceFile = File(p.join(workDirectory.path, '_source.json'));
