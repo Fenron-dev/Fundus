@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/main.dart';
@@ -108,5 +110,45 @@ void main() {
     expect(find.text('Versammlung der Apachen'), findsNothing);
     expect(find.text('Noch keine Tags vergeben.'), findsOneWidget);
     expect(find.byType(Image), findsWidgets);
+  });
+
+  testWidgets('detail panel renders portable tags and notes', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final setup = await tester.runAsync(() async {
+      final root = await Directory.systemTemp.createTemp('fundus-widget-');
+      final book = Directory('${root.path}/Autor/Serie/01 - Titel');
+      await book.create(recursive: true);
+      await File('${book.path}/Kapitel.mp3').writeAsBytes([1, 2, 3]);
+      final library = await FundusLibrary.create(root);
+      await library.index().drain<void>();
+      final work = library.listWorks().single;
+      await library.replaceWorkTags(work.id, ['Fantasy']);
+      await library.saveWorkNote(work.id, 'Meine **Notiz**');
+      return (root: root, library: library, work: work);
+    });
+    final root = setup!.root;
+    final library = setup.library;
+    final work = setup.work;
+    addTearDown(() => root.delete(recursive: true));
+    addTearDown(library.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LibraryShell(
+          works: [work],
+          library: library,
+          onToggleTheme: () {},
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('#Fantasy'), findsOneWidget);
+    expect(find.text('Meine **Notiz**'), findsOneWidget);
+    expect(find.text('Notiz speichern'), findsOneWidget);
+    expect(find.byTooltip('Tag hinzufügen'), findsOneWidget);
   });
 }

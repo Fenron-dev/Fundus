@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:sqlite3/sqlite3.dart';
 
 import '../import/abs_importer.dart';
+import '../library/work_annotations.dart';
 import '../model/fundus_id.dart';
 import '../model/media_position.dart';
 import '../playback/library_playback.dart';
@@ -366,6 +367,182 @@ final class FundusDatabase {
       return loadProgress(workId)!;
     });
   }
+
+  String? workSourcePath(String workId) {
+    final rows = _database.select(
+      'SELECT source_path FROM works WHERE id = ?',
+      [workId],
+    );
+    return rows.isEmpty ? null : rows.first['source_path'] as String;
+  }
+
+  WorkAnnotations loadAnnotations(String workId) {
+    final tagRows = _database.select(
+      '''
+      SELECT t.name
+      FROM work_tags wt
+      JOIN tags t ON t.id = wt.tag_id
+      WHERE wt.work_id = ?
+      ORDER BY t.name COLLATE NOCASE
+      ''',
+      [workId],
+    );
+    final noteRows = _database.select(
+      '''
+      SELECT markdown
+      FROM notes
+      WHERE work_id = ? AND user_id = 'default'
+      ORDER BY updated_at DESC
+      LIMIT 1
+      ''',
+      [workId],
+    );
+    final bookmarkRows = _database.select(
+      '''
+      SELECT id, file_id, numeric_value, label, note, created_at
+      FROM bookmarks
+      WHERE work_id = ? AND user_id = 'default'
+      ORDER BY numeric_value, created_at
+      ''',
+      [workId],
+    );
+    return WorkAnnotations(
+      tags: tagRows.map((row) => row['name'] as String).toList(growable: false),
+      note: noteRows.isEmpty ? '' : noteRows.first['markdown'] as String,
+      bookmarks: bookmarkRows
+          .map(
+            (row) => LibraryBookmark(
+              id: row['id'] as String,
+              workId: workId,
+              fileId: row['file_id'] as String?,
+              position: Duration(
+                milliseconds: (((row['numeric_value'] as num?) ?? 0) * 1000)
+                    .round(),
+              ),
+              label: row['label'] as String?,
+              note: row['note'] as String?,
+              createdAt: DateTime.fromMillisecondsSinceEpoch(
+                row['created_at'] as int,
+              ),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  void replaceWorkTags(String workId, Iterable<String> names) {
+    final normalized =
+        {
+            for (final name in names)
+              if (name.trim().isNotEmpty) name.trim(),
+          }.toList(growable: false)
+          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    transaction(() {
+      _database.execute('DELETE FROM work_tags WHERE work_id = ?', [workId]);
+      for (final name in normalized) {
+        final existing = _database.select(
+          'SELECT id FROM tags WHERE name = ? COLLATE NOCASE',
+          [name],
+        );
+        final tagId = existing.isEmpty
+            ? FundusId.generate()
+            : existing.first['id'] as String;
+        if (existing.isEmpty) {
+          _database.execute('INSERT INTO tags (id, name) VALUES (?, ?)', [
+            tagId,
+            name,
+          ]);
+        }
+        _database.execute(
+          'INSERT INTO work_tags (work_id, tag_id) VALUES (?, ?)',
+          [workId, tagId],
+        );
+      }
+    });
+  }
+
+  void saveWorkNote(String workId, String markdown, {DateTime? updatedAt}) {
+    final existing = _database.select(
+      "SELECT id, revision FROM notes WHERE work_id = ? AND user_id = 'default' ORDER BY updated_at DESC LIMIT 1",
+      [workId],
+    );
+    final now = (updatedAt ?? DateTime.now()).millisecondsSinceEpoch;
+    if (existing.isEmpty) {
+      _database.execute(
+        '''
+        INSERT INTO notes (id, work_id, user_id, markdown, revision, updated_at)
+        VALUES (?, ?, 'default', ?, 1, ?)
+        ''',
+        [FundusId.generate(), workId, markdown, now],
+      );
+      return;
+    }
+    _database.execute(
+      'UPDATE notes SET markdown = ?, revision = ?, updated_at = ? WHERE id = ?',
+      [
+        markdown,
+        (existing.first['revision'] as int) + 1,
+        now,
+        existing.first['id'],
+      ],
+    );
+  }
+
+  LibraryBookmark addBookmark({
+    required String workId,
+    required String fileId,
+    required Duration position,
+    String? label,
+    String? note,
+    String? id,
+    DateTime? createdAt,
+  }) {
+    var bookmarkId = id ?? FundusId.generate();
+    if (id != null) {
+      final existing = _database.select(
+        'SELECT work_id FROM bookmarks WHERE id = ?',
+        [id],
+      );
+      if (existing.isNotEmpty && existing.first['work_id'] != workId) {
+        bookmarkId = FundusId.generate();
+      }
+    }
+    final bookmark = LibraryBookmark(
+      id: bookmarkId,
+      workId: workId,
+      fileId: fileId,
+      position: position,
+      label: label?.trim().isEmpty ?? true ? null : label!.trim(),
+      note: note?.trim().isEmpty ?? true ? null : note!.trim(),
+      createdAt: createdAt ?? DateTime.now(),
+    );
+    _database.execute(
+      '''
+      INSERT INTO bookmarks (
+        id, work_id, file_id, user_id, position_kind, numeric_value,
+        label, note, created_at
+      ) VALUES (?, ?, ?, 'default', 'time', ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        file_id = excluded.file_id,
+        numeric_value = excluded.numeric_value,
+        label = excluded.label,
+        note = excluded.note
+      ''',
+      [
+        bookmark.id,
+        bookmark.workId,
+        bookmark.fileId,
+        bookmark.position.inMilliseconds / 1000,
+        bookmark.label,
+        bookmark.note,
+        bookmark.createdAt.millisecondsSinceEpoch,
+      ],
+    );
+    return bookmark;
+  }
+
+  void deleteBookmark(String bookmarkId) =>
+      _database.execute('DELETE FROM bookmarks WHERE id = ?', [bookmarkId]);
 
   void markUnseenFilesMissing(Set<String> seenPaths) {
     _database.execute("UPDATE files SET status = 'missing'");

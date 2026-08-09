@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:yaml/yaml.dart';
 
 import '../database/fundus_database.dart';
 import '../import/abs_importer.dart';
@@ -10,6 +12,7 @@ import '../model/library_manifest.dart';
 import '../playback/library_playback.dart';
 import '../scan/library_scanner.dart';
 import '../search/library_work_query.dart';
+import 'work_annotations.dart';
 
 enum LibraryIndexPhase { scanning, importing, completed, cancelled }
 
@@ -144,6 +147,55 @@ final class FundusLibrary {
     operationId: operationId ?? FundusId.generate(),
   );
 
+  WorkAnnotations loadAnnotations(String workId) =>
+      _database.loadAnnotations(workId);
+
+  Future<WorkAnnotations> replaceWorkTags(
+    String workId,
+    Iterable<String> tags,
+  ) async {
+    _ensureWritable();
+    _database.replaceWorkTags(workId, tags);
+    await _writeAnnotationSidecars(workId);
+    return loadAnnotations(workId);
+  }
+
+  Future<WorkAnnotations> saveWorkNote(String workId, String markdown) async {
+    _ensureWritable();
+    _database.saveWorkNote(workId, markdown);
+    await _writeAnnotationSidecars(workId);
+    return loadAnnotations(workId);
+  }
+
+  Future<WorkAnnotations> addBookmark({
+    required String workId,
+    required String fileId,
+    required Duration position,
+    String? label,
+    String? note,
+  }) async {
+    _ensureWritable();
+    _database.addBookmark(
+      workId: workId,
+      fileId: fileId,
+      position: position,
+      label: label,
+      note: note,
+    );
+    await _writeAnnotationSidecars(workId);
+    return loadAnnotations(workId);
+  }
+
+  Future<WorkAnnotations> deleteBookmark(
+    String workId,
+    String bookmarkId,
+  ) async {
+    _ensureWritable();
+    _database.deleteBookmark(bookmarkId);
+    await _writeAnnotationSidecars(workId);
+    return loadAnnotations(workId);
+  }
+
   Stream<LibraryIndexEvent> index({
     LibraryScanner? scanner,
     AbsImporter? importer,
@@ -197,6 +249,13 @@ final class FundusLibrary {
       return indexed;
     });
     for (final indexed in indexedCandidates) {
+      try {
+        await _importAnnotationSidecars(indexed.candidate, indexed.workId);
+      } on FileSystemException {
+        // A broken sidecar must not make the complete library unavailable.
+      } on YamlException {
+        // The user can repair malformed portable metadata and scan again.
+      }
       await _cacheEmbeddedCover(indexed.candidate, indexed.workId);
     }
     yield LibraryIndexEvent(
@@ -207,6 +266,12 @@ final class FundusLibrary {
   }
 
   void close() => _database.close();
+
+  void _ensureWritable() {
+    if (isReadOnly) {
+      throw StateError('Die Bibliothek ist schreibgeschützt.');
+    }
+  }
 
   LibraryWorkSummary _withAbsoluteCoverPath(LibraryWorkSummary work) {
     final coverPath = work.coverPath;
@@ -270,6 +335,116 @@ final class FundusLibrary {
       }
     }
     _database.setGeneratedCoverPath(workId, null);
+  }
+
+  Future<void> _writeAnnotationSidecars(String workId) async {
+    final sourcePath = _database.workSourcePath(workId);
+    if (sourcePath == null) return;
+    final workDirectory = _safeWorkDirectory(sourcePath);
+    final sidecarDirectory = Directory(p.join(workDirectory.path, '_fundus'));
+    await sidecarDirectory.create(recursive: true);
+    final annotations = loadAnnotations(workId);
+    await File(
+      p.join(sidecarDirectory.path, 'notes.md'),
+    ).writeAsString(annotations.note, flush: true);
+    await File(p.join(sidecarDirectory.path, 'meta.yaml')).writeAsString(
+      const JsonEncoder.withIndent(
+        '  ',
+      ).convert({'format_version': 1, 'tags': annotations.tags}),
+      flush: true,
+    );
+    final tracksById = {
+      for (final track in playbackTracks(workId))
+        track.fileId: track.relativePath,
+    };
+    await File(p.join(sidecarDirectory.path, 'bookmarks.yaml')).writeAsString(
+      const JsonEncoder.withIndent('  ').convert({
+        'format_version': 1,
+        'bookmarks': [
+          for (final bookmark in annotations.bookmarks)
+            {
+              'id': bookmark.id,
+              'file_path': tracksById[bookmark.fileId],
+              'position_ms': bookmark.position.inMilliseconds,
+              'label': bookmark.label,
+              'note': bookmark.note,
+              'created_at': bookmark.createdAt.toUtc().toIso8601String(),
+            },
+        ],
+      }),
+      flush: true,
+    );
+  }
+
+  Future<void> _importAnnotationSidecars(
+    AudiobookImportCandidate candidate,
+    String workId,
+  ) async {
+    final sidecarDirectory = Directory(
+      p.joinAll([root.path, ...p.posix.split(candidate.directory), '_fundus']),
+    );
+    if (!await sidecarDirectory.exists()) return;
+    var annotations = loadAnnotations(workId);
+    final noteFile = File(p.join(sidecarDirectory.path, 'notes.md'));
+    if (annotations.note.isEmpty && await noteFile.exists()) {
+      _database.saveWorkNote(
+        workId,
+        await noteFile.readAsString(),
+        updatedAt: await noteFile.lastModified(),
+      );
+    }
+    final metaFile = File(p.join(sidecarDirectory.path, 'meta.yaml'));
+    if (annotations.tags.isEmpty && await metaFile.exists()) {
+      final value = loadYaml(await metaFile.readAsString());
+      if (value is Map && value['tags'] is List) {
+        _database.replaceWorkTags(
+          workId,
+          (value['tags'] as List).whereType<String>(),
+        );
+      }
+    }
+    annotations = loadAnnotations(workId);
+    final bookmarksFile = File(p.join(sidecarDirectory.path, 'bookmarks.yaml'));
+    if (annotations.bookmarks.isEmpty && await bookmarksFile.exists()) {
+      final value = loadYaml(await bookmarksFile.readAsString());
+      final bookmarks = value is Map ? value['bookmarks'] : null;
+      if (bookmarks is List) {
+        final tracksByPath = {
+          for (final track in playbackTracks(workId))
+            track.relativePath: track.fileId,
+        };
+        for (final item in bookmarks.whereType<Map>()) {
+          final fileId = tracksByPath[item['file_path']];
+          final positionMs = item['position_ms'];
+          if (fileId == null || positionMs is! num) continue;
+          final id = item['id'];
+          final label = item['label'];
+          final note = item['note'];
+          final createdAt = item['created_at'];
+          _database.addBookmark(
+            id: id is String ? id : null,
+            workId: workId,
+            fileId: fileId,
+            position: Duration(milliseconds: positionMs.round()),
+            label: label is String ? label : null,
+            note: note is String ? note : null,
+            createdAt: createdAt is String
+                ? DateTime.tryParse(createdAt)
+                : null,
+          );
+        }
+      }
+    }
+  }
+
+  Directory _safeWorkDirectory(String sourcePath) {
+    final path = p.normalize(
+      p.joinAll([root.path, ...p.posix.split(sourcePath)]),
+    );
+    if (!p.isWithin(root.path, path)) {
+      throw StateError('Unsicherer Werkpfad im Bibliotheksindex: $sourcePath');
+    }
+    return Directory(path);
   }
 
   static File _manifestFile(Directory root) =>

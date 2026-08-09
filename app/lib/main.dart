@@ -77,6 +77,7 @@ class _FundusAppState extends State<FundusApp> {
             )
           : LibraryShell(
               works: _works!,
+              library: _library,
               libraryName: _library?.root.path
                   .split(Platform.pathSeparator)
                   .last,
@@ -295,6 +296,7 @@ class LibraryShell extends StatefulWidget {
     super.key,
     required this.works,
     required this.onToggleTheme,
+    this.library,
     this.libraryName,
     this.indexEvent,
     this.onRescan,
@@ -304,6 +306,7 @@ class LibraryShell extends StatefulWidget {
   });
 
   final List<LibraryWorkSummary> works;
+  final FundusLibrary? library;
   final VoidCallback onToggleTheme;
   final String? libraryName;
   final LibraryIndexEvent? indexEvent;
@@ -364,7 +367,12 @@ class _LibraryShellState extends State<LibraryShell> {
                   const VerticalDivider(width: 1),
                   SizedBox(
                     width: 368,
-                    child: _DetailPanel(work: selected, onPlay: widget.onPlay),
+                    child: _DetailPanel(
+                      work: selected,
+                      library: widget.library,
+                      player: widget.player,
+                      onPlay: widget.onPlay,
+                    ),
                   ),
                 ],
               ),
@@ -553,6 +561,8 @@ class _LibraryShellState extends State<LibraryShell> {
                               heightFactor: .82,
                               child: _DetailPanel(
                                 work: work,
+                                library: widget.library,
+                                player: widget.player,
                                 onPlay: widget.onPlay,
                               ),
                             ),
@@ -831,16 +841,90 @@ class _WorkCard extends StatelessWidget {
   }
 }
 
-class _DetailPanel extends StatelessWidget {
-  const _DetailPanel({required this.work, this.onPlay});
+class _DetailPanel extends StatefulWidget {
+  const _DetailPanel({
+    required this.work,
+    this.library,
+    this.player,
+    this.onPlay,
+  });
 
   final LibraryWorkSummary? work;
+  final FundusLibrary? library;
+  final FundusPlayerController? player;
   final ValueChanged<LibraryWorkSummary>? onPlay;
 
   @override
+  State<_DetailPanel> createState() => _DetailPanelState();
+}
+
+class _DetailPanelState extends State<_DetailPanel> {
+  final _noteController = TextEditingController();
+  WorkAnnotations _annotations = const WorkAnnotations();
+  bool _saving = false;
+  bool _bookmarkAvailable = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    _attachPlayer();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DetailPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.work?.id != widget.work?.id ||
+        oldWidget.library != widget.library) {
+      _load();
+    }
+    if (oldWidget.player != widget.player) {
+      oldWidget.player?.removeListener(_syncPlayer);
+      _attachPlayer();
+    } else {
+      _syncPlayer(notify: false);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.player?.removeListener(_syncPlayer);
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  void _load() {
+    final work = widget.work;
+    final library = widget.library;
+    _annotations = work == null || library == null
+        ? const WorkAnnotations()
+        : library.loadAnnotations(work.id);
+    _noteController.text = _annotations.note;
+  }
+
+  void _attachPlayer() {
+    widget.player?.addListener(_syncPlayer);
+    _syncPlayer(notify: false);
+  }
+
+  void _syncPlayer({bool notify = true}) {
+    final next =
+        widget.library != null &&
+        widget.player?.work?.id == widget.work?.id &&
+        widget.player?.track != null;
+    if (next == _bookmarkAvailable) return;
+    if (notify && mounted) {
+      setState(() => _bookmarkAvailable = next);
+    } else {
+      _bookmarkAvailable = next;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (work == null) return const _EmptyLibrary();
-    final selectedWork = work!;
+    if (widget.work == null) return const _EmptyLibrary();
+    final selectedWork = widget.work!;
+    final canBookmark = _bookmarkAvailable;
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -868,7 +952,9 @@ class _DetailPanel extends StatelessWidget {
         Text('${selectedWork.fileCount} Mediendatei(en)'),
         const SizedBox(height: 12),
         FilledButton.icon(
-          onPressed: onPlay == null ? null : () => onPlay!(selectedWork),
+          onPressed: widget.onPlay == null
+              ? null
+              : () => widget.onPlay!(selectedWork),
           icon: const Icon(Icons.play_arrow),
           label: const Text('Weiterhören'),
         ),
@@ -891,33 +977,240 @@ class _DetailPanel extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 20),
-        Text('Tags', style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 6),
-        Text(
-          'Noch keine Tags vergeben.',
-          style: Theme.of(context).textTheme.bodySmall,
+        Row(
+          children: [
+            Text('Tags', style: Theme.of(context).textTheme.titleSmall),
+            const Spacer(),
+            IconButton(
+              onPressed: widget.library == null || _saving ? null : _addTag,
+              tooltip: 'Tag hinzufügen',
+              icon: const Icon(Icons.add, size: 20),
+            ),
+          ],
         ),
+        const SizedBox(height: 6),
+        if (_annotations.tags.isEmpty)
+          Text(
+            'Noch keine Tags vergeben.',
+            style: Theme.of(context).textTheme.bodySmall,
+          )
+        else
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final tag in _annotations.tags)
+                InputChip(
+                  label: Text('#$tag'),
+                  onDeleted: _saving ? null : () => _removeTag(tag),
+                ),
+            ],
+          ),
         const SizedBox(height: 20),
-        Text('Lesezeichen', style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 6),
-        Text(
-          'Noch keine Lesezeichen vorhanden.',
-          style: Theme.of(context).textTheme.bodySmall,
+        Row(
+          children: [
+            Text('Lesezeichen', style: Theme.of(context).textTheme.titleSmall),
+            const Spacer(),
+            IconButton(
+              onPressed: canBookmark && !_saving ? _addBookmark : null,
+              tooltip: canBookmark
+                  ? 'Aktuelle Position merken'
+                  : 'Hörbuch starten, um die Position zu merken',
+              icon: const Icon(Icons.bookmark_add_outlined, size: 20),
+            ),
+          ],
         ),
+        const SizedBox(height: 6),
+        if (_annotations.bookmarks.isEmpty)
+          Text(
+            'Noch keine Lesezeichen vorhanden.',
+            style: Theme.of(context).textTheme.bodySmall,
+          )
+        else
+          for (final bookmark in _annotations.bookmarks)
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: Text(_time(bookmark.position)),
+              title: Text(bookmark.label ?? 'Lesezeichen'),
+              subtitle: bookmark.note == null ? null : Text(bookmark.note!),
+              trailing: IconButton(
+                onPressed: _saving ? null : () => _deleteBookmark(bookmark.id),
+                tooltip: 'Lesezeichen löschen',
+                icon: const Icon(Icons.delete_outline, size: 20),
+              ),
+            ),
         const SizedBox(height: 20),
         Text('Notizen', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 6),
-        Text(
-          'Noch keine Notizen vorhanden.',
-          style: Theme.of(context).textTheme.bodySmall,
+        TextField(
+          controller: _noteController,
+          enabled: widget.library != null && !_saving,
+          minLines: 3,
+          maxLines: 8,
+          decoration: const InputDecoration(
+            hintText: 'Notiz in Markdown schreiben …',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerRight,
+          child: FilledButton.tonalIcon(
+            onPressed: widget.library == null || _saving ? null : _saveNote,
+            icon: _saving
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.save_outlined),
+            label: const Text('Notiz speichern'),
+          ),
         ),
       ],
     );
   }
 
+  Future<void> _addTag() async {
+    final controller = TextEditingController();
+    final value = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Tag hinzufügen'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'z. B. Fantasy'),
+          onSubmitted: (value) => Navigator.pop(context, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Hinzufügen'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (value == null || value.trim().isEmpty) return;
+    await _updateTags({..._annotations.tags, value.trim()});
+  }
+
+  Future<void> _removeTag(String tag) async {
+    await _updateTags(_annotations.tags.where((value) => value != tag));
+  }
+
+  Future<void> _updateTags(Iterable<String> tags) async {
+    final library = widget.library;
+    final work = widget.work;
+    if (library == null || work == null) return;
+    await _runSave(() => library.replaceWorkTags(work.id, tags));
+  }
+
+  Future<void> _saveNote() async {
+    final library = widget.library;
+    final work = widget.work;
+    if (library == null || work == null) return;
+    await _runSave(
+      () => library.saveWorkNote(work.id, _noteController.text),
+      successMessage: 'Notiz gespeichert.',
+    );
+  }
+
+  Future<void> _addBookmark() async {
+    final library = widget.library;
+    final work = widget.work;
+    final player = widget.player;
+    final track = player?.track;
+    if (library == null || work == null || player == null || track == null) {
+      return;
+    }
+    final controller = TextEditingController();
+    final label = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Lesezeichen bei ${_time(player.position)}'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Bezeichnung (optional)',
+          ),
+          onSubmitted: (value) => Navigator.pop(context, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Speichern'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (label == null) return;
+    await _runSave(
+      () => library.addBookmark(
+        workId: work.id,
+        fileId: track.fileId,
+        position: player.position,
+        label: label,
+      ),
+      successMessage: 'Lesezeichen gespeichert.',
+    );
+  }
+
+  Future<void> _deleteBookmark(String bookmarkId) async {
+    final library = widget.library;
+    final work = widget.work;
+    if (library == null || work == null) return;
+    await _runSave(() => library.deleteBookmark(work.id, bookmarkId));
+  }
+
+  Future<void> _runSave(
+    Future<WorkAnnotations> Function() action, {
+    String? successMessage,
+  }) async {
+    setState(() => _saving = true);
+    try {
+      final annotations = await action();
+      if (!mounted) return;
+      setState(() {
+        _annotations = annotations;
+        _noteController.text = annotations.note;
+      });
+      if (successMessage != null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(successMessage)));
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Speichern fehlgeschlagen: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   static String _sequence(double value) => value == value.roundToDouble()
       ? value.toInt().toString()
       : value.toString().replaceAll('.', ',');
+
+  static String _time(Duration value) {
+    final hours = value.inHours.toString().padLeft(2, '0');
+    final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
+    final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
+    return '$hours:$minutes:$seconds';
+  }
 }
 
 class _WorkCover extends StatelessWidget {

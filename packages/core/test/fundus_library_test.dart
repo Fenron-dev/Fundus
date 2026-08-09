@@ -81,6 +81,55 @@ void main() {
     expect(coverBytes.sublist(0, 3), [0xff, 0xd8, 0xff]);
   });
 
+  test('restores tags notes and bookmarks from portable sidecars', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-sidecars-');
+    addTearDown(() => root.delete(recursive: true));
+    final book = Directory('${root.path}/Autor/Serie/01 - Titel');
+    await book.create(recursive: true);
+    await File('${book.path}/01 - Kapitel.mp3').writeAsBytes([1, 2, 3]);
+
+    final library = await FundusLibrary.create(root);
+    await library.index().drain<void>();
+    final work = library.listWorks().single;
+    final track = library.playbackTracks(work.id).single;
+    await library.replaceWorkTags(work.id, ['Fantasy', 'Favorit']);
+    await library.saveWorkNote(work.id, '# Eindruck\n\nSehr gutes Hörbuch.');
+    await library.addBookmark(
+      workId: work.id,
+      fileId: track.fileId,
+      position: const Duration(minutes: 12, seconds: 34),
+      label: 'Wichtige Stelle',
+    );
+
+    final annotations = library.loadAnnotations(work.id);
+    expect(annotations.tags, ['Fantasy', 'Favorit']);
+    expect(annotations.note, contains('Sehr gutes Hörbuch'));
+    expect(
+      annotations.bookmarks.single.position,
+      const Duration(minutes: 12, seconds: 34),
+    );
+    final sidecars = Directory('${book.path}/_fundus');
+    expect(await File('${sidecars.path}/meta.yaml').exists(), isTrue);
+    expect(await File('${sidecars.path}/notes.md').exists(), isTrue);
+    expect(await File('${sidecars.path}/bookmarks.yaml').exists(), isTrue);
+    library.close();
+
+    await File('${root.path}/.library/index.db').delete();
+    final rebuilt = await FundusLibrary.open(root);
+    addTearDown(rebuilt.close);
+    await rebuilt.index().drain<void>();
+    final rebuiltWork = rebuilt.listWorks().single;
+    final restored = rebuilt.loadAnnotations(rebuiltWork.id);
+
+    expect(restored.tags, ['Fantasy', 'Favorit']);
+    expect(restored.note, contains('Sehr gutes Hörbuch'));
+    expect(restored.bookmarks.single.label, 'Wichtige Stelle');
+    expect(
+      restored.bookmarks.single.position,
+      const Duration(minutes: 12, seconds: 34),
+    );
+  });
+
   test('open rejects a directory without a manifest', () async {
     final root = await Directory.systemTemp.createTemp('fundus-empty-');
     addTearDown(() => root.delete(recursive: true));
