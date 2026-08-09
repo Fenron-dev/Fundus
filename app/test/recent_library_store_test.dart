@@ -33,4 +33,21 @@ void main() {
     await File('${root.path}/.library/version.json').writeAsString('{}');
     expect(entry.available, isTrue);
   });
+
+  test('persists and retains a macOS security bookmark', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-bookmark-');
+    addTearDown(() => root.delete(recursive: true));
+    final store = RecentLibraryStore(File('${root.path}/recent.json'));
+
+    var entries = await store.remember(
+      '${root.path}/library',
+      const [],
+      securityBookmark: 'opaque-bookmark-token',
+    );
+    entries = await store.remember('${root.path}/library', entries);
+    final restored = await store.load();
+
+    expect(entries.single.securityBookmark, 'opaque-bookmark-token');
+    expect(restored.single.securityBookmark, 'opaque-bookmark-token');
+  });
 }

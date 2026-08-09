@@ -2,10 +2,15 @@ import 'dart:convert';
 import 'dart:io';
 
 final class RecentLibraryEntry {
-  const RecentLibraryEntry({required this.path, required this.lastOpenedAt});
+  const RecentLibraryEntry({
+    required this.path,
+    required this.lastOpenedAt,
+    this.securityBookmark,
+  });
 
   final String path;
   final DateTime lastOpenedAt;
+  final String? securityBookmark;
 
   String get name {
     final segments = path
@@ -25,6 +30,7 @@ final class RecentLibraryEntry {
   Map<String, Object?> toJson() => {
     'path': path,
     'last_opened_at': lastOpenedAt.toUtc().toIso8601String(),
+    if (securityBookmark != null) 'security_bookmark': securityBookmark,
   };
 }
 
@@ -66,11 +72,18 @@ final class RecentLibraryStore {
       for (final item in value.whereType<Map>()) {
         final path = item['path'];
         final timestamp = item['last_opened_at'];
+        final securityBookmark = item['security_bookmark'];
         if (path is! String || timestamp is! String) continue;
         final lastOpenedAt = DateTime.tryParse(timestamp);
         if (lastOpenedAt == null) continue;
         entries.add(
-          RecentLibraryEntry(path: path, lastOpenedAt: lastOpenedAt.toLocal()),
+          RecentLibraryEntry(
+            path: path,
+            lastOpenedAt: lastOpenedAt.toLocal(),
+            securityBookmark: securityBookmark is String
+                ? securityBookmark
+                : null,
+          ),
         );
       }
       entries.sort((a, b) => b.lastOpenedAt.compareTo(a.lastOpenedAt));
@@ -84,11 +97,19 @@ final class RecentLibraryStore {
 
   Future<List<RecentLibraryEntry>> remember(
     String path,
-    List<RecentLibraryEntry> current,
-  ) async {
+    List<RecentLibraryEntry> current, {
+    String? securityBookmark,
+  }) async {
     final normalized = Directory(path).absolute.path;
+    final previous = current
+        .where((entry) => entry.path == normalized)
+        .firstOrNull;
     final entries = [
-      RecentLibraryEntry(path: normalized, lastOpenedAt: DateTime.now()),
+      RecentLibraryEntry(
+        path: normalized,
+        lastOpenedAt: DateTime.now(),
+        securityBookmark: securityBookmark ?? previous?.securityBookmark,
+      ),
       ...current.where((entry) => entry.path != normalized),
     ].take(10).toList(growable: false);
     await file.parent.create(recursive: true);

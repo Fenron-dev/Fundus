@@ -33,6 +33,8 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - bearbeitbare Tags mit fuzzy gefilterten Vorschlägen und Markdown-Notizen
 - Kachel-/Tabellenansicht und Navigation nach Autor, Serie und Buch
 - bis zu zehn zuletzt verwendete Bibliotheken mit Verfügbarkeitsstatus
+- dauerhafte macOS-Freigabe zuletzt verwendeter Bibliotheken über
+  Security-Scoped Bookmarks
 - datierte Notiz-Historie mit portablem Markdown-Sidecar
 - Sprachimport aus Sidecars sowie M4B/M4A- und MP3-Metadaten
 - portabler Sidecar-Spiegel unter `_fundus/`, der einen Index-Neuaufbau überlebt
@@ -41,7 +43,7 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - responsive Flutter-Oberfläche für Desktop, Tablet und Mobile
 - ein-/ausblendbare Detailleiste und Inline-Details bei mittleren Fensterbreiten
 - per Maus verstellbare Breite der linken und rechten Seitenleisten sowie
-  sichtbarer Werk-Dateipfad in den Details
+  sichtbarer Werk-Dateipfad in den Details; Doppelklick setzt die Breite zurück
 - rotierendes, exportierbares JSONL-Diagnoseprotokoll ohne absolute Medienpfade
 - Grundgerüst für den token-geschützten lokalen HTTP-Server
 

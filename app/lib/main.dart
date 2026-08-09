@@ -4,11 +4,13 @@ import 'dart:ui' show AppExitResponse;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'diagnostics/fundus_diagnostics.dart';
 import 'library/recent_library_store.dart';
+import 'library/security_scoped_bookmarks.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/playback_sleep_timer.dart';
 
@@ -138,15 +140,41 @@ class _FundusAppState extends State<FundusApp> {
           : 'Fundus-Bibliothek öffnen',
     );
     if (path == null || !mounted) return;
-    await _openLibraryPath(path, create: create);
+    final bookmark = await SecurityScopedBookmarks.create(path);
+    await _openLibraryPath(path, create: create, securityBookmark: bookmark);
   }
 
   Future<void> _openRecentLibrary(RecentLibraryEntry entry) async {
-    if (!entry.available) return;
-    await _openLibraryPath(entry.path, create: false);
+    var bookmark = entry.securityBookmark;
+    String? resolvedPath;
+    try {
+      resolvedPath = await SecurityScopedBookmarks.startAccess(bookmark);
+    } on PlatformException {
+      resolvedPath = null;
+    } on MissingPluginException {
+      resolvedPath = null;
+    }
+    if (Platform.isMacOS && resolvedPath == null) {
+      final selected = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Zugriff auf „${entry.name}“ erneut erlauben',
+        initialDirectory: entry.path,
+      );
+      if (selected == null || !mounted) return;
+      resolvedPath = selected;
+      bookmark = await SecurityScopedBookmarks.create(selected);
+    }
+    await _openLibraryPath(
+      resolvedPath ?? entry.path,
+      create: false,
+      securityBookmark: bookmark,
+    );
   }
 
-  Future<void> _openLibraryPath(String path, {required bool create}) async {
+  Future<void> _openLibraryPath(
+    String path, {
+    required bool create,
+    String? securityBookmark,
+  }) async {
     setState(() {
       _busy = true;
       _error = null;
@@ -164,7 +192,11 @@ class _FundusAppState extends State<FundusApp> {
         'create': create,
       });
       _works = library.listWorks();
-      _recentLibraries = await _recentStore.remember(path, _recentLibraries);
+      _recentLibraries = await _recentStore.remember(
+        path,
+        _recentLibraries,
+        securityBookmark: securityBookmark,
+      );
       if (mounted) setState(() {});
       await _scan();
     } catch (error) {
@@ -175,7 +207,32 @@ class _FundusAppState extends State<FundusApp> {
   }
 
   Future<void> _loadRecentLibraries() async {
-    final entries = await _recentStore.load();
+    var entries = await _recentStore.load();
+    if (Platform.isMacOS) {
+      final resolved = <RecentLibraryEntry>[];
+      for (final entry in entries) {
+        String? path;
+        try {
+          path = await SecurityScopedBookmarks.startAccess(
+            entry.securityBookmark,
+          );
+        } on PlatformException {
+          path = null;
+        } on MissingPluginException {
+          path = null;
+        }
+        resolved.add(
+          path == null
+              ? entry
+              : RecentLibraryEntry(
+                  path: path,
+                  lastOpenedAt: entry.lastOpenedAt,
+                  securityBookmark: entry.securityBookmark,
+                ),
+        );
+      }
+      entries = resolved;
+    }
     if (mounted) setState(() => _recentLibraries = entries);
   }
 
@@ -430,17 +487,28 @@ class _RecentLibraryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final available = entry.available;
+    final canAttempt = available || Platform.isMacOS;
     return ListTile(
-      enabled: available && onTap != null,
-      onTap: available ? onTap : null,
+      enabled: canAttempt && onTap != null,
+      onTap: canAttempt ? onTap : null,
       leading: Icon(
         Icons.circle,
         size: 12,
-        color: available ? Colors.green : Theme.of(context).colorScheme.error,
+        color: available
+            ? Colors.green
+            : Platform.isMacOS
+            ? Colors.orange
+            : Theme.of(context).colorScheme.error,
       ),
       title: Text(entry.name),
       subtitle: Text(entry.path, maxLines: 1, overflow: TextOverflow.ellipsis),
-      trailing: Text(available ? 'Verfügbar' : 'Nicht verfügbar'),
+      trailing: Text(
+        available
+            ? 'Verfügbar'
+            : Platform.isMacOS
+            ? 'Zugriff erneuern'
+            : 'Nicht verfügbar',
+      ),
     );
   }
 }
@@ -573,6 +641,7 @@ class _LibraryShellState extends State<LibraryShell> {
                         420,
                       ),
                     ),
+                    onReset: () => setState(() => _leftPaneWidth = 236),
                   ),
                   Expanded(
                     child: _playerExpanded && widget.player != null
@@ -593,6 +662,7 @@ class _LibraryShellState extends State<LibraryShell> {
                         () => _detailPaneWidth = (_detailPaneWidth - delta)
                             .clamp(280, 680),
                       ),
+                      onReset: () => setState(() => _detailPaneWidth = 368),
                     ),
                     SizedBox(
                       width: _detailPaneWidth,
@@ -1408,9 +1478,10 @@ class _SectionLabel extends StatelessWidget {
 }
 
 class _ResizeHandle extends StatelessWidget {
-  const _ResizeHandle({required this.onDrag});
+  const _ResizeHandle({required this.onDrag, required this.onReset});
 
   final ValueChanged<double> onDrag;
+  final VoidCallback onReset;
 
   @override
   Widget build(BuildContext context) => MouseRegion(
@@ -1418,6 +1489,7 @@ class _ResizeHandle extends StatelessWidget {
     child: GestureDetector(
       behavior: HitTestBehavior.opaque,
       onHorizontalDragUpdate: (details) => onDrag(details.delta.dx),
+      onDoubleTap: onReset,
       child: const SizedBox(
         width: 7,
         child: Center(child: VerticalDivider(width: 1)),
@@ -2150,6 +2222,7 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
               onDrag: (delta) => setState(
                 () => _contextWidth = (_contextWidth - delta).clamp(300, 720),
               ),
+              onReset: () => setState(() => _contextWidth = 340),
             ),
             SizedBox(
               width: _contextWidth,
