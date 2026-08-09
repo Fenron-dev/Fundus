@@ -22,12 +22,23 @@ final class AudiobookImportCandidate {
     required this.directory,
     required this.audioFiles,
     required this.coverFiles,
+    this.usesFallbackIdentity = false,
   });
 
   final AbsBookIdentity identity;
   final String directory;
   final List<ScannedFile> audioFiles;
   final List<ScannedFile> coverFiles;
+  final bool usesFallbackIdentity;
+
+  AudiobookImportCandidate copyWith({AbsBookIdentity? identity}) =>
+      AudiobookImportCandidate(
+        identity: identity ?? this.identity,
+        directory: directory,
+        audioFiles: audioFiles,
+        coverFiles: coverFiles,
+        usesFallbackIdentity: usesFallbackIdentity,
+      );
 }
 
 final class AbsImporter {
@@ -115,8 +126,8 @@ final class AbsImporter {
               .toList()
             ..sort(_compareTracks);
       if (audio.isEmpty) continue;
-      final identity =
-          parseBookDirectory(entry.key) ?? _fallbackIdentity(entry.key, audio);
+      final parsedIdentity = parseBookDirectory(entry.key);
+      final identity = parsedIdentity ?? _fallbackIdentity(entry.key, audio);
       final covers = entry.value
           .where((file) => coverNames.contains(file.filename.toLowerCase()))
           .toList(growable: false);
@@ -126,6 +137,7 @@ final class AbsImporter {
           directory: entry.key,
           audioFiles: audio,
           coverFiles: covers,
+          usesFallbackIdentity: parsedIdentity == null,
         ),
       );
     }

@@ -128,6 +128,36 @@ void main() {
     expect(await Directory('${root.path}/_fundus').exists(), isTrue);
   });
 
+  test('uses embedded identity tags for a loose audiobook', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-tagged-');
+    addTearDown(() => root.delete(recursive: true));
+    final book = Directory('${root.path}/Audiobooks/Neutraler Ordner');
+    await book.create(recursive: true);
+    await File(
+      '${book.path}/audio.m4b',
+    ).writeAsBytes(_m4bWithIdentityMetadata());
+
+    final library = await FundusLibrary.create(root);
+    addTearDown(library.close);
+    await library.index().drain<void>();
+
+    final work = library.listWorks().single;
+    expect(work.title, 'Titel aus Tags');
+    expect(work.author, 'Autor aus Tags');
+    expect(work.series, 'Serie aus Tags');
+    expect(work.seriesSequence, 4);
+    expect(work.language, 'German');
+    final sidecar = await File('${book.path}/_fundus/meta.yaml').readAsString();
+    expect(sidecar, contains('"title": "Titel aus Tags"'));
+    expect(sidecar, contains('"author": "Autor aus Tags"'));
+
+    await File('${book.path}/audio.m4b').writeAsBytes(
+      _m4bWithIdentityMetadata(title: 'Später veränderter Dateitag'),
+    );
+    await library.index().drain<void>();
+    expect(library.listWorks().single.title, 'Titel aus Tags');
+  });
+
   test('restores tags notes and bookmarks from portable sidecars', () async {
     final root = await Directory.systemTemp.createTemp('fundus-sidecars-');
     addTearDown(() => root.delete(recursive: true));
@@ -287,6 +317,35 @@ List<int> _m4bWithJpegCover() => _atom('moov', [
       ]),
     ]),
   ]),
+]);
+
+List<int> _m4bWithIdentityMetadata({String title = 'Titel aus Tags'}) =>
+    _atom('moov', [
+      ..._atom('udta', [
+        ..._atom('meta', [
+          0,
+          0,
+          0,
+          0,
+          ..._atom('ilst', [
+            ..._textTag('©nam', title),
+            ..._textTag('aART', 'Autor aus Tags'),
+            ..._freeformTag('SERIES', 'Serie aus Tags'),
+            ..._freeformTag('PART', '4'),
+            ..._freeformTag('LANGUAGE', 'German'),
+          ]),
+        ]),
+      ]),
+    ]);
+
+List<int> _textTag(String type, String value) => _atom(type, [
+  ..._atom('data', [0, 0, 0, 1, 0, 0, 0, 0, ...value.codeUnits]),
+]);
+
+List<int> _freeformTag(String name, String value) => _atom('----', [
+  ..._atom('mean', [0, 0, 0, 0, ...'com.apple.iTunes'.codeUnits]),
+  ..._atom('name', [0, 0, 0, 0, ...name.codeUnits]),
+  ..._atom('data', [0, 0, 0, 1, 0, 0, 0, 0, ...value.codeUnits]),
 ]);
 
 List<int> _atom(String type, List<int> payload) {

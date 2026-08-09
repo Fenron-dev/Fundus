@@ -21,6 +21,35 @@ final class EmbeddedAudioChapter {
   final Duration position;
 }
 
+final class EmbeddedAudioMetadata {
+  const EmbeddedAudioMetadata({
+    this.title,
+    this.album,
+    this.author,
+    this.albumArtist,
+    this.series,
+    this.part,
+    this.language,
+  });
+
+  final String? title;
+  final String? album;
+  final String? author;
+  final String? albumArtist;
+  final String? series;
+  final double? part;
+  final String? language;
+
+  bool get isEmpty =>
+      title == null &&
+      album == null &&
+      author == null &&
+      albumArtist == null &&
+      series == null &&
+      part == null &&
+      language == null;
+}
+
 /// Reads common embedded audiobook artwork without loading the complete audio
 /// file into memory. M4A/M4B `covr` atoms and MP3 ID3 `APIC` frames are
 /// supported; callers can fall back to a neighboring cover image otherwise.
@@ -45,6 +74,222 @@ final class EmbeddedCoverExtractor {
       'mp3' => _extractMp3Language(file),
       _ => null,
     };
+  }
+
+  /// Reads only the small, explicitly supported identity field set. Unknown
+  /// MP4/ID3 fields are deliberately ignored and never persisted by Fundus.
+  Future<EmbeddedAudioMetadata> extractMetadata(File file) async {
+    final extension = file.path.split('.').last.toLowerCase();
+    return switch (extension) {
+      'm4a' || 'm4b' || 'mp4' => _extractMp4Metadata(file),
+      'mp3' => _extractMp3Metadata(file),
+      _ => const EmbeddedAudioMetadata(),
+    };
+  }
+
+  Future<EmbeddedAudioMetadata> _extractMp4Metadata(File file) async {
+    final input = await file.open();
+    try {
+      final values = <String, String>{};
+      await _walkMp4Metadata(input, 0, await input.length(), values, depth: 0);
+      return EmbeddedAudioMetadata(
+        title: values['title'],
+        album: values['album'],
+        author: values['artist'],
+        albumArtist: values['album_artist'],
+        series: values['series'],
+        part: _parsePart(values['part']),
+        language: values['language'],
+      );
+    } finally {
+      await input.close();
+    }
+  }
+
+  Future<void> _walkMp4Metadata(
+    RandomAccessFile input,
+    int start,
+    int end,
+    Map<String, String> values, {
+    required int depth,
+    String? parentType,
+  }) async {
+    if (depth > 12 || start < 0 || end <= start) return;
+    var offset = start;
+    while (offset + 8 <= end) {
+      await input.setPosition(offset);
+      final header = await input.read(8);
+      if (header.length != 8) return;
+      var size = _uint32(header, 0);
+      final type = latin1.decode(header.sublist(4, 8), allowInvalid: true);
+      var headerSize = 8;
+      if (size == 1) {
+        final extended = await input.read(8);
+        if (extended.length != 8) return;
+        size = _uint64(extended, 0);
+        headerSize = 16;
+      } else if (size == 0) {
+        size = end - offset;
+      }
+      if (size < headerSize || offset + size > end) return;
+      var payloadStart = offset + headerSize;
+      final atomEnd = offset + size;
+
+      if (parentType == 'ilst') {
+        final key = switch (type) {
+          '©nam' => 'title',
+          '©alb' => 'album',
+          '©ART' => 'artist',
+          'aART' => 'album_artist',
+          '©lan' => 'language',
+          _ => null,
+        };
+        if (key != null) {
+          final value = await _readMp4TextTag(input, payloadStart, atomEnd);
+          if (value != null) values.putIfAbsent(key, () => value);
+        } else if (type == '----') {
+          final freeform = await _readMp4FreeformTag(
+            input,
+            payloadStart,
+            atomEnd,
+          );
+          if (freeform case (name: final name, value: final value)) {
+            final key = switch (name.toUpperCase()) {
+              'SERIES' => 'series',
+              'PART' => 'part',
+              'LANGUAGE' => 'language',
+              _ => null,
+            };
+            if (key != null) values.putIfAbsent(key, () => value);
+          }
+        }
+      }
+
+      const containers = {'moov', 'udta', 'meta', 'ilst'};
+      if (containers.contains(type)) {
+        if (type == 'meta') payloadStart += 4;
+        await _walkMp4Metadata(
+          input,
+          payloadStart,
+          atomEnd,
+          values,
+          depth: depth + 1,
+          parentType: type,
+        );
+      }
+      offset = atomEnd;
+    }
+  }
+
+  Future<String?> _readMp4TextTag(
+    RandomAccessFile input,
+    int start,
+    int end,
+  ) async {
+    final children = await _readMp4ChildPayloads(input, start, end);
+    return _cleanText(children['data']);
+  }
+
+  Future<({String name, String value})?> _readMp4FreeformTag(
+    RandomAccessFile input,
+    int start,
+    int end,
+  ) async {
+    final children = await _readMp4ChildPayloads(input, start, end);
+    final name = _cleanText(children['name']);
+    final value = _cleanText(children['data']);
+    return name == null || value == null ? null : (name: name, value: value);
+  }
+
+  Future<Map<String, List<int>>> _readMp4ChildPayloads(
+    RandomAccessFile input,
+    int start,
+    int end,
+  ) async {
+    final result = <String, List<int>>{};
+    var offset = start;
+    while (offset + 8 <= end) {
+      await input.setPosition(offset);
+      final header = await input.read(8);
+      if (header.length != 8) break;
+      final size = _uint32(header, 0);
+      final type = latin1.decode(header.sublist(4, 8), allowInvalid: true);
+      if (size < 12 || offset + size > end) break;
+      final payloadLength = size - 12;
+      if (payloadLength > 4096) {
+        offset += size;
+        continue;
+      }
+      await input.setPosition(offset + 12);
+      var bytes = await input.read(payloadLength);
+      if (type == 'data' && bytes.length >= 4) bytes = bytes.sublist(4);
+      result.putIfAbsent(type, () => bytes);
+      offset += size;
+    }
+    return result;
+  }
+
+  Future<EmbeddedAudioMetadata> _extractMp3Metadata(File file) async {
+    final input = await file.open();
+    try {
+      final header = await input.read(10);
+      if (header.length != 10 || ascii.decode(header.sublist(0, 3)) != 'ID3') {
+        return const EmbeddedAudioMetadata();
+      }
+      final version = header[3];
+      if (version != 3 && version != 4) return const EmbeddedAudioMetadata();
+      var remaining = _synchsafe(header, 6);
+      final values = <String, String>{};
+      while (remaining >= 10) {
+        final frameHeader = await input.read(10);
+        if (frameHeader.length != 10) break;
+        remaining -= 10;
+        if (frameHeader.every((value) => value == 0)) break;
+        final id = ascii.decode(frameHeader.sublist(0, 4), allowInvalid: true);
+        final size = version == 4
+            ? _synchsafe(frameHeader, 4)
+            : _uint32(frameHeader, 4);
+        if (size <= 0 || size > remaining) break;
+        if (const {'TIT2', 'TALB', 'TPE1', 'TPE2', 'TLAN'}.contains(id) &&
+            size <= 4096) {
+          final value = _decodeId3Text(await input.read(size));
+          final key = switch (id) {
+            'TIT2' => 'title',
+            'TALB' => 'album',
+            'TPE1' => 'artist',
+            'TPE2' => 'album_artist',
+            'TLAN' => 'language',
+            _ => '',
+          };
+          if (value != null) values.putIfAbsent(key, () => value);
+        } else if (id == 'TXXX' && size <= 4096) {
+          final value = _decodeId3UserText(await input.read(size));
+          if (value != null) {
+            final key = switch (value.name.toUpperCase()) {
+              'SERIES' => 'series',
+              'PART' => 'part',
+              'LANGUAGE' => 'language',
+              _ => null,
+            };
+            if (key != null) values.putIfAbsent(key, () => value.value);
+          }
+        } else {
+          await input.setPosition(await input.position() + size);
+        }
+        remaining -= size;
+      }
+      return EmbeddedAudioMetadata(
+        title: values['title'],
+        album: values['album'],
+        author: values['artist'],
+        albumArtist: values['album_artist'],
+        series: values['series'],
+        part: _parsePart(values['part']),
+        language: values['language'],
+      );
+    } finally {
+      await input.close();
+    }
   }
 
   /// Reads Nero-style `chpl` chapter atoms used by M4A/M4B audiobooks.
@@ -378,6 +623,52 @@ final class EmbeddedCoverExtractor {
     }
     value = value.replaceAll('\u0000', '').trim();
     return value.isEmpty ? null : value;
+  }
+
+  static ({String name, String value})? _decodeId3UserText(List<int> payload) {
+    if (payload.length < 3) return null;
+    final encoding = payload.first;
+    final bytes = payload.sublist(1);
+    final width = encoding == 1 || encoding == 2 ? 2 : 1;
+    int? separator;
+    for (var index = 0; index + width <= bytes.length; index += width) {
+      final isSeparator = width == 1
+          ? bytes[index] == 0
+          : bytes[index] == 0 && bytes[index + 1] == 0;
+      if (isSeparator) {
+        separator = index;
+        break;
+      }
+    }
+    if (separator == null) return null;
+    var valueBytes = bytes.sublist(separator + width);
+    if (encoding == 1 &&
+        bytes.length >= 2 &&
+        valueBytes.length >= 2 &&
+        !((valueBytes[0] == 0xff && valueBytes[1] == 0xfe) ||
+            (valueBytes[0] == 0xfe && valueBytes[1] == 0xff))) {
+      valueBytes = [bytes[0], bytes[1], ...valueBytes];
+    }
+    final name = _decodeId3Text([encoding, ...bytes.sublist(0, separator)]);
+    final value = _decodeId3Text([encoding, ...valueBytes]);
+    return name == null || value == null ? null : (name: name, value: value);
+  }
+
+  static String? _cleanText(List<int>? bytes) {
+    if (bytes == null || bytes.isEmpty) return null;
+    final value = utf8
+        .decode(bytes, allowMalformed: true)
+        .replaceAll('\u0000', '')
+        .trim();
+    return value.isEmpty ? null : value;
+  }
+
+  static double? _parsePart(String? value) {
+    if (value == null) return null;
+    final match = RegExp(r'\d+(?:[.,]\d+)?').firstMatch(value);
+    return match == null
+        ? null
+        : double.tryParse(match.group(0)!.replaceAll(',', '.'));
   }
 
   static EmbeddedCover? _identifyFromPayload(List<int> payload) {

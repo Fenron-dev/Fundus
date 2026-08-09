@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -126,6 +127,76 @@ void main() {
     expect(chapters[1].title, 'Weiter');
     expect(chapters[1].position, const Duration(minutes: 1, seconds: 15));
   });
+
+  test('extracts whitelisted identity metadata from M4B atoms', () async {
+    final directory = await Directory.systemTemp.createTemp('fundus-metadata-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/book.m4b');
+    await file.writeAsBytes(
+      _atom('moov', [
+        ..._atom('udta', [
+          ..._atom('meta', [
+            0,
+            0,
+            0,
+            0,
+            ..._atom('ilst', [
+              ..._textTag('©nam', 'Der Titel'),
+              ..._textTag('©ART', 'Die Autorin'),
+              ..._textTag('aART', 'Album-Autorin'),
+              ..._textTag('©alb', 'Das Album'),
+              ..._freeformTag('SERIES', 'Die Reihe'),
+              ..._freeformTag('PART', '2'),
+              ..._freeformTag('LANGUAGE', 'German'),
+              ..._freeformTag('UNSUPPORTED_FIELD', 'nicht übernehmen'),
+            ]),
+          ]),
+        ]),
+      ]),
+    );
+
+    final metadata = await const EmbeddedCoverExtractor().extractMetadata(file);
+
+    expect(metadata.title, 'Der Titel');
+    expect(metadata.author, 'Die Autorin');
+    expect(metadata.albumArtist, 'Album-Autorin');
+    expect(metadata.album, 'Das Album');
+    expect(metadata.series, 'Die Reihe');
+    expect(metadata.part, 2);
+    expect(metadata.language, 'German');
+  });
+
+  test('extracts whitelisted identity metadata from ID3 frames', () async {
+    final directory = await Directory.systemTemp.createTemp('fundus-id3-');
+    addTearDown(() => directory.delete(recursive: true));
+    final frames = <int>[
+      ..._id3TextFrame('TIT2', 'Tracktitel'),
+      ..._id3TextFrame('TALB', 'Buchtitel'),
+      ..._id3TextFrame('TPE1', 'Autor'),
+      ..._id3TextFrame('TPE2', 'Album-Autor'),
+      ..._id3UserTextFrame('SERIES', 'Buchreihe'),
+      ..._id3UserTextFrame('PART', '3'),
+      ..._id3UserTextFrame('IGNORED', 'privat'),
+    ];
+    final file = File('${directory.path}/book.mp3');
+    await file.writeAsBytes([
+      ...'ID3'.codeUnits,
+      4,
+      0,
+      0,
+      ..._synchsafe(frames.length),
+      ...frames,
+    ]);
+
+    final metadata = await const EmbeddedCoverExtractor().extractMetadata(file);
+
+    expect(metadata.title, 'Tracktitel');
+    expect(metadata.album, 'Buchtitel');
+    expect(metadata.author, 'Autor');
+    expect(metadata.albumArtist, 'Album-Autor');
+    expect(metadata.series, 'Buchreihe');
+    expect(metadata.part, 3);
+  });
 }
 
 List<int> _atom(String type, List<int> payload) {
@@ -140,3 +211,34 @@ List<int> _uint64(int value) {
 }
 
 List<int> _chapterTitle(String value) => [value.length, ...value.codeUnits];
+
+List<int> _textTag(String type, String value) => _atom(type, [
+  ..._atom('data', [0, 0, 0, 1, 0, 0, 0, 0, ...utf8.encode(value)]),
+]);
+
+List<int> _freeformTag(String name, String value) => _atom('----', [
+  ..._atom('mean', [0, 0, 0, 0, ...utf8.encode('com.apple.iTunes')]),
+  ..._atom('name', [0, 0, 0, 0, ...utf8.encode(name)]),
+  ..._atom('data', [0, 0, 0, 1, 0, 0, 0, 0, ...utf8.encode(value)]),
+]);
+
+List<int> _id3TextFrame(String id, String value) =>
+    _id3Frame(id, [3, ...utf8.encode(value)]);
+
+List<int> _id3UserTextFrame(String name, String value) =>
+    _id3Frame('TXXX', [3, ...utf8.encode(name), 0, ...utf8.encode(value)]);
+
+List<int> _id3Frame(String id, List<int> payload) => [
+  ...id.codeUnits,
+  ..._synchsafe(payload.length),
+  0,
+  0,
+  ...payload,
+];
+
+List<int> _synchsafe(int value) => [
+  (value >> 21) & 0x7f,
+  (value >> 14) & 0x7f,
+  (value >> 7) & 0x7f,
+  value & 0x7f,
+];

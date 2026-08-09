@@ -31,6 +31,18 @@ final class LibraryIndexEvent {
   final String? currentPath;
 }
 
+final class _PortableWorkIdentity {
+  const _PortableWorkIdentity({
+    this.workId,
+    required this.writable,
+    this.identity,
+  });
+
+  final String? workId;
+  final bool writable;
+  final AbsBookIdentity? identity;
+}
+
 final class FundusLibrary {
   FundusLibrary._({
     required this.root,
@@ -294,17 +306,24 @@ final class FundusLibrary {
       }
     }
 
-    final candidates =
+    final groupedCandidates =
         (importer ??
                 AbsImporter(
                   mediaRootNames: configuration.rootsFor('audiobook'),
                 ))
             .group(files);
-    final portableIdentities = <String, ({String? workId, bool writable})>{};
-    for (final candidate in candidates) {
-      portableIdentities[candidate.directory] = await _readPortableIdentity(
-        candidate,
-      );
+    final candidates = <AudiobookImportCandidate>[];
+    final portableIdentities = <String, _PortableWorkIdentity>{};
+    for (final grouped in groupedCandidates) {
+      final portable = await _readPortableIdentity(grouped);
+      portableIdentities[grouped.directory] = portable;
+      if (portable.identity case final identity?) {
+        candidates.add(grouped.copyWith(identity: identity));
+      } else if (grouped.usesFallbackIdentity) {
+        candidates.add(await _withEmbeddedIdentity(grouped));
+      } else {
+        candidates.add(grouped);
+      }
     }
     yield LibraryIndexEvent(
       phase: LibraryIndexPhase.importing,
@@ -357,6 +376,36 @@ final class FundusLibrary {
       fileCount: files.length,
       workCount: candidates.length,
     );
+  }
+
+  Future<AudiobookImportCandidate> _withEmbeddedIdentity(
+    AudiobookImportCandidate candidate,
+  ) async {
+    if (candidate.audioFiles.isEmpty) return candidate;
+    try {
+      final metadata = await const EmbeddedCoverExtractor().extractMetadata(
+        File(candidate.audioFiles.first.absolutePath),
+      );
+      if (metadata.isEmpty) return candidate;
+      final title = candidate.audioFiles.length > 1
+          ? metadata.album ?? candidate.identity.title
+          : metadata.title ?? metadata.album ?? candidate.identity.title;
+      return candidate.copyWith(
+        identity: AbsBookIdentity(
+          author:
+              metadata.albumArtist ??
+              metadata.author ??
+              candidate.identity.author,
+          title: title,
+          series: metadata.series ?? candidate.identity.series,
+          sequence: metadata.part ?? candidate.identity.sequence,
+        ),
+      );
+    } on FileSystemException {
+      return candidate;
+    } on FormatException {
+      return candidate;
+    }
   }
 
   void close() => _database.close();
@@ -466,7 +515,7 @@ final class FundusLibrary {
     );
   }
 
-  Future<({String? workId, bool writable})> _readPortableIdentity(
+  Future<_PortableWorkIdentity> _readPortableIdentity(
     AudiobookImportCandidate candidate,
   ) async {
     final file = File(
@@ -477,24 +526,50 @@ final class FundusLibrary {
         'meta.yaml',
       ]),
     );
-    if (!await file.exists()) return (workId: null, writable: true);
+    if (!await file.exists()) {
+      return const _PortableWorkIdentity(writable: true);
+    }
     try {
       final value = loadYaml(await file.readAsString());
-      if (value is! Map) return (workId: null, writable: false);
+      if (value is! Map) {
+        return const _PortableWorkIdentity(writable: false);
+      }
       final baseKind = value['base_kind'];
       if (baseKind != null && baseKind != 'audiobook') {
-        return (workId: null, writable: false);
+        return const _PortableWorkIdentity(writable: false);
       }
       final workId = value['work_id'];
-      if (workId == null) return (workId: null, writable: true);
-      if (workId is! String || !_uuidPattern.hasMatch(workId)) {
-        return (workId: null, writable: false);
+      if (workId != null &&
+          (workId is! String || !_uuidPattern.hasMatch(workId))) {
+        return const _PortableWorkIdentity(writable: false);
       }
-      return (workId: workId, writable: true);
+      final title = value['title'];
+      final author = value['author'];
+      final series = value['series'];
+      final sequence = value['series_sequence'];
+      final identity =
+          title is String &&
+              title.trim().isNotEmpty &&
+              author is String &&
+              author.trim().isNotEmpty
+          ? AbsBookIdentity(
+              title: title.trim(),
+              author: author.trim(),
+              series: series is String && series.trim().isNotEmpty
+                  ? series.trim()
+                  : null,
+              sequence: sequence is num ? sequence.toDouble() : null,
+            )
+          : null;
+      return _PortableWorkIdentity(
+        workId: workId as String?,
+        writable: true,
+        identity: identity,
+      );
     } on FileSystemException {
-      return (workId: null, writable: false);
+      return const _PortableWorkIdentity(writable: false);
     } on YamlException {
-      return (workId: null, writable: false);
+      return const _PortableWorkIdentity(writable: false);
     }
   }
 
@@ -506,8 +581,10 @@ final class FundusLibrary {
     );
     await directory.create(recursive: true);
     final annotations = loadAnnotations(workId);
+    final work = listWorks().where((work) => work.id == workId).firstOrNull;
+    if (work == null) return;
     await File(p.join(directory.path, 'meta.yaml')).writeAsString(
-      '${const JsonEncoder.withIndent('  ').convert({'format_version': 2, 'work_id': workId, 'base_kind': 'audiobook', 'custom_type': null, 'language': _database.workLanguage(workId), 'tags': annotations.tags})}\n',
+      '${const JsonEncoder.withIndent('  ').convert({'format_version': 2, 'work_id': workId, 'base_kind': 'audiobook', 'custom_type': null, 'title': work.title, 'author': work.author, 'series': work.series, 'series_sequence': work.seriesSequence, 'language': _database.workLanguage(workId), 'tags': annotations.tags})}\n',
       flush: true,
     );
   }
@@ -620,9 +697,10 @@ final class FundusLibrary {
 
     const extractor = EmbeddedCoverExtractor();
     for (final audio in candidate.audioFiles) {
-      final language = await extractor.extractLanguage(
-        File(audio.absolutePath),
-      );
+      final file = File(audio.absolutePath);
+      final metadata = await extractor.extractMetadata(file);
+      final language =
+          metadata.language ?? await extractor.extractLanguage(file);
       if (language == null || language.trim().isEmpty) continue;
       _database.setWorkLanguage(workId, language);
       return;

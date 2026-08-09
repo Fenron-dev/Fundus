@@ -41,7 +41,9 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - dauerhafte macOS-Freigabe zuletzt verwendeter Bibliotheken über
   Security-Scoped Bookmarks
 - datierte Notiz-Historie mit portablem Markdown-Sidecar
-- Sprachimport aus Sidecars sowie M4B/M4A- und MP3-Metadaten
+- sicherer Metadatenimport per Positivliste: Titel, Album, Autor, Serie,
+  Bandnummer und Sprache aus M4B/M4A- sowie MP3-Tags; portable Sidecars haben
+  Vorrang vor veränderten Dateitags
 - portabler Sidecar-Spiegel unter `_fundus/`, der einen Index-Neuaufbau überlebt
 - stabile `work_id` und `base_kind` im Sidecar; Verschieben und Index-Neuaufbau
   erhalten Werkidentität, Resume, Tags, Notizen und Lesezeichen
