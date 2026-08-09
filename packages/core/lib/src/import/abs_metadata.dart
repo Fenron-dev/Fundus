@@ -6,6 +6,7 @@ final class AbsAudiobookMetadata {
     this.title,
     this.subtitle,
     this.author,
+    this.authors = const [],
     this.narrators = const [],
     this.series,
     this.sequence,
@@ -24,6 +25,7 @@ final class AbsAudiobookMetadata {
   final String? title;
   final String? subtitle;
   final String? author;
+  final List<String> authors;
   final List<String> narrators;
   final String? series;
   final double? sequence;
@@ -40,6 +42,7 @@ final class AbsAudiobookMetadata {
 
   Map<String, Object?> toDatabaseMetadata() => {
     if (author != null) 'author': author,
+    if (authors.isNotEmpty) 'authors': authors,
     if (subtitle != null) 'subtitle': subtitle,
     if (narrators.isNotEmpty) 'narrators': narrators,
     if (language != null) 'language': language,
@@ -71,7 +74,8 @@ final class AbsMetadataReader {
     return AbsAudiobookMetadata(
       title: _string(decoded['title']),
       subtitle: _string(decoded['subtitle']),
-      author: authors.firstOrNull,
+      author: authors.isEmpty ? null : authors.join(', '),
+      authors: authors,
       narrators: _strings(decoded['narrators']),
       series: parsedSeries.name,
       sequence: parsedSeries.sequence,

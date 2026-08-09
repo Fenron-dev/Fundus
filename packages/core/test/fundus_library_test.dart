@@ -327,6 +327,36 @@ void main() {
     },
   );
 
+  test('keeps a cached cover when only the audio file is moved', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-cover-move-');
+    addTearDown(() => root.delete(recursive: true));
+    final original = Directory('${root.path}/Autor/Serie/01 - Titel');
+    await original.create(recursive: true);
+    final audio = File('${original.path}/Titel.mp3');
+    await audio.writeAsBytes([1, 2, 3]);
+    await File(
+      '${original.path}/cover.jpg',
+    ).writeAsBytes([0xff, 0xd8, 0xff, 0xd9]);
+
+    final library = await FundusLibrary.create(root);
+    addTearDown(library.close);
+    await library.index().drain<void>();
+    final before = library.listWorks().single;
+    expect(before.coverPath, endsWith('cover.jpg'));
+    await Directory('${original.path}/_fundus').delete(recursive: true);
+    final moved = Directory('${root.path}/Verschoben');
+    await moved.create();
+    await audio.rename('${moved.path}/Titel.mp3');
+
+    await library.index().drain<void>();
+
+    final after = library.listWorks().single;
+    expect(after.id, before.id);
+    expect(after.coverPath, contains('.library/covers'));
+    expect(await File(after.coverPath!).exists(), isTrue);
+    expect(library.playbackTracks(after.id), hasLength(1));
+  });
+
   test('imports ABS metadata and description for a loose audiobook', () async {
     final root = await Directory.systemTemp.createTemp('fundus-abs-json-');
     addTearDown(() => root.delete(recursive: true));

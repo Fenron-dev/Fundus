@@ -16,6 +16,7 @@ final class LibraryWorkSummary {
     required this.kind,
     required this.title,
     required this.author,
+    this.authors = const [],
     required this.fileCount,
     required this.addedAt,
     this.series,
@@ -42,6 +43,7 @@ final class LibraryWorkSummary {
   final String kind;
   final String title;
   final String author;
+  final List<String> authors;
   final int fileCount;
   final DateTime addedAt;
   final String? series;
@@ -338,11 +340,14 @@ final class FundusDatabase {
           final metadata =
               jsonDecode(row['metadata_json'] as String)
                   as Map<String, dynamic>;
+          final author = metadata['author'] as String? ?? 'Unbekannt';
+          final authors = _metadataStrings(metadata['authors']);
           return LibraryWorkSummary(
             id: row['id'] as String,
             kind: row['kind'] as String,
             title: row['title'] as String,
-            author: metadata['author'] as String? ?? 'Unbekannt',
+            author: author,
+            authors: authors.isEmpty ? [author] : authors,
             series: row['series_name'] as String?,
             seriesSequence: (row['series_sequence'] as num?)?.toDouble(),
             fileCount: row['file_count'] as int,

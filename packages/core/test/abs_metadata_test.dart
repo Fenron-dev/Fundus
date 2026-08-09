@@ -17,7 +17,7 @@ void main() {
         jsonEncode({
           'title': 'Der Beispielband',
           'subtitle': 'Chroniken der Testwelt',
-          'authors': ['Beispielautor'],
+          'authors': ['Beispielautor', 'Zweite Autorin'],
           'narrators': ['Sprecher Eins'],
           'series': ['Chroniken der Testwelt #1'],
           'genres': ['Fantasy'],
@@ -39,7 +39,12 @@ void main() {
 
       expect(metadata, isNotNull);
       expect(metadata!.title, 'Der Beispielband');
-      expect(metadata.author, 'Beispielautor');
+      expect(metadata.author, 'Beispielautor, Zweite Autorin');
+      expect(metadata.authors, ['Beispielautor', 'Zweite Autorin']);
+      expect(metadata.toDatabaseMetadata()['authors'], [
+        'Beispielautor',
+        'Zweite Autorin',
+      ]);
       expect(metadata.series, 'Chroniken der Testwelt');
       expect(metadata.sequence, 1);
       expect(

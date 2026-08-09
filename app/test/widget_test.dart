@@ -136,14 +136,52 @@ void main() {
     await tester.pumpWidget(FundusApp(initialWorks: works));
     await tester.pumpAndSettle();
 
-    expect(find.text('Autor: Aaron Oster'), findsOneWidget);
-    expect(find.text('Serie: Master of Monster Arts · Band 1'), findsOneWidget);
+    expect(find.text('Aaron Oster'), findsOneWidget);
+    expect(find.text('Master of Monster Arts · Band 1'), findsOneWidget);
     expect(find.text('#Abenteuer'), findsNothing);
     expect(find.text('Versammlung der Apachen'), findsNothing);
     expect(find.text('Noch keine Tags vergeben.'), findsOneWidget);
     expect(find.textContaining('01:12:15 / 12:45:30'), findsWidgets);
     expect(find.textContaining('Rest 11:33:15'), findsWidgets);
     expect(find.byType(Image), findsWidgets);
+  });
+
+  testWidgets('narrator chip opens all audiobooks spoken by that person', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final works = [
+      LibraryWorkSummary(
+        id: 'spoken-one',
+        kind: 'audiobook',
+        title: 'Das erste Hörbuch',
+        author: 'Autor Eins',
+        narrators: const ['Stimme Eins'],
+        fileCount: 1,
+        addedAt: DateTime(2026),
+      ),
+      LibraryWorkSummary(
+        id: 'spoken-two',
+        kind: 'audiobook',
+        title: 'Ein anderes Hörbuch',
+        author: 'Autor Zwei',
+        narrators: const ['Stimme Zwei'],
+        fileCount: 1,
+        addedAt: DateTime(2026),
+      ),
+    ];
+
+    await tester.pumpWidget(FundusApp(initialWorks: works));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Stimme Eins'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Gesprochen von Stimme Eins'), findsOneWidget);
+    expect(find.text('Das erste Hörbuch'), findsWidgets);
+    expect(find.text('Ein anderes Hörbuch'), findsNothing);
   });
 
   testWidgets('detail panel renders portable tags and notes', (tester) async {
@@ -181,17 +219,23 @@ void main() {
     await tester.pump();
 
     expect(find.text('#Fantasy'), findsOneWidget);
+    final detailScroll = find
+        .descendant(
+          of: find.byKey(const ValueKey('detail-panel-scroll')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    await tester.scrollUntilVisible(
+      find.text('Meine **Notiz**'),
+      300,
+      scrollable: detailScroll,
+    );
     expect(find.text('Meine **Notiz**'), findsOneWidget);
     expect(find.textContaining('Uhr'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Notiz speichern'),
       300,
-      scrollable: find
-          .descendant(
-            of: find.byKey(const ValueKey('detail-panel-scroll')),
-            matching: find.byType(Scrollable),
-          )
-          .first,
+      scrollable: detailScroll,
     );
     expect(find.text('Notiz speichern'), findsOneWidget);
     expect(find.byTooltip('Tag hinzufügen'), findsOneWidget);

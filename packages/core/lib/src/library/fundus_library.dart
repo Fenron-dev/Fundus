@@ -472,6 +472,7 @@ final class FundusLibrary {
       kind: work.kind,
       title: work.title,
       author: work.author,
+      authors: work.authors,
       fileCount: work.fileCount,
       addedAt: work.addedAt,
       series: work.series,
@@ -499,13 +500,27 @@ final class FundusLibrary {
     AudiobookImportCandidate candidate,
     String workId,
   ) async {
-    if (candidate.coverFiles.isNotEmpty) {
-      _database.setGeneratedCoverPath(workId, null);
-      return;
-    }
     final coverDirectory = Directory(
       p.join(root.path, metadataDirectoryName, 'covers'),
     );
+    if (candidate.coverFiles.isNotEmpty) {
+      final source = candidate.coverFiles.first;
+      final extension = source.extension == 'png' ? 'png' : 'jpg';
+      try {
+        await coverDirectory.create(recursive: true);
+        final filename = '$workId.$extension';
+        await File(
+          source.absolutePath,
+        ).copy(p.join(coverDirectory.path, filename));
+        _database.setGeneratedCoverPath(
+          workId,
+          p.posix.join(metadataDirectoryName, 'covers', filename),
+        );
+        return;
+      } on FileSystemException {
+        // An unreadable external cover can still fall back to embedded artwork.
+      }
+    }
     for (final extension in const ['jpg', 'png']) {
       final existing = File(p.join(coverDirectory.path, '$workId.$extension'));
       if (await existing.exists()) {

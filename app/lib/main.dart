@@ -550,6 +550,7 @@ class _LibraryShellState extends State<LibraryShell> {
   _LibraryLayout _layout = _LibraryLayout.grid;
   _LibraryGrouping _grouping = _LibraryGrouping.books;
   String? _selectedAuthor;
+  String? _selectedNarrator;
   String? _selectedSeries;
   bool _detailPaneVisible = true;
   bool _playerExpanded = false;
@@ -564,15 +565,25 @@ class _LibraryShellState extends State<LibraryShell> {
     _LibraryGrouping.books => false,
     _LibraryGrouping.authors =>
       _selectedAuthor == null || _selectedSeries == null,
+    _LibraryGrouping.narrators => _selectedNarrator == null,
     _LibraryGrouping.series => _selectedSeries == null,
   };
 
   List<LibraryWorkSummary> get _displayedWorks {
     var works = _visibleWorks;
     final author = _selectedAuthor;
+    final narrator = _selectedNarrator;
     final series = _selectedSeries;
     if (author != null) {
-      works = works.where((work) => work.author == author).toList();
+      works = works
+          .where(
+            (work) => (work.authors.isEmpty ? [work.author] : work.authors)
+                .contains(author),
+          )
+          .toList();
+    }
+    if (narrator != null) {
+      works = works.where((work) => work.narrators.contains(narrator)).toList();
     }
     if (series != null) {
       works = works.where((work) => (work.series ?? '') == series).toList();
@@ -651,6 +662,8 @@ class _LibraryShellState extends State<LibraryShell> {
                             onCollapse: () =>
                                 setState(() => _playerExpanded = false),
                             onPlay: widget.onPlay,
+                            onSelectAuthor: _showAuthor,
+                            onSelectNarrator: _showNarrator,
                           )
                         : !_detailPaneVisible && _inlineDetailWork != null
                         ? _inlineDetail(_inlineDetailWork!)
@@ -671,6 +684,8 @@ class _LibraryShellState extends State<LibraryShell> {
                         library: widget.library,
                         player: widget.player,
                         onPlay: widget.onPlay,
+                        onSelectAuthor: _showAuthor,
+                        onSelectNarrator: _showNarrator,
                       ),
                     ),
                   ],
@@ -730,6 +745,8 @@ class _LibraryShellState extends State<LibraryShell> {
                             onCollapse: () =>
                                 setState(() => _playerExpanded = false),
                             onPlay: widget.onPlay,
+                            onSelectAuthor: _showAuthor,
+                            onSelectNarrator: _showNarrator,
                           )
                         : _inlineDetailWork == null
                         ? _library(context, detailAsDialog: true)
@@ -879,7 +896,9 @@ class _LibraryShellState extends State<LibraryShell> {
 
   Widget _libraryTitle(BuildContext context) => Row(
     children: [
-      if (_selectedAuthor != null || _selectedSeries != null)
+      if (_selectedAuthor != null ||
+          _selectedNarrator != null ||
+          _selectedSeries != null)
         IconButton(
           onPressed: _navigateUp,
           tooltip: 'Eine Ebene zurück',
@@ -916,6 +935,10 @@ class _LibraryShellState extends State<LibraryShell> {
           PopupMenuItem(
             value: _LibraryGrouping.series,
             child: Text('Nach Serien'),
+          ),
+          PopupMenuItem(
+            value: _LibraryGrouping.narrators,
+            child: Text('Nach Sprechern'),
           ),
         ],
         child: Chip(
@@ -967,6 +990,7 @@ class _LibraryShellState extends State<LibraryShell> {
       return _selectedSeries!.isEmpty ? 'Einzelbände' : _selectedSeries!;
     }
     if (_selectedAuthor != null) return _selectedAuthor!;
+    if (_selectedNarrator != null) return 'Gesprochen von $_selectedNarrator';
     return 'Hörbücher & Hörspiele';
   }
 
@@ -974,6 +998,7 @@ class _LibraryShellState extends State<LibraryShell> {
     _LibraryGrouping.books => 'Bücher',
     _LibraryGrouping.authors => 'Autoren',
     _LibraryGrouping.series => 'Serien',
+    _LibraryGrouping.narrators => 'Sprecher',
   };
 
   List<_LibraryGroup> get _groups {
@@ -981,7 +1006,10 @@ class _LibraryShellState extends State<LibraryShell> {
     final grouped = <String, List<LibraryWorkSummary>>{};
     if (_grouping == _LibraryGrouping.authors && _selectedAuthor == null) {
       for (final work in works) {
-        grouped.putIfAbsent(work.author, () => []).add(work);
+        final authors = work.authors.isEmpty ? [work.author] : work.authors;
+        for (final author in authors) {
+          grouped.putIfAbsent(author, () => []).add(work);
+        }
       }
       return grouped.entries
           .map(
@@ -990,7 +1018,31 @@ class _LibraryShellState extends State<LibraryShell> {
               subtitle: '${entry.value.length} Hörbuch/Hörbücher',
               author: entry.key,
               series: null,
+              narrator: null,
               icon: Icons.person_outline,
+            ),
+          )
+          .toList()
+        ..sort(
+          (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+        );
+    }
+
+    if (_grouping == _LibraryGrouping.narrators && _selectedNarrator == null) {
+      for (final work in works) {
+        for (final narrator in work.narrators) {
+          grouped.putIfAbsent(narrator, () => []).add(work);
+        }
+      }
+      return grouped.entries
+          .map(
+            (entry) => _LibraryGroup(
+              title: entry.key,
+              subtitle: '${entry.value.length} Hörbuch/Hörbücher',
+              author: '',
+              series: null,
+              narrator: entry.key,
+              icon: Icons.mic_none,
             ),
           )
           .toList()
@@ -1001,7 +1053,12 @@ class _LibraryShellState extends State<LibraryShell> {
 
     final authorWorks = _selectedAuthor == null
         ? works
-        : works.where((work) => work.author == _selectedAuthor).toList();
+        : works
+              .where(
+                (work) => (work.authors.isEmpty ? [work.author] : work.authors)
+                    .contains(_selectedAuthor),
+              )
+              .toList();
     for (final work in authorWorks) {
       final series = work.series ?? '';
       final key = '${work.author}\u0000$series';
@@ -1018,6 +1075,7 @@ class _LibraryShellState extends State<LibraryShell> {
             : '${values.length} Hörbuch/Hörbücher',
         author: first.author,
         series: series,
+        narrator: null,
         icon: series.isEmpty ? Icons.menu_book_outlined : Icons.library_books,
       );
     }).toList()..sort((a, b) {
@@ -1188,6 +1246,8 @@ class _LibraryShellState extends State<LibraryShell> {
               library: widget.library,
               player: widget.player,
               onPlay: widget.onPlay,
+              onSelectAuthor: _showAuthor,
+              onSelectNarrator: _showNarrator,
             ),
           ),
         ),
@@ -1211,6 +1271,8 @@ class _LibraryShellState extends State<LibraryShell> {
           library: widget.library,
           player: widget.player,
           onPlay: widget.onPlay,
+          onSelectAuthor: _showAuthor,
+          onSelectNarrator: _showNarrator,
         ),
       ),
     ],
@@ -1218,7 +1280,10 @@ class _LibraryShellState extends State<LibraryShell> {
 
   void _openGroup(_LibraryGroup group) => setState(() {
     _selectedIndex = 0;
-    if (_grouping == _LibraryGrouping.authors && _selectedAuthor == null) {
+    if (_grouping == _LibraryGrouping.narrators) {
+      _selectedNarrator = group.narrator;
+    } else if (_grouping == _LibraryGrouping.authors &&
+        _selectedAuthor == null) {
       _selectedAuthor = group.author;
     } else {
       _selectedAuthor = group.author;
@@ -1232,6 +1297,7 @@ class _LibraryShellState extends State<LibraryShell> {
       _selectedSeries = null;
     } else {
       _selectedAuthor = null;
+      _selectedNarrator = null;
       _selectedSeries = null;
     }
   });
@@ -1239,7 +1305,28 @@ class _LibraryShellState extends State<LibraryShell> {
   void _setGrouping(_LibraryGrouping value) => setState(() {
     _grouping = value;
     _selectedAuthor = null;
+    _selectedNarrator = null;
     _selectedSeries = null;
+    _selectedIndex = 0;
+  });
+
+  void _showAuthor(String author) => setState(() {
+    _playerExpanded = false;
+    _grouping = _LibraryGrouping.books;
+    _selectedAuthor = author;
+    _selectedNarrator = null;
+    _selectedSeries = null;
+    _inlineDetailWork = null;
+    _selectedIndex = 0;
+  });
+
+  void _showNarrator(String narrator) => setState(() {
+    _playerExpanded = false;
+    _grouping = _LibraryGrouping.books;
+    _selectedAuthor = null;
+    _selectedNarrator = narrator;
+    _selectedSeries = null;
+    _inlineDetailWork = null;
     _selectedIndex = 0;
   });
 
@@ -1269,7 +1356,7 @@ class _LibraryShellState extends State<LibraryShell> {
 
 enum _LibraryLayout { grid, table }
 
-enum _LibraryGrouping { books, authors, series }
+enum _LibraryGrouping { books, authors, series, narrators }
 
 final class _LibraryGroup {
   const _LibraryGroup({
@@ -1277,6 +1364,7 @@ final class _LibraryGroup {
     required this.subtitle,
     required this.author,
     required this.series,
+    required this.narrator,
     required this.icon,
   });
 
@@ -1284,6 +1372,7 @@ final class _LibraryGroup {
   final String subtitle;
   final String author;
   final String? series;
+  final String? narrator;
   final IconData icon;
 }
 
@@ -1589,18 +1678,200 @@ class _WorkCard extends StatelessWidget {
   }
 }
 
+class _AudiobookHero extends StatelessWidget {
+  const _AudiobookHero({
+    required this.work,
+    required this.directoryPath,
+    required this.player,
+    required this.playing,
+    required this.playbackEnabled,
+    required this.onTogglePlayback,
+    this.onSelectAuthor,
+    this.onSelectNarrator,
+  });
+
+  final LibraryWorkSummary work;
+  final String? directoryPath;
+  final FundusPlayerController? player;
+  final bool playing;
+  final bool playbackEnabled;
+  final VoidCallback onTogglePlayback;
+  final ValueChanged<String>? onSelectAuthor;
+  final ValueChanged<String>? onSelectNarrator;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final wide = constraints.maxWidth >= 720;
+      final scheme = Theme.of(context).colorScheme;
+      final content = wide
+          ? Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: (constraints.maxWidth * .27).clamp(240, 340),
+                  child: _cover(),
+                ),
+                const SizedBox(width: 32),
+                Expanded(child: _facts(context, wide: true)),
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(child: SizedBox(width: 230, child: _cover())),
+                const SizedBox(height: 20),
+                _facts(context, wide: false),
+              ],
+            );
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              scheme.primaryContainer.withValues(alpha: .34),
+              scheme.surfaceContainer.withValues(alpha: .55),
+            ],
+          ),
+          border: Border.all(color: scheme.outlineVariant),
+        ),
+        child: Padding(padding: EdgeInsets.all(wide ? 28 : 18), child: content),
+      );
+    },
+  );
+
+  Widget _cover() => AspectRatio(
+    aspectRatio: .72,
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: _WorkCover(work: work, iconSize: 88, player: player),
+    ),
+  );
+
+  Widget _facts(BuildContext context, {required bool wide}) {
+    final authors = work.authors.isEmpty ? [work.author] : work.authors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          work.title,
+          style: wide
+              ? Theme.of(context).textTheme.displaySmall
+              : Theme.of(context).textTheme.headlineMedium,
+        ),
+        if (work.subtitle case final subtitle?) ...[
+          const SizedBox(height: 5),
+          Text(subtitle, style: Theme.of(context).textTheme.titleLarge),
+        ],
+        if (work.series case final series?) ...[
+          const SizedBox(height: 7),
+          Text(
+            work.seriesSequence == null
+                ? series
+                : '$series · Band ${_formatSequence(work.seriesSequence!)}',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ],
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final author in authors)
+              ActionChip(
+                avatar: const Icon(Icons.edit_outlined, size: 17),
+                label: Text(author),
+                tooltip: 'Hörbücher von $author anzeigen',
+                onPressed: onSelectAuthor == null
+                    ? null
+                    : () => onSelectAuthor!(author),
+              ),
+            for (final narrator in work.narrators)
+              ActionChip(
+                avatar: const Icon(Icons.mic_none, size: 17),
+                label: Text(narrator),
+                tooltip: 'Von $narrator gesprochene Hörbücher anzeigen',
+                onPressed: onSelectNarrator == null
+                    ? null
+                    : () => onSelectNarrator!(narrator),
+              ),
+            if (work.language case final language?)
+              Chip(label: Text(_displayLanguage(language))),
+            if (work.publisher case final publisher?)
+              Chip(
+                label: Text(
+                  work.publishedYear == null
+                      ? publisher
+                      : '$publisher · ${work.publishedYear}',
+                ),
+              )
+            else if (work.publishedYear case final year?)
+              Chip(label: Text('$year')),
+            Chip(label: Text('${work.fileCount} Datei(en)')),
+          ],
+        ),
+        const SizedBox(height: 18),
+        _ProgressLabel(work: work, player: player),
+        const SizedBox(height: 12),
+        ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 230),
+          child: FilledButton.icon(
+            onPressed: playbackEnabled ? onTogglePlayback : null,
+            icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+            label: Text(playing ? 'Pause' : 'Weiterhören'),
+          ),
+        ),
+        if (work.description case final description?) ...[
+          const SizedBox(height: 24),
+          Text('Beschreibung', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          SelectableText(
+            description,
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(height: 1.5),
+          ),
+        ],
+        if (directoryPath case final path?) ...[
+          const SizedBox(height: 22),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 2),
+                child: Icon(Icons.folder_outlined, size: 18),
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: SelectableText(
+                  path,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 class _DetailPanel extends StatefulWidget {
   const _DetailPanel({
     required this.work,
     this.library,
     this.player,
     this.onPlay,
+    this.onSelectAuthor,
+    this.onSelectNarrator,
   });
 
   final LibraryWorkSummary? work;
   final FundusLibrary? library;
   final FundusPlayerController? player;
   final WorkPlaybackCallback? onPlay;
+  final ValueChanged<String>? onSelectAuthor;
+  final ValueChanged<String>? onSelectNarrator;
 
   @override
   State<_DetailPanel> createState() => _DetailPanelState();
@@ -1699,93 +1970,16 @@ class _DetailPanelState extends State<_DetailPanel> {
       key: const ValueKey('detail-panel-scroll'),
       padding: const EdgeInsets.all(20),
       children: [
-        const SizedBox(height: 8),
-        Center(
-          child: SizedBox.square(
-            dimension: 180,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: _WorkCover(
-                work: selectedWork,
-                iconSize: 72,
-                player: widget.player,
-              ),
-            ),
-          ),
+        _AudiobookHero(
+          work: selectedWork,
+          player: widget.player,
+          directoryPath: directoryPath,
+          playing: _workIsPlaying,
+          playbackEnabled: widget.onPlay != null || _workIsCurrent,
+          onTogglePlayback: () => _togglePlayback(selectedWork),
+          onSelectAuthor: widget.onSelectAuthor,
+          onSelectNarrator: widget.onSelectNarrator,
         ),
-        const SizedBox(height: 12),
-        Text(
-          selectedWork.title,
-          style: Theme.of(context).textTheme.headlineSmall,
-        ),
-        if (selectedWork.subtitle case final subtitle?)
-          Text(subtitle, style: Theme.of(context).textTheme.titleSmall),
-        Text(
-          selectedWork.series == null
-              ? selectedWork.author
-              : '${selectedWork.author} · ${selectedWork.series}',
-        ),
-        const SizedBox(height: 14),
-        Text('${selectedWork.fileCount} Mediendatei(en)'),
-        if (directoryPath != null) ...[
-          const SizedBox(height: 8),
-          Text('Dateipfad', style: Theme.of(context).textTheme.labelMedium),
-          const SizedBox(height: 3),
-          SelectableText(
-            directoryPath,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ],
-        const SizedBox(height: 12),
-        FilledButton.icon(
-          onPressed: widget.onPlay == null && !_workIsCurrent
-              ? null
-              : () => _togglePlayback(selectedWork),
-          icon: Icon(_workIsPlaying ? Icons.pause : Icons.play_arrow),
-          label: Text(_workIsPlaying ? 'Pause' : 'Weiterhören'),
-        ),
-        const SizedBox(height: 20),
-        Text('Erreichbar über', style: Theme.of(context).textTheme.labelMedium),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [
-            Chip(label: Text('Autor: ${selectedWork.author}')),
-            if (selectedWork.language case final language?)
-              Chip(label: Text('Sprache: ${_displayLanguage(language)}')),
-            if (selectedWork.series case final series?)
-              Chip(
-                label: Text(
-                  selectedWork.seriesSequence == null
-                      ? 'Serie: $series'
-                      : 'Serie: $series · Band ${_formatSequence(selectedWork.seriesSequence!)}',
-                ),
-              ),
-            if (selectedWork.narrators.isNotEmpty)
-              Chip(
-                label: Text(
-                  'Gelesen von: ${selectedWork.narrators.join(', ')}',
-                ),
-              ),
-            if (selectedWork.publisher case final publisher?)
-              Chip(
-                label: Text(
-                  selectedWork.publishedYear == null
-                      ? 'Verlag: $publisher'
-                      : 'Verlag: $publisher · ${selectedWork.publishedYear}',
-                ),
-              )
-            else if (selectedWork.publishedYear case final year?)
-              Chip(label: Text('Erschienen: $year')),
-          ],
-        ),
-        if (selectedWork.description case final description?) ...[
-          const SizedBox(height: 20),
-          Text('Beschreibung', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 6),
-          SelectableText(description),
-        ],
         const SizedBox(height: 20),
         Row(
           children: [
@@ -2329,12 +2523,16 @@ class _ExpandedPlayer extends StatefulWidget {
     required this.onCollapse,
     this.library,
     this.onPlay,
+    this.onSelectAuthor,
+    this.onSelectNarrator,
   });
 
   final FundusPlayerController controller;
   final FundusLibrary? library;
   final VoidCallback onCollapse;
   final WorkPlaybackCallback? onPlay;
+  final ValueChanged<String>? onSelectAuthor;
+  final ValueChanged<String>? onSelectNarrator;
 
   @override
   State<_ExpandedPlayer> createState() => _ExpandedPlayerState();
@@ -2535,39 +2733,18 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
       return const Center(child: Text('Keine Details verfügbar.'));
     }
     return ListView(
-      padding: const EdgeInsets.fromLTRB(64, 24, 64, 24),
+      padding: const EdgeInsets.fromLTRB(48, 20, 48, 28),
       children: [
-        Text(work.title, style: Theme.of(context).textTheme.headlineSmall),
-        if (work.subtitle case final subtitle?) ...[
-          const SizedBox(height: 4),
-          Text(subtitle, style: Theme.of(context).textTheme.titleMedium),
-        ],
-        const SizedBox(height: 12),
-        Text('Autor: ${work.author}'),
-        if (work.narrators.isNotEmpty)
-          Text('Gelesen von: ${work.narrators.join(', ')}'),
-        if (work.series case final series?)
-          Text(
-            work.seriesSequence == null
-                ? 'Serie: $series'
-                : 'Serie: $series · Band ${_formatSequence(work.seriesSequence!)}',
-          ),
-        if (work.language case final language?)
-          Text('Sprache: ${_displayLanguage(language)}'),
-        if (work.publisher case final publisher?)
-          Text(
-            work.publishedYear == null
-                ? 'Verlag: $publisher'
-                : 'Verlag: $publisher · ${work.publishedYear}',
-          ),
-        const SizedBox(height: 20),
-        _ProgressLabel(work: work, player: widget.controller),
-        if (work.description case final description?) ...[
-          const SizedBox(height: 24),
-          Text('Beschreibung', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          SelectableText(description),
-        ],
+        _AudiobookHero(
+          work: work,
+          directoryPath: widget.library?.workDirectoryPath(work.id),
+          player: widget.controller,
+          playing: widget.controller.playing,
+          playbackEnabled: true,
+          onTogglePlayback: widget.controller.playOrPause,
+          onSelectAuthor: widget.onSelectAuthor,
+          onSelectNarrator: widget.onSelectNarrator,
+        ),
       ],
     );
   }
@@ -2581,6 +2758,8 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
       library: widget.library,
       player: widget.controller,
       onPlay: widget.onPlay,
+      onSelectAuthor: widget.onSelectAuthor,
+      onSelectNarrator: widget.onSelectNarrator,
     ),
   };
 
