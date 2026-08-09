@@ -20,6 +20,8 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - transaktionaler SQLite-Index unter `.library/index.db`
 - rekursiver, abbrechbarer Dateiscan mit portablen relativen Pfaden
 - Import der ABS-Struktur `Autor/Serie/01 - Titel`
+- lose Hörbücher direkt im Bibliothekswurzelordner oder unter einem einzelnen
+  frei benannten Unterordner werden ebenfalls als Werke erfasst
 - gemischte Bibliothekswurzel mit portablem `.library/config.yaml`; Hörbücher
   funktionieren sowohl in der bisherigen Struktur als auch unter
   `Audiobooks/Autor/Serie/01 - Titel`
@@ -27,8 +29,9 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - durchgehende Desktop-Audiowiedergabe mit Tracknavigation und Geschwindigkeit
 - vergrößerbare Playeransicht mit Dateien, Chapters, Details und Playlist als
   umschaltbarem Kontext
-- anspringbare Chapters aus eingebetteten M4B/M4A-`chpl`-Marken; bei
-  Mehrdatei-Hörbüchern dienen die sortierten Tracks als Kapitel
+- anspringbare Chapters aus M4B/M4A-`chpl`-Marken sowie Apple/QuickTime-
+  Kapitelspuren; bei Mehrdatei-Hörbüchern dienen die sortierten Tracks als
+  Kapitel
 - werkbezogener Resume-Punkt über Datei- und Hörbuchwechsel mit Revisionshistorie
 - Sleep-Timer mit festen Laufzeiten, Countdown und Stopp am Trackende
 - anspringbare Zeit-Lesezeichen mit optionalem Rücksprung-Lesezeichen

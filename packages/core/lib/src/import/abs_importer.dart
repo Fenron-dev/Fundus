@@ -115,8 +115,8 @@ final class AbsImporter {
               .toList()
             ..sort(_compareTracks);
       if (audio.isEmpty) continue;
-      final identity = parseBookDirectory(entry.key);
-      if (identity == null) continue;
+      final identity =
+          parseBookDirectory(entry.key) ?? _fallbackIdentity(entry.key, audio);
       final covers = entry.value
           .where((file) => coverNames.contains(file.filename.toLowerCase()))
           .toList(growable: false);
@@ -141,6 +141,18 @@ final class AbsImporter {
       );
     });
     return candidates;
+  }
+
+  AbsBookIdentity _fallbackIdentity(String directory, List<ScannedFile> audio) {
+    final normalized = p.posix.normalize(directory);
+    final directoryName = normalized == '.'
+        ? ''
+        : p.posix.basename(normalized).trim();
+    final fileTitle = p.basenameWithoutExtension(audio.first.filename).trim();
+    return AbsBookIdentity(
+      author: 'Unbekannt',
+      title: directoryName.isNotEmpty ? directoryName : fileTitle,
+    );
   }
 
   ({double? sequence, String title}) _parseSequence(String folder) {

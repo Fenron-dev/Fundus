@@ -1601,6 +1601,8 @@ class _DetailPanelState extends State<_DetailPanel> {
   WorkAnnotations _annotations = const WorkAnnotations();
   bool _saving = false;
   bool _bookmarkAvailable = false;
+  bool _workIsCurrent = false;
+  bool _workIsPlaying = false;
 
   @override
   void initState() {
@@ -1646,16 +1648,35 @@ class _DetailPanelState extends State<_DetailPanel> {
   }
 
   void _syncPlayer({bool notify = true}) {
-    final next =
+    final current =
         widget.library != null &&
         widget.player?.work?.id == widget.work?.id &&
         widget.player?.track != null;
-    if (next == _bookmarkAvailable) return;
-    if (notify && mounted) {
-      setState(() => _bookmarkAvailable = next);
-    } else {
-      _bookmarkAvailable = next;
+    final playing = current && (widget.player?.playing ?? false);
+    if (current == _bookmarkAvailable &&
+        current == _workIsCurrent &&
+        playing == _workIsPlaying) {
+      return;
     }
+    if (notify && mounted) {
+      setState(() {
+        _bookmarkAvailable = current;
+        _workIsCurrent = current;
+        _workIsPlaying = playing;
+      });
+    } else {
+      _bookmarkAvailable = current;
+      _workIsCurrent = current;
+      _workIsPlaying = playing;
+    }
+  }
+
+  Future<void> _togglePlayback(LibraryWorkSummary work) async {
+    if (_workIsCurrent) {
+      await widget.player?.playOrPause();
+      return;
+    }
+    await widget.onPlay?.call(work);
   }
 
   @override
@@ -1700,11 +1721,11 @@ class _DetailPanelState extends State<_DetailPanel> {
         ],
         const SizedBox(height: 12),
         FilledButton.icon(
-          onPressed: widget.onPlay == null
+          onPressed: widget.onPlay == null && !_workIsCurrent
               ? null
-              : () => widget.onPlay!(selectedWork),
-          icon: const Icon(Icons.play_arrow),
-          label: const Text('Weiterhören'),
+              : () => _togglePlayback(selectedWork),
+          icon: Icon(_workIsPlaying ? Icons.pause : Icons.play_arrow),
+          label: Text(_workIsPlaying ? 'Pause' : 'Weiterhören'),
         ),
         const SizedBox(height: 20),
         Text('Erreichbar über', style: Theme.of(context).textTheme.labelMedium),

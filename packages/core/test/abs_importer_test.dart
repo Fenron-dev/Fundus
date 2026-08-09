@@ -49,4 +49,35 @@ void main() {
     expect(identity.sequence, 2);
     expect(identity.title, 'Titel');
   });
+
+  test('imports a loose audiobook directly from the library root', () {
+    final candidates = importer.group([_audioFile('Ein loses Hörbuch.m4b')]);
+
+    expect(candidates, hasLength(1));
+    expect(candidates.single.identity.author, 'Unbekannt');
+    expect(candidates.single.identity.title, 'Ein loses Hörbuch');
+    expect(candidates.single.directory, '.');
+  });
+
+  test('imports an audiobook below a media root without ABS hierarchy', () {
+    final candidates = importer.group([
+      _audioFile('Audiobooks/Mein Hörbuch/01 - Anfang.mp3'),
+      _audioFile('Audiobooks/Mein Hörbuch/02 - Ende.mp3'),
+    ]);
+
+    expect(candidates, hasLength(1));
+    expect(candidates.single.identity.author, 'Unbekannt');
+    expect(candidates.single.identity.title, 'Mein Hörbuch');
+    expect(candidates.single.audioFiles, hasLength(2));
+  });
 }
+
+ScannedFile _audioFile(String path) => ScannedFile(
+  absolutePath: '/library/$path',
+  relativePath: path,
+  filename: path.split('/').last,
+  extension: path.split('.').last.toLowerCase(),
+  size: 1,
+  modifiedAt: DateTime(2026),
+  mimeType: 'audio/mp4',
+);

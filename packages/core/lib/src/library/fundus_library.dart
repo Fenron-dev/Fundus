@@ -668,7 +668,8 @@ final class FundusLibrary {
     final path = p.normalize(
       p.joinAll([root.path, ...p.posix.split(sourcePath)]),
     );
-    if (!p.isWithin(root.path, path)) {
+    final normalizedRoot = p.normalize(root.path);
+    if (path != normalizedRoot && !p.isWithin(normalizedRoot, path)) {
       throw StateError('Unsicherer Werkpfad im Bibliotheksindex: $sourcePath');
     }
     return Directory(path);

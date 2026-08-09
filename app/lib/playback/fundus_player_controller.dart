@@ -176,6 +176,7 @@ final class FundusPlayerController extends ChangeNotifier {
           }),
         );
       }
+      unawaited(_refreshNativeChapters());
     } catch (error) {
       _ready = false;
       await _player.pause();
@@ -364,6 +365,77 @@ final class FundusPlayerController extends ChangeNotifier {
   Future<void> _pauseForSleepTimer() async {
     if (_closed) return;
     await _pauseAndPersist();
+  }
+
+  Future<void> _refreshNativeChapters() async {
+    final workId = _work?.id;
+    final chapters = await _loadNativeChapters();
+    if (_closed || chapters.isEmpty || _work?.id != workId) return;
+    _chapters = chapters;
+    notifyListeners();
+  }
+
+  Future<List<LibraryPlaybackChapter>> _loadNativeChapters() async {
+    if (_tracks.length != 1 || _player.platform is! NativePlayer) {
+      return const [];
+    }
+    final native = _player.platform! as NativePlayer;
+    try {
+      int? count;
+      for (var attempt = 0; attempt < 6; attempt++) {
+        count = int.tryParse(await native.getProperty('chapter-list/count'));
+        if (count != null && count > 0) break;
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
+      if (count == null || count <= 0 || count > 10000) return const [];
+      final entries = <({String title, Duration position})>[];
+      for (var index = 0; index < count; index++) {
+        final title = (await native.getProperty(
+          'chapter-list/$index/title',
+        )).trim();
+        final seconds = double.tryParse(
+          await native.getProperty('chapter-list/$index/time'),
+        );
+        if (seconds == null || !seconds.isFinite || seconds < 0) continue;
+        entries.add((
+          title: title.isEmpty ? 'Kapitel ${index + 1}' : title,
+          position: Duration(
+            microseconds: (seconds * Duration.microsecondsPerSecond).round(),
+          ),
+        ));
+      }
+      final totalDuration = _player.state.duration;
+      final chapters = [
+        for (var index = 0; index < entries.length; index++)
+          LibraryPlaybackChapter(
+            title: entries[index].title,
+            fileId: _tracks.single.fileId,
+            trackIndex: 0,
+            position: entries[index].position,
+            duration: index + 1 < entries.length
+                ? entries[index + 1].position - entries[index].position
+                : totalDuration > entries[index].position
+                ? totalDuration - entries[index].position
+                : null,
+          ),
+      ];
+      unawaited(
+        FundusDiagnostics.instance.record('playback.chapters_loaded', {
+          'work_id': _work?.id,
+          'source': 'player',
+          'chapter_count': chapters.length,
+        }),
+      );
+      return chapters;
+    } catch (error) {
+      unawaited(
+        FundusDiagnostics.instance.record('playback.chapters_failed', {
+          'work_id': _work?.id,
+          'error': error.toString(),
+        }),
+      );
+      return const [];
+    }
   }
 
   Future<Duration> _seekAndVerify(Duration target) async {

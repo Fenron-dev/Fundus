@@ -111,6 +111,23 @@ void main() {
     expect(await File('${root.path}/.library/config.yaml').exists(), isTrue);
   });
 
+  test('indexes a loose audiobook directly in the library root', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-loose-');
+    addTearDown(() => root.delete(recursive: true));
+    await File('${root.path}/Mein loses Hörbuch.m4b').writeAsBytes([1, 2, 3]);
+
+    final library = await FundusLibrary.create(root);
+    addTearDown(library.close);
+    await library.index().drain<void>();
+
+    final work = library.listWorks().single;
+    expect(work.title, 'Mein loses Hörbuch');
+    expect(work.author, 'Unbekannt');
+    expect(work.fileCount, 1);
+    expect(library.workDirectoryPath(work.id), root.path);
+    expect(await Directory('${root.path}/_fundus').exists(), isTrue);
+  });
+
   test('restores tags notes and bookmarks from portable sidecars', () async {
     final root = await Directory.systemTemp.createTemp('fundus-sidecars-');
     addTearDown(() => root.delete(recursive: true));
