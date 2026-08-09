@@ -620,7 +620,10 @@ final class FundusRemoteClient {
     );
     try {
       final bytes = Uint8List.fromList(
-        await stream.response.expand((chunk) => chunk).toList(),
+        await stream.response
+            .timeout(const Duration(seconds: 20))
+            .expand((chunk) => chunk)
+            .toList(),
       );
       return bytes;
     } finally {

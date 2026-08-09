@@ -118,14 +118,17 @@ void main() {
     final offlineStore = FundusOfflineStore(
       root: Directory('${temporary.path}/offline'),
     );
+    final transferredBytes = <int>[];
     final offline = await offlineStore.download(
       client,
       profile,
       libraries.single,
       works.single,
+      onTransfer: (_, _, received, _) => transferredBytes.add(received),
     );
     expect(await File(offline.tracks.single.path).readAsBytes(), [1, 2, 3]);
     expect(offline.kind, 'audiobook');
+    expect(transferredBytes, containsAllInOrder([0, 3]));
     expect(
       Directory('${temporary.path}/offline')
           .listSync(recursive: true)

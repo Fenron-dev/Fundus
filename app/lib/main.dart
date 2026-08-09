@@ -202,17 +202,25 @@ class _FundusAppState extends State<FundusApp> {
       resolvedPath = selected;
       bookmark = await SecurityScopedBookmarks.create(selected);
     }
-    await _openLibraryPath(
+    final opened = await _openLibraryPath(
       resolvedPath ?? entry.path,
       create: false,
       securityBookmark: bookmark,
+      showError: !Platform.isAndroid,
     );
+    if (opened || !Platform.isAndroid || !mounted) return;
+    final selected = await FilePicker.getDirectoryPath(
+      dialogTitle: 'Zugriff auf „${entry.name}“ erneut erlauben',
+    );
+    if (selected == null || !mounted) return;
+    await _openLibraryPath(selected, create: false);
   }
 
-  Future<void> _openLibraryPath(
+  Future<bool> _openLibraryPath(
     String path, {
     required bool create,
     String? securityBookmark,
+    bool showError = true,
   }) async {
     setState(() {
       _busy = true;
@@ -239,11 +247,23 @@ class _FundusAppState extends State<FundusApp> {
       await _syncPeerSources();
       if (mounted) setState(() {});
       await _scan();
+      return true;
     } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted && showError) {
+        setState(() => _error = _displayLibraryError(error));
+      }
+      return false;
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  static String _displayLibraryError(Object error) {
+    if (error is FileSystemException || error is PathAccessException) {
+      return 'Fundus hat keinen Zugriff auf diese Bibliothek. Bitte den '
+          'Ordner erneut auswählen und den Zugriff bestätigen.';
+    }
+    return error.toString();
   }
 
   Future<void> _loadRecentLibraries() async {

@@ -72,6 +72,13 @@ final class FundusOfflinePendingProgress {
 }
 
 typedef OfflineDownloadProgress = void Function(int completed, int total);
+typedef OfflineDownloadTransferProgress =
+    void Function(
+      int fileIndex,
+      int fileCount,
+      int receivedBytes,
+      int? totalBytes,
+    );
 
 final class FundusOfflineStore {
   FundusOfflineStore({Directory? root}) : _configuredRoot = root;
@@ -198,6 +205,7 @@ final class FundusOfflineStore {
     FundusRemoteLibrary library,
     FundusRemoteWork work, {
     OfflineDownloadProgress? onProgress,
+    OfflineDownloadTransferProgress? onTransfer,
   }) async {
     final detail = await client.work(server, library.id, work);
     if (detail.tracks.isEmpty) {
@@ -224,7 +232,18 @@ final class FundusOfflineStore {
         IOSink? sink;
         try {
           sink = partial.openWrite();
-          await sink.addStream(remote.response);
+          var received = 0;
+          final expected = remote.response.contentLength > 0
+              ? remote.response.contentLength
+              : null;
+          onTransfer?.call(index, detail.tracks.length, received, expected);
+          await sink.addStream(
+            remote.response.timeout(const Duration(seconds: 30)).map((chunk) {
+              received += chunk.length;
+              onTransfer?.call(index, detail.tracks.length, received, expected);
+              return chunk;
+            }),
+          );
           await sink.close();
           sink = null;
         } finally {

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -64,6 +65,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   String? _downloadingKey;
   int _downloadCompleted = 0;
   int _downloadTotal = 0;
+  int _downloadReceivedBytes = 0;
+  int? _downloadExpectedBytes;
+  DateTime? _lastDownloadUiUpdate;
+  final Map<String, Future<Uint8List>> _coverRequests = {};
+  final Map<String, Future<FundusRemoteServer>> _reconnects = {};
   late final AppLifecycleListener _lifecycleListener;
 
   @override
@@ -426,16 +432,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       children: [
         if (_busy) const LinearProgressIndicator(),
         if (_downloadingKey != null) ...[
-          LinearProgressIndicator(
-            value: _downloadTotal <= 0
-                ? null
-                : _downloadCompleted / _downloadTotal,
-          ),
+          LinearProgressIndicator(value: _downloadProgress),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Text(
-              'Offline-Download: $_downloadCompleted / $_downloadTotal Datei(en)',
-            ),
+            child: Text(_downloadLabel),
           ),
         ],
         if (_error case final error?)
@@ -701,21 +701,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                     children: [
                       Expanded(
                         child: work.hasCover
-                            ? FutureBuilder(
-                                future: _client.cover(
-                                  server,
-                                  library.id,
-                                  work.id,
-                                ),
-                                builder: (context, snapshot) => snapshot.hasData
-                                    ? Image.memory(
-                                        snapshot.data!,
-                                        fit: BoxFit.cover,
-                                      )
-                                    : const Center(
-                                        child: CircularProgressIndicator(),
-                                      ),
-                              )
+                            ? _remoteCover(server, library, work)
                             : Icon(_kindIcon(work.kind), size: 72),
                       ),
                       Padding(
@@ -788,19 +774,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                     width: 120,
                     height: 170,
                     child: work.hasCover
-                        ? FutureBuilder(
-                            future: _client.cover(server, library.id, work.id),
-                            builder: (context, snapshot) => snapshot.hasData
-                                ? ClipRRect(
-                                    borderRadius: BorderRadius.circular(10),
-                                    child: Image.memory(
-                                      snapshot.data!,
-                                      fit: BoxFit.cover,
-                                    ),
-                                  )
-                                : const Center(
-                                    child: CircularProgressIndicator(),
-                                  ),
+                        ? _remoteCover(
+                            server,
+                            library,
+                            work,
+                            borderRadius: BorderRadius.circular(10),
                           )
                         : const Icon(Icons.audiotrack, size: 72),
                   ),
@@ -932,6 +910,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       _downloadingKey = key;
       _downloadCompleted = 0;
       _downloadTotal = 0;
+      _downloadReceivedBytes = 0;
+      _downloadExpectedBytes = null;
+      _lastDownloadUiUpdate = null;
     });
     try {
       unawaited(
@@ -953,6 +934,23 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             setState(() {
               _downloadCompleted = completed;
               _downloadTotal = total;
+            });
+          },
+          onTransfer: (fileIndex, fileCount, received, expected) {
+            if (!mounted) return;
+            final now = DateTime.now();
+            final last = _lastDownloadUiUpdate;
+            if (received != expected &&
+                last != null &&
+                now.difference(last) < const Duration(milliseconds: 200)) {
+              return;
+            }
+            _lastDownloadUiUpdate = now;
+            setState(() {
+              _downloadCompleted = fileIndex;
+              _downloadTotal = fileCount;
+              _downloadReceivedBytes = received;
+              _downloadExpectedBytes = expected;
             });
           },
         ),
@@ -1000,6 +998,65 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     }
   }
 
+  double? get _downloadProgress {
+    if (_downloadTotal <= 0) return null;
+    final expected = _downloadExpectedBytes;
+    final withinFile = expected != null && expected > 0
+        ? (_downloadReceivedBytes / expected).clamp(0.0, 1.0)
+        : 0.0;
+    return ((_downloadCompleted + withinFile) / _downloadTotal).clamp(0.0, 1.0);
+  }
+
+  String get _downloadLabel {
+    if (_downloadTotal <= 0) return 'Offline-Download wird vorbereitet …';
+    final current = (_downloadCompleted + 1).clamp(1, _downloadTotal);
+    final expected = _downloadExpectedBytes;
+    if (expected != null && expected > 0) {
+      final percent = ((_downloadReceivedBytes / expected) * 100)
+          .clamp(0, 100)
+          .round();
+      return 'Offline-Download: Datei $current/$_downloadTotal · $percent %';
+    }
+    return 'Offline-Download: Datei $current/$_downloadTotal';
+  }
+
+  Widget _remoteCover(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work, {
+    BorderRadius? borderRadius,
+  }) {
+    final key = '${server.id}/${library.id}/${work.id}';
+    final future = _coverRequests.putIfAbsent(
+      key,
+      () => _runWithReconnect(
+        server,
+        (active) => _client.cover(active, library.id, work.id),
+      ).then((result) => result.value),
+    );
+    return FutureBuilder<Uint8List>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.hasData) {
+          final image = Image.memory(snapshot.data!, fit: BoxFit.cover);
+          return borderRadius == null
+              ? image
+              : ClipRRect(borderRadius: borderRadius, child: image);
+        }
+        if (snapshot.hasError) {
+          return Center(
+            child: IconButton(
+              tooltip: 'Cover erneut laden',
+              onPressed: () => setState(() => _coverRequests.remove(key)),
+              icon: const Icon(Icons.refresh),
+            ),
+          );
+        }
+        return const Center(child: CircularProgressIndicator());
+      },
+    );
+  }
+
   Future<({FundusRemoteServer server, T value})> _runWithReconnect<T>(
     FundusRemoteServer server,
     Future<T> Function(FundusRemoteServer server) operation,
@@ -1013,7 +1070,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           'reason': _safeNetworkError(firstError),
         }),
       );
-      final relocated = await _peerDiscovery.resolve(server);
+      final relocated = await _resolveShared(server);
       await _replaceServer(relocated);
       try {
         final value = await operation(relocated);
@@ -1034,6 +1091,23 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         rethrow;
       }
     }
+  }
+
+  Future<FundusRemoteServer> _resolveShared(FundusRemoteServer server) {
+    final known = _servers.where((item) => item.id == server.id).firstOrNull;
+    final candidate = known ?? server;
+    return _reconnects.putIfAbsent(server.id, () {
+      final operation = _peerDiscovery.resolve(candidate);
+      operation.then<void>(
+        (_) {
+          _reconnects.remove(server.id);
+        },
+        onError: (_) {
+          _reconnects.remove(server.id);
+        },
+      );
+      return operation;
+    });
   }
 
   Future<void> _replaceServer(FundusRemoteServer server) async {
