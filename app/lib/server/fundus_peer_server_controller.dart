@@ -198,11 +198,12 @@ final class FundusPeerServerController extends ChangeNotifier {
     } catch (error) {
       _registry.close();
       _libraries = statuses;
-      _error = 'Server konnte nicht gestartet werden.';
+      _error = _displayStartError(error);
       _state = PeerServerState.failed;
       unawaited(
         FundusDiagnostics.instance.record('server.start_failed', {
           'server_id': serverId,
+          'reason': _safeErrorCode(error),
         }),
       );
     }
@@ -254,6 +255,22 @@ final class FundusPeerServerController extends ChangeNotifier {
 
   bool _isShared(String path) =>
       _sharedPaths.contains(Directory(path).absolute.path);
+
+  static String _displayStartError(Object error) {
+    if (error is SocketException) {
+      return Platform.isMacOS
+          ? 'macOS hat das Öffnen des lokalen Server-Ports abgelehnt.'
+          : 'Der lokale Server-Port konnte nicht geöffnet werden.';
+    }
+    return 'Server konnte nicht gestartet werden.';
+  }
+
+  static String _safeErrorCode(Object error) => switch (error) {
+    SocketException(:final osError) =>
+      'socket_${osError?.errorCode ?? 'unknown'}',
+    FileSystemException() => 'filesystem',
+    _ => error.runtimeType.toString(),
+  };
 
   static String _randomValue(int byteCount) {
     final random = Random.secure();
