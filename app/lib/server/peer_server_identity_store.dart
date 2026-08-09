@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 final class PeerServerIdentity {
   const PeerServerIdentity({
     required this.serverId,
+    required this.deviceName,
     required this.certificatePem,
     required this.privateKeyPem,
     required this.certificateFingerprint,
@@ -17,6 +18,7 @@ final class PeerServerIdentity {
   });
 
   final String serverId;
+  final String deviceName;
   final String certificatePem;
   final String privateKeyPem;
   final String certificateFingerprint;
@@ -69,6 +71,7 @@ final class PeerServerIdentityStore {
     await directory.create(recursive: true);
     var serverId = await _loadServerId();
     serverId ??= 'fundus-${_randomValue(12)}';
+    final deviceName = await _loadDeviceName() ?? _defaultDeviceName();
     var certificate = await _readIfPresent(_certificateFile);
     var privateKey = await _readIfPresent(_privateKeyFile);
     if (certificate == null || privateKey == null) {
@@ -96,13 +99,14 @@ final class PeerServerIdentityStore {
       await _restrictPrivateFile(_privateKeyFile);
     }
     await _identityFile.writeAsString(
-      jsonEncode({'server_id': serverId}),
+      jsonEncode({'server_id': serverId, 'device_name': deviceName}),
       flush: true,
     );
     final der = CryptoUtils.getBytesFromPEMString(certificate);
     final fingerprint = sha256.convert(der).toString();
     return PeerServerIdentity(
       serverId: serverId,
+      deviceName: deviceName,
       certificatePem: certificate,
       privateKeyPem: privateKey,
       certificateFingerprint: fingerprint,
@@ -135,6 +139,14 @@ final class PeerServerIdentityStore {
     );
   }
 
+  Future<void> saveDeviceName(String serverId, String deviceName) async {
+    await directory.create(recursive: true);
+    await _identityFile.writeAsString(
+      jsonEncode({'server_id': serverId, 'device_name': deviceName}),
+      flush: true,
+    );
+  }
+
   Future<String?> _loadServerId() async {
     final source = await _readIfPresent(_identityFile);
     if (source == null) return null;
@@ -148,6 +160,30 @@ final class PeerServerIdentityStore {
     }
     return null;
   }
+
+  Future<String?> _loadDeviceName() async {
+    final source = await _readIfPresent(_identityFile);
+    if (source == null) return null;
+    try {
+      final value = jsonDecode(source);
+      if (value is Map && value['device_name'] is String) {
+        final name = (value['device_name'] as String).trim();
+        return name.isEmpty ? null : name;
+      }
+    } on FormatException {
+      return null;
+    }
+    return null;
+  }
+
+  static String _defaultDeviceName() => switch (Platform.operatingSystem) {
+    'android' => 'Fundus auf Android',
+    'ios' => 'Fundus auf iOS',
+    'macos' => 'Fundus auf macOS',
+    'windows' => 'Fundus auf Windows',
+    'linux' => 'Fundus auf Linux',
+    _ => 'Fundus-Gerät',
+  };
 
   static Future<String?> _readIfPresent(File file) async {
     try {

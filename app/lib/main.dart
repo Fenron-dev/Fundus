@@ -14,6 +14,10 @@ import 'library/security_scoped_bookmarks.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/playback_sleep_timer.dart';
 import 'server/fundus_peer_server_controller.dart';
+import 'server/fundus_peer_discovery.dart';
+import 'server/fundus_offline_store.dart';
+import 'server/fundus_remote_client.dart';
+import 'server/remote_servers_view.dart';
 import 'server/server_settings.dart';
 
 typedef WorkPlaybackCallback =
@@ -22,6 +26,20 @@ typedef WorkPlaybackCallback =
       String? startFileId,
       Duration? startPosition,
     });
+
+final class _RemoteLibraryChoice {
+  const _RemoteLibraryChoice({
+    required this.server,
+    required this.library,
+    required this.reachable,
+    required this.offlineCount,
+  });
+
+  final FundusRemoteServer server;
+  final FundusRemoteLibraryReference library;
+  final bool reachable;
+  final int offlineCount;
+}
 
 String _formatSequence(double value) => value == value.roundToDouble()
     ? value.toInt().toString()
@@ -67,8 +85,14 @@ class _FundusAppState extends State<FundusApp> {
   String? _error;
   bool _busy = false;
   final _recentStore = RecentLibraryStore.platformDefault();
+  final _remoteStore = FundusRemoteServerStore();
+  final _remoteClient = const FundusRemoteClient();
+  final _offlineStore = FundusOfflineStore();
+  final _peerDiscovery = FundusPeerDiscovery();
   late final FundusPeerServerController _peerServer;
   List<RecentLibraryEntry> _recentLibraries = const [];
+  List<_RemoteLibraryChoice> _remoteLibraries = const [];
+  bool _loadingRemoteLibraries = false;
   late final AppLifecycleListener _lifecycleListener;
 
   @override
@@ -76,8 +100,13 @@ class _FundusAppState extends State<FundusApp> {
     super.initState();
     _peerServer = FundusPeerServerController();
     _works = widget.initialWorks;
-    if (widget.initialWorks == null) unawaited(_loadRecentLibraries());
+    if (widget.initialWorks == null) {
+      unawaited(_peerServer.initialize());
+      unawaited(_loadRecentLibraries());
+      unawaited(_loadRemoteLibraries());
+    }
     _lifecycleListener = AppLifecycleListener(
+      onResume: () => unawaited(_loadRemoteLibraries()),
       onInactive: () => unawaited(_player?.persist()),
       onHide: () => unawaited(_player?.persist()),
       onPause: () => unawaited(_player?.persist()),
@@ -113,8 +142,11 @@ class _FundusAppState extends State<FundusApp> {
               onOpen: () => _chooseLibrary(create: false),
               recentLibraries: _recentLibraries,
               onOpenRecent: _openRecentLibrary,
+              remoteLibraries: _remoteLibraries,
+              onOpenRemote: _openRemoteLibrary,
               onToggleTheme: _toggleTheme,
               peerServer: _peerServer,
+              onOpenServerSettings: _openServerSettings,
             )
           : LibraryShell(
               works: _works!,
@@ -246,6 +278,130 @@ class _FundusAppState extends State<FundusApp> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _loadRemoteLibraries() async {
+    if (_loadingRemoteLibraries) return;
+    _loadingRemoteLibraries = true;
+    try {
+      var servers = await _remoteStore.load();
+      var references = await _remoteStore.loadLibraryReferences();
+      final offline = await _offlineStore.listAll();
+      final reachable = <String>{};
+      if (mounted) {
+        setState(() {
+          _remoteLibraries = _remoteChoices(
+            servers,
+            references,
+            reachable,
+            offline,
+          );
+        });
+      }
+      servers = await _peerDiscovery.relocate(servers);
+      await _remoteStore.save(servers);
+      await _syncOfflineProgress(servers);
+      await Future.wait([
+        for (final server in servers)
+          () async {
+            try {
+              final libraries = await _remoteClient.libraries(server);
+              await _remoteStore.rememberLibraries(server, libraries);
+              reachable.add(server.id);
+            } catch (_) {
+              // Gespeicherte Metadaten bleiben für Offline-Inhalte sichtbar.
+            }
+          }(),
+      ]);
+      references = await _remoteStore.loadLibraryReferences();
+      if (!mounted) return;
+      setState(() {
+        _remoteLibraries = _remoteChoices(
+          servers,
+          references,
+          reachable,
+          offline,
+        );
+      });
+    } catch (_) {
+      // Die lokale Bibliotheksauswahl bleibt auch ohne Netzwerk verfügbar.
+    } finally {
+      _loadingRemoteLibraries = false;
+    }
+  }
+
+  static List<_RemoteLibraryChoice> _remoteChoices(
+    List<FundusRemoteServer> servers,
+    List<FundusRemoteLibraryReference> references,
+    Set<String> reachable,
+    List<FundusOfflineWork> offline,
+  ) {
+    final byId = {for (final server in servers) server.id: server};
+    return [
+      for (final reference in references)
+        if (byId[reference.serverId] case final server?)
+          _RemoteLibraryChoice(
+            server: server,
+            library: reference,
+            reachable: reachable.contains(server.id),
+            offlineCount: offline
+                .where(
+                  (work) =>
+                      work.serverId == server.id &&
+                      work.libraryId == reference.libraryId,
+                )
+                .length,
+          ),
+    ]..sort((left, right) {
+      final byServer = left.server.name.toLowerCase().compareTo(
+        right.server.name.toLowerCase(),
+      );
+      return byServer != 0
+          ? byServer
+          : left.library.name.toLowerCase().compareTo(
+              right.library.name.toLowerCase(),
+            );
+    });
+  }
+
+  Future<void> _syncOfflineProgress(List<FundusRemoteServer> servers) async {
+    final byId = {for (final server in servers) server.id: server};
+    final deviceId = await _remoteStore.deviceId();
+    for (final pending in await _offlineStore.pendingProgress()) {
+      final server = byId[pending.serverId];
+      if (server == null) continue;
+      try {
+        await _remoteClient.saveProgress(
+          server,
+          libraryId: pending.libraryId,
+          workId: pending.workId,
+          fileId: pending.fileId,
+          position: pending.position,
+          duration: null,
+          finished: pending.finished,
+          deviceId: deviceId,
+          operationId: pending.operationId,
+        );
+        await _offlineStore.markProgressSynced(pending);
+      } catch (_) {
+        // Bleibt bis zum nächsten App-/Netzwerkstart in der lokalen Queue.
+      }
+    }
+  }
+
+  Future<void> _openRemoteLibrary(_RemoteLibraryChoice choice) async {
+    await showFundusRemoteServers(
+      context,
+      initialServerId: choice.server.id,
+      initialLibraryId: choice.library.libraryId,
+      peerServer: _peerServer,
+    );
+    await _loadRemoteLibraries();
+  }
+
+  Future<void> _openServerSettings() async {
+    await showFundusServerSettings(context, _peerServer);
+    await _loadRemoteLibraries();
+  }
+
   Future<void> _syncPeerSources() => _peerServer.setSources(
     _recentLibraries.map(
       (entry) => PeerLibrarySource(path: entry.path, name: entry.name),
@@ -371,8 +527,11 @@ class _LibraryWelcome extends StatelessWidget {
     required this.onOpen,
     required this.recentLibraries,
     required this.onOpenRecent,
+    required this.remoteLibraries,
+    required this.onOpenRemote,
     required this.onToggleTheme,
     required this.peerServer,
+    required this.onOpenServerSettings,
   });
 
   final bool busy;
@@ -381,8 +540,11 @@ class _LibraryWelcome extends StatelessWidget {
   final VoidCallback onOpen;
   final List<RecentLibraryEntry> recentLibraries;
   final ValueChanged<RecentLibraryEntry> onOpenRecent;
+  final List<_RemoteLibraryChoice> remoteLibraries;
+  final ValueChanged<_RemoteLibraryChoice> onOpenRemote;
   final VoidCallback onToggleTheme;
   final FundusPeerServerController peerServer;
+  final VoidCallback onOpenServerSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -391,7 +553,7 @@ class _LibraryWelcome extends StatelessWidget {
         title: const Text('Fundus'),
         actions: [
           IconButton(
-            onPressed: () => showFundusServerSettings(context, peerServer),
+            onPressed: onOpenServerSettings,
             tooltip: 'Server & Freigaben',
             icon: const Icon(Icons.lan_outlined),
           ),
@@ -477,6 +639,40 @@ class _LibraryWelcome extends StatelessWidget {
                       ),
                     ),
                   ],
+                  if (remoteLibraries.isNotEmpty) ...[
+                    const SizedBox(height: 24),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Bibliotheken gekoppelter Geräte',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Card(
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(
+                        children: [
+                          for (
+                            var index = 0;
+                            index < remoteLibraries.length;
+                            index++
+                          ) ...[
+                            _RemoteLibraryTile(
+                              choice: remoteLibraries[index],
+                              onTap:
+                                  remoteLibraries[index].reachable ||
+                                      remoteLibraries[index].offlineCount > 0
+                                  ? () => onOpenRemote(remoteLibraries[index])
+                                  : null,
+                            ),
+                            if (index < remoteLibraries.length - 1)
+                              const Divider(height: 1),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
                   if (busy) ...[
                     const SizedBox(height: 24),
                     const LinearProgressIndicator(),
@@ -496,6 +692,40 @@ class _LibraryWelcome extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _RemoteLibraryTile extends StatelessWidget {
+  const _RemoteLibraryTile({required this.choice, required this.onTap});
+
+  final _RemoteLibraryChoice choice;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final offlineOnly = !choice.reachable && choice.offlineCount > 0;
+    return ListTile(
+      enabled: onTap != null,
+      onTap: onTap,
+      leading: Icon(
+        Icons.circle,
+        size: 12,
+        color: choice.reachable
+            ? Colors.green
+            : offlineOnly
+            ? Colors.orange
+            : Theme.of(context).colorScheme.error,
+      ),
+      title: Text(choice.library.name),
+      subtitle: Text(choice.server.name),
+      trailing: Text(
+        choice.reachable
+            ? '${choice.library.workCount} Werk(e)'
+            : offlineOnly
+            ? '${choice.offlineCount} offline'
+            : 'Nicht erreichbar',
       ),
     );
   }

@@ -10,6 +10,7 @@ resolution: workspace
 
 dependencies:
   basic_utils: ^5.8.2
+  bonsoir: ^7.1.4
   crypto: ^3.0.7
   file_picker: ^11.0.2
   flutter:

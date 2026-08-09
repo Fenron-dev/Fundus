@@ -5,16 +5,38 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'fundus_remote_client.dart';
+import 'fundus_peer_server_controller.dart';
 import 'fundus_remote_player_controller.dart';
 import 'fundus_offline_store.dart';
+import 'fundus_peer_discovery.dart';
+import 'peer_server_identity_store.dart';
 
-Future<void> showFundusRemoteServers(BuildContext context) =>
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const FundusRemoteServersView()),
-    );
+Future<void> showFundusRemoteServers(
+  BuildContext context, {
+  String? initialServerId,
+  String? initialLibraryId,
+  FundusPeerServerController? peerServer,
+}) => Navigator.of(context).push(
+  MaterialPageRoute<void>(
+    builder: (_) => FundusRemoteServersView(
+      initialServerId: initialServerId,
+      initialLibraryId: initialLibraryId,
+      peerServer: peerServer,
+    ),
+  ),
+);
 
 class FundusRemoteServersView extends StatefulWidget {
-  const FundusRemoteServersView({super.key});
+  const FundusRemoteServersView({
+    super.key,
+    this.initialServerId,
+    this.initialLibraryId,
+    this.peerServer,
+  });
+
+  final String? initialServerId;
+  final String? initialLibraryId;
+  final FundusPeerServerController? peerServer;
 
   @override
   State<FundusRemoteServersView> createState() =>
@@ -25,11 +47,14 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   final _store = FundusRemoteServerStore();
   final _client = const FundusRemoteClient();
   final _offlineStore = FundusOfflineStore();
+  final _peerDiscovery = FundusPeerDiscovery();
   List<FundusRemoteServer> _servers = const [];
   FundusRemoteServer? _selectedServer;
   List<FundusRemoteLibrary> _libraries = const [];
   FundusRemoteLibrary? _selectedLibrary;
+  String? _offlineLibraryFilter;
   List<FundusRemoteWork> _works = const [];
+  String? _selectedKind;
   bool _busy = true;
   String? _error;
   FundusRemotePlayerController? _remotePlayer;
@@ -60,7 +85,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
 
   Future<void> _load() async {
     try {
-      final servers = await _store.load();
+      var servers = await _store.load();
+      servers = await _peerDiscovery.relocate(servers);
+      await _store.save(servers);
       final offlineWorks = await _offlineStore.listAll();
       if (!mounted) return;
       setState(() {
@@ -73,6 +100,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         );
         _busy = false;
       });
+      final initialServer = servers
+          .where((server) => server.id == widget.initialServerId)
+          .firstOrNull;
+      if (initialServer != null) {
+        await _selectServer(initialServer);
+        final initialLibrary = _libraries
+            .where((library) => library.id == widget.initialLibraryId)
+            .firstOrNull;
+        if (initialLibrary != null) await _selectLibrary(initialLibrary);
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -99,7 +136,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       final profile = await _client.pair(
         invitation,
         deviceId: await _store.deviceId(),
-        deviceName: _deviceName(),
+        deviceName: await _store.deviceName(),
       );
       final servers = [
         profile,
@@ -204,10 +241,12 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       _error = null;
       _selectedServer = server;
       _selectedLibrary = null;
+      _offlineLibraryFilter = null;
       _works = const [];
     });
     try {
       final libraries = await _client.libraries(server);
+      await _store.rememberLibraries(server, libraries);
       if (!mounted) return;
       setState(() {
         _libraries = libraries;
@@ -217,6 +256,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       if (!mounted) return;
       setState(() {
         _error = 'Server nicht erreichbar oder Berechtigung widerrufen.';
+        if (server.id == widget.initialServerId &&
+            widget.initialLibraryId != null) {
+          _selectedServer = null;
+          _offlineLibraryFilter = widget.initialLibraryId;
+        }
         _busy = false;
       });
     }
@@ -229,6 +273,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       _busy = true;
       _error = null;
       _selectedLibrary = library;
+      _selectedKind = null;
     });
     try {
       final works = await _client.works(server, library.id);
@@ -264,6 +309,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   Future<void> _removeServer(FundusRemoteServer server) async {
     final servers = _servers.where((item) => item.id != server.id).toList();
     await _store.save(servers);
+    await _store.forgetServerLibraries(server.id);
     if (!mounted) return;
     setState(() {
       _servers = servers;
@@ -276,11 +322,80 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     });
   }
 
+  Future<String?> _editName(String title, String current) async {
+    final controller = TextEditingController(text: current);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 80,
+          decoration: const InputDecoration(
+            labelText: 'Gerätename',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Speichern'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return result?.trim().isEmpty == true ? null : result;
+  }
+
+  Future<void> _renameOwnDevice() async {
+    final current = await _store.deviceName();
+    if (!mounted) return;
+    final name = await _editName('Dieses Gerät benennen', current);
+    if (name != null) {
+      final peerServer = widget.peerServer;
+      if (peerServer != null) {
+        await peerServer.setDeviceName(name);
+      } else {
+        await _store.setDeviceName(name);
+        final identityStore =
+            await PeerServerIdentityStore.platformDefaultAsync();
+        final identity = await identityStore.loadOrCreate();
+        await identityStore.saveDeviceName(identity.serverId, name);
+      }
+    }
+  }
+
+  Future<void> _renameServer(FundusRemoteServer server) async {
+    final name = await _editName('Server benennen', server.name);
+    if (name == null) return;
+    final renamed = server.copyWith(name: name);
+    final servers = [
+      for (final item in _servers) item.id == server.id ? renamed : item,
+    ];
+    await _store.save(servers);
+    if (!mounted) return;
+    setState(() {
+      _servers = servers;
+      if (_selectedServer?.id == server.id) _selectedServer = renamed;
+    });
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
       title: const Text('Fundus-Server'),
       actions: [
+        IconButton(
+          onPressed: _renameOwnDevice,
+          tooltip: 'Dieses Gerät benennen',
+          icon: const Icon(Icons.badge_outlined),
+        ),
         IconButton(
           onPressed: _busy ? null : _manualPairingCodeThenConnect,
           tooltip: 'Code einfügen',
@@ -351,7 +466,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       final profile = await _client.pair(
         FundusPairingInvitation.parse(source).withPin(pin),
         deviceId: await _store.deviceId(),
-        deviceName: _deviceName(),
+        deviceName: await _store.deviceName(),
       );
       final servers = [
         profile,
@@ -374,6 +489,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   }
 
   Widget _content() {
+    if (_offlineLibraryFilter != null) return _offlineLibraryView();
     final selectedLibrary = _selectedLibrary;
     if (selectedLibrary != null) return _worksGrid(selectedLibrary);
     final selectedServer = _selectedServer;
@@ -381,14 +497,43 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     return _serverList();
   }
 
-  static String _deviceName() => switch (Platform.operatingSystem) {
-    'android' => 'Fundus auf Android',
-    'ios' => 'Fundus auf iOS',
-    'macos' => 'Fundus auf macOS',
-    'windows' => 'Fundus auf Windows',
-    'linux' => 'Fundus auf Linux',
-    _ => 'Fundus-Gerät',
-  };
+  Widget _offlineLibraryView() {
+    final works = _offlineWorks
+        .where((work) => work.libraryId == _offlineLibraryFilter)
+        .toList();
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        ListTile(
+          leading: BackButton(
+            onPressed: () => setState(() => _offlineLibraryFilter = null),
+          ),
+          title: const Text('Offline-Medien'),
+          subtitle: Text('${works.length} Medium/Medien auf diesem Gerät'),
+        ),
+        for (final offline in works)
+          Card(
+            child: ListTile(
+              leading: offline.coverPath == null
+                  ? Icon(_kindIcon(offline.kind))
+                  : ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: Image.file(
+                        File(offline.coverPath!),
+                        width: 42,
+                        height: 52,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+              title: Text(offline.title),
+              subtitle: Text(_kindLabel(offline.kind)),
+              trailing: const Icon(Icons.play_arrow),
+              onTap: () => _playOffline(offline),
+            ),
+          ),
+      ],
+    );
+  }
 
   Widget _serverList() => ListView(
     padding: const EdgeInsets.all(16),
@@ -405,10 +550,19 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             title: Text(server.name),
             subtitle: Text(server.baseUri.host),
             onTap: () => _selectServer(server),
-            trailing: IconButton(
-              onPressed: () => _removeServer(server),
-              tooltip: 'Von diesem Gerät entfernen',
-              icon: const Icon(Icons.delete_outline),
+            trailing: Wrap(
+              children: [
+                IconButton(
+                  onPressed: () => _renameServer(server),
+                  tooltip: 'Server benennen',
+                  icon: const Icon(Icons.edit_outlined),
+                ),
+                IconButton(
+                  onPressed: () => _removeServer(server),
+                  tooltip: 'Von diesem Gerät entfernen',
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ],
             ),
           ),
         ),
@@ -472,6 +626,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
 
   Widget _worksGrid(FundusRemoteLibrary library) {
     final server = _selectedServer!;
+    final kinds = _works.map((work) => work.kind).toSet().toList()..sort();
+    final works = _selectedKind == null
+        ? _works
+        : _works.where((work) => work.kind == _selectedKind).toList();
     return CustomScrollView(
       slivers: [
         SliverToBoxAdapter(
@@ -480,9 +638,34 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
               onPressed: () => setState(() => _selectedLibrary = null),
             ),
             title: Text(library.name),
-            subtitle: Text('${_works.length} Medien'),
+            subtitle: Text('${works.length} Medien'),
           ),
         ),
+        if (kinds.length > 1)
+          SliverToBoxAdapter(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  ChoiceChip(
+                    label: const Text('Alle'),
+                    selected: _selectedKind == null,
+                    onSelected: (_) => setState(() => _selectedKind = null),
+                  ),
+                  const SizedBox(width: 8),
+                  for (final kind in kinds) ...[
+                    ChoiceChip(
+                      label: Text(_kindLabel(kind)),
+                      selected: _selectedKind == kind,
+                      onSelected: (_) => setState(() => _selectedKind = kind),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                ],
+              ),
+            ),
+          ),
         SliverPadding(
           padding: const EdgeInsets.all(16),
           sliver: SliverGrid.builder(
@@ -492,9 +675,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
               crossAxisSpacing: 12,
               mainAxisSpacing: 12,
             ),
-            itemCount: _works.length,
+            itemCount: works.length,
             itemBuilder: (context, index) {
-              final work = _works[index];
+              final work = works[index];
               return Card(
                 clipBehavior: Clip.antiAlias,
                 child: InkWell(
@@ -519,7 +702,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                                         child: CircularProgressIndicator(),
                                       ),
                               )
-                            : const Icon(Icons.audiotrack, size: 72),
+                            : Icon(_kindIcon(work.kind), size: 72),
                       ),
                       Padding(
                         padding: const EdgeInsets.all(10),
@@ -538,6 +721,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                               work.authors.join(', '),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
+                            ),
+                            Text(
+                              _kindLabel(work.kind),
+                              style: Theme.of(context).textTheme.labelSmall,
                             ),
                             if (_offlineKeys.contains(
                               _offlineKey(server, library, work),
@@ -763,6 +950,28 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     FundusRemoteWork work,
   ) => '${server.id}/${library.id}/${work.id}';
 
+  static String _kindLabel(String kind) => switch (kind) {
+    'audiobook' || 'audio' => 'Hörbuch',
+    'movie' || 'video' => 'Film',
+    'series' || 'tv' => 'Serie',
+    'podcast' => 'Podcast',
+    'music' => 'Musik',
+    'ebook' || 'book' => 'E-Book',
+    'image' => 'Bild',
+    'document' || 'archive' => 'Dokument',
+    _ => kind,
+  };
+
+  static IconData _kindIcon(String kind) => switch (kind) {
+    'movie' || 'video' || 'series' || 'tv' => Icons.movie_outlined,
+    'podcast' => Icons.podcasts_outlined,
+    'music' => Icons.music_note_outlined,
+    'ebook' || 'book' => Icons.menu_book_outlined,
+    'image' => Icons.image_outlined,
+    'document' || 'archive' => Icons.description_outlined,
+    _ => Icons.audiotrack,
+  };
+
   Future<void> _playOffline(FundusOfflineWork offline) async {
     final server =
         _servers.where((item) => item.id == offline.serverId).firstOrNull ??
@@ -781,8 +990,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     final work = FundusRemoteWork(
       id: offline.workId,
       title: offline.title,
-      authors: const [],
+      authors: offline.authors,
       hasCover: offline.coverPath != null,
+      kind: offline.kind,
+      series: offline.series,
+      description: offline.description,
     );
     final player =
         _remotePlayer ??

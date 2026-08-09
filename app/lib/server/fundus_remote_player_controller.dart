@@ -235,8 +235,9 @@ final class FundusRemotePlayerController extends ChangeNotifier {
           measuredDuration != null && measuredDuration < _position
           ? _position
           : measuredDuration;
+      FundusOfflinePendingProgress? offlinePending;
       if (_offlineWork != null) {
-        await _offlineStore.saveProgress(
+        offlinePending = await _offlineStore.saveProgress(
           serverId: server.id,
           libraryId: library.id,
           workId: work.id,
@@ -257,6 +258,9 @@ final class FundusRemotePlayerController extends ChangeNotifier {
           deviceId: deviceId,
           operationId: _operationId(),
         );
+        if (offlinePending != null) {
+          await _offlineStore.markProgressSynced(offlinePending);
+        }
       } catch (_) {
         if (_offlineWork == null) rethrow;
       }

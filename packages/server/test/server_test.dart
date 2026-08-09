@@ -68,6 +68,7 @@ void main() {
     final pairedServer = FundusServerHandler(
       token: 'local-only-secret',
       serverId: 'server-test',
+      serverName: 'Wohnzimmer-PC',
       registry: registry,
       pairingAuthority: authority,
     );
@@ -87,8 +88,11 @@ void main() {
     final claimBody = await _json(claim);
     final deviceToken = claimBody['token']! as String;
     expect(claim.statusCode, 200);
+    expect(claimBody['server_name'], 'Wohnzimmer-PC');
     expect(authority.activeSession, isNull);
     expect(authority.devices.single.tokenHash, isNot(deviceToken));
+    await authority.rename('phone-1', 'Privates Telefon');
+    expect(authority.devices.single.name, 'Privates Telefon');
 
     final accepted = await pairedServer.handler(
       Request(
@@ -132,6 +136,7 @@ void main() {
     final body = await _json(response);
     expect(response.statusCode, 200);
     expect(body['server_id'], 'server-test');
+    expect(body['server_name'], 'Fundus');
     expect(body['library_format_version'], 1);
     expect(body['capabilities'], contains('multiple_libraries'));
     expect(body['capabilities'], contains('range_streaming'));

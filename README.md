@@ -65,6 +65,10 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
   sowie Fortschrittssynchronisation im Fünf-Sekunden-Takt und beim Pausieren
 - atomare Offline-Downloads mit lokalem Manifest, eigener Offline-Übersicht,
   lokaler Wiedergabe und lokalem Resume auch ohne erreichbaren Server
+- gekoppelte Serverbibliotheken in der regulären Bibliotheksauswahl, frei
+  benennbare Geräte und per mDNS sicher wiedergefundene Peers nach IP-Wechseln
+- automatische Wiederholung ausstehender Offline-Fortschritte, sobald der
+  gepinnte Ursprungsserver wieder erreichbar ist
 
 ## Entwicklung
 

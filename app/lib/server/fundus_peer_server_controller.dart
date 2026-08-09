@@ -9,6 +9,8 @@ import 'package:fundus_server/fundus_server.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
 import '../diagnostics/fundus_diagnostics.dart';
+import 'fundus_peer_discovery.dart';
+import 'fundus_remote_client.dart';
 import 'peer_server_identity_store.dart';
 
 final class PeerLibrarySource {
@@ -53,6 +55,7 @@ final class FundusPeerServerController extends ChangeNotifier {
   final String _token;
   PeerServerIdentityStore? _identityStore;
   final FundusLibraryRegistry _registry = FundusLibraryRegistry();
+  final FundusPeerAdvertiser _advertiser = FundusPeerAdvertiser();
   List<PeerLibrarySource> _sources = const [];
   final Set<String> _sharedPaths = {};
   List<PeerSharedLibraryStatus> _libraries = const [];
@@ -64,8 +67,10 @@ final class FundusPeerServerController extends ChangeNotifier {
   bool _lanEnabled = false;
   List<Uri> _networkUris = const [];
   Uri? _pairingUri;
+  String _deviceName = 'Fundus-Gerät';
 
   String get serverId => _serverId ?? 'fundus-wird-vorbereitet';
+  String get deviceName => _deviceName;
   PeerServerState get state => _state;
   bool get isRunning => _state == PeerServerState.running;
   bool get isBusy =>
@@ -87,6 +92,11 @@ final class FundusPeerServerController extends ChangeNotifier {
   bool get hasSharedSources => _sources.any(
     (source) => _sharedPaths.contains(Directory(source.path).absolute.path),
   );
+
+  Future<void> initialize() async {
+    await _ensureIdentity();
+    notifyListeners();
+  }
 
   Future<void> setLanEnabled(bool enabled) async {
     if (_lanEnabled == enabled) return;
@@ -128,6 +138,7 @@ final class FundusPeerServerController extends ChangeNotifier {
       'version': 1,
       'base_url': pairingUri.toString(),
       'server_id': serverId,
+      'server_name': deviceName,
       'certificate_sha256': _identity!.certificateFingerprint,
       'nonce': session.nonce,
       'expires_at': session.expiresAt.toUtc().toIso8601String(),
@@ -137,6 +148,31 @@ final class FundusPeerServerController extends ChangeNotifier {
   Future<void> revokeDevice(String deviceId) async {
     await _pairingAuthority?.revoke(deviceId);
     notifyListeners();
+  }
+
+  Future<void> renamePairedDevice(String deviceId, String name) async {
+    await _pairingAuthority?.rename(deviceId, name);
+    notifyListeners();
+  }
+
+  Future<void> setDeviceName(String value) async {
+    final normalized = value.trim();
+    if (normalized.isEmpty ||
+        normalized.length > 80 ||
+        normalized == _deviceName) {
+      return;
+    }
+    await _ensureIdentity();
+    _deviceName = normalized;
+    await _identityStore?.saveDeviceName(serverId, normalized);
+    await FundusRemoteServerStore().setDeviceName(normalized);
+    final wasRunning = isRunning;
+    if (wasRunning) {
+      await stop();
+      await start();
+    } else {
+      notifyListeners();
+    }
   }
 
   Future<void> setSources(Iterable<PeerLibrarySource> sources) async {
@@ -249,6 +285,7 @@ final class FundusPeerServerController extends ChangeNotifier {
       final handler = FundusServerHandler(
         token: _token,
         serverId: serverId,
+        serverName: deviceName,
         registry: _registry,
         pairingAuthority: _pairingAuthority,
       );
@@ -266,6 +303,19 @@ final class FundusPeerServerController extends ChangeNotifier {
       _pairingUri = _networkUris.firstOrNull;
       _libraries = statuses;
       _state = PeerServerState.running;
+      if (_lanEnabled) {
+        try {
+          await _advertiser.start(
+            deviceId: serverId,
+            deviceName: deviceName,
+            port: _server!.port,
+          );
+        } catch (_) {
+          unawaited(
+            FundusDiagnostics.instance.record('server.discovery_failed'),
+          );
+        }
+      }
       unawaited(
         FundusDiagnostics.instance.record('server.started', {
           'server_id': serverId,
@@ -297,6 +347,7 @@ final class FundusPeerServerController extends ChangeNotifier {
     }
     _state = PeerServerState.stopping;
     notifyListeners();
+    await _advertiser.stop();
     await _server?.close(force: true);
     _server = null;
     _networkUris = const [];
@@ -326,6 +377,7 @@ final class FundusPeerServerController extends ChangeNotifier {
   void dispose() {
     final server = _server;
     _server = null;
+    unawaited(_advertiser.stop());
     if (server != null) unawaited(server.close(force: true));
     _registry.close();
     super.dispose();
@@ -350,6 +402,8 @@ final class FundusPeerServerController extends ChangeNotifier {
     final identity = await store.loadOrCreate();
     _identity = identity;
     _serverId ??= identity.serverId;
+    _deviceName = identity.deviceName;
+    await FundusRemoteServerStore().setDeviceName(identity.deviceName);
     _pairingAuthority = FundusPairingAuthority(
       devices: identity.pairedDevices,
       onChanged: (devices) async {

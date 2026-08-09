@@ -47,12 +47,14 @@ final class FundusServerHandler {
   FundusServerHandler({
     required this.token,
     required this.serverId,
+    this.serverName = 'Fundus',
     FundusLibraryRegistry? registry,
     this.pairingAuthority,
   }) : registry = registry ?? FundusLibraryRegistry();
 
   final String token;
   final String serverId;
+  final String serverName;
   final FundusLibraryRegistry registry;
   final FundusPairingAuthority? pairingAuthority;
 
@@ -107,6 +109,7 @@ final class FundusServerHandler {
       );
       return _json({
         'server_id': serverId,
+        'server_name': serverName,
         'device_id': result.device.id,
         'token': result.token,
       });
@@ -123,6 +126,7 @@ final class FundusServerHandler {
 
   Response _capabilities(Request request) => _json({
     'server_id': serverId,
+    'server_name': serverName,
     'api_version': 1,
     'library_format_version': LibraryManifest.currentFormatVersion,
     'min_reader_version': LibraryManifest.currentReaderVersion,

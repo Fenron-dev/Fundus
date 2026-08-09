@@ -191,6 +191,20 @@ final class FundusPairingAuthority {
     if (_devices.remove(deviceId) != null) await _notifyChanged();
   }
 
+  Future<void> rename(String deviceId, String name) async {
+    final current = _devices[deviceId];
+    final normalized = name.trim();
+    if (current == null || normalized.isEmpty || normalized.length > 80) return;
+    _devices[deviceId] = FundusPairedDevice(
+      id: current.id,
+      name: normalized,
+      tokenHash: current.tokenHash,
+      pairedAt: current.pairedAt,
+      lastSeenAt: current.lastSeenAt,
+    );
+    await _notifyChanged();
+  }
+
   Future<void> _notifyChanged() async {
     final callback = onChanged;
     if (callback != null) await callback(devices);

@@ -31,7 +31,8 @@ class _ServerSettings extends StatelessWidget {
         automaticallyImplyLeading: false,
         actions: [
           IconButton(
-            onPressed: () => showFundusRemoteServers(context),
+            onPressed: () =>
+                showFundusRemoteServers(context, peerServer: controller),
             tooltip: 'Mit Server verbinden',
             icon: const Icon(Icons.devices),
           ),
@@ -45,6 +46,21 @@ class _ServerSettings extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
         children: [
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.badge_outlined),
+              title: const Text('Name dieses Geräts'),
+              subtitle: Text(controller.deviceName),
+              trailing: IconButton(
+                onPressed: controller.isBusy
+                    ? null
+                    : () => _renameOwnDevice(context),
+                tooltip: 'Gerätenamen ändern',
+                icon: const Icon(Icons.edit_outlined),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
           _statusCard(context),
           const SizedBox(height: 12),
           SwitchListTile.adaptive(
@@ -274,10 +290,23 @@ class _ServerSettings extends StatelessWidget {
                   subtitle: Text(
                     'Verbunden am ${MaterialLocalizations.of(context).formatShortDate(device.pairedAt.toLocal())}',
                   ),
-                  trailing: IconButton(
-                    onPressed: () => controller.revokeDevice(device.id),
-                    tooltip: 'Berechtigung widerrufen',
-                    icon: const Icon(Icons.delete_outline),
+                  trailing: Wrap(
+                    children: [
+                      IconButton(
+                        onPressed: () => _renamePairedDevice(
+                          context,
+                          device.id,
+                          device.name,
+                        ),
+                        tooltip: 'Gerät benennen',
+                        icon: const Icon(Icons.edit_outlined),
+                      ),
+                      IconButton(
+                        onPressed: () => controller.revokeDevice(device.id),
+                        tooltip: 'Berechtigung widerrufen',
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                    ],
                   ),
                 ),
             ],
@@ -312,4 +341,57 @@ class _ServerSettings extends StatelessWidget {
               : (value) => controller.setLibraryShared(library.path, value),
         ),
       );
+
+  Future<String?> _askName(
+    BuildContext context,
+    String title,
+    String current,
+  ) async {
+    final text = TextEditingController(text: current);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: text,
+          autofocus: true,
+          maxLength: 80,
+          decoration: const InputDecoration(
+            labelText: 'Gerätename',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, text.text.trim()),
+            child: const Text('Speichern'),
+          ),
+        ],
+      ),
+    );
+    text.dispose();
+    return result?.trim().isEmpty == true ? null : result;
+  }
+
+  Future<void> _renameOwnDevice(BuildContext context) async {
+    final name = await _askName(
+      context,
+      'Dieses Gerät benennen',
+      controller.deviceName,
+    );
+    if (name != null) await controller.setDeviceName(name);
+  }
+
+  Future<void> _renamePairedDevice(
+    BuildContext context,
+    String deviceId,
+    String current,
+  ) async {
+    final name = await _askName(context, 'Verbundenes Gerät benennen', current);
+    if (name != null) await controller.renamePairedDevice(deviceId, name);
+  }
 }

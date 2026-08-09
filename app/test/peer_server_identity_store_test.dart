@@ -19,6 +19,12 @@ void main() {
     expect(second.certificateFingerprint, first.certificateFingerprint);
     expect(second.privateKeyPem, first.privateKeyPem);
     expect(first.certificateFingerprint, hasLength(64));
+
+    await store.saveDeviceName(first.serverId, 'Arbeits-Laptop');
+    final renamed = await store.loadOrCreate();
+    expect(renamed.deviceName, 'Arbeits-Laptop');
+    expect(renamed.serverId, first.serverId);
+    expect(renamed.certificateFingerprint, first.certificateFingerprint);
   });
 
   test('persists token hashes without a raw device token', () async {

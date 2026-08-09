@@ -31,6 +31,10 @@ final class FundusOfflineWork {
     required this.title,
     required this.downloadedAt,
     required this.tracks,
+    this.kind = 'audiobook',
+    this.authors = const [],
+    this.series,
+    this.description,
     this.coverPath,
   });
 
@@ -40,7 +44,31 @@ final class FundusOfflineWork {
   final String title;
   final DateTime downloadedAt;
   final List<FundusOfflineTrack> tracks;
+  final String kind;
+  final List<String> authors;
+  final String? series;
+  final String? description;
   final String? coverPath;
+}
+
+final class FundusOfflinePendingProgress {
+  const FundusOfflinePendingProgress({
+    required this.serverId,
+    required this.libraryId,
+    required this.workId,
+    required this.fileId,
+    required this.position,
+    required this.finished,
+    required this.operationId,
+  });
+
+  final String serverId;
+  final String libraryId;
+  final String workId;
+  final String fileId;
+  final Duration position;
+  final bool finished;
+  final String operationId;
 }
 
 typedef OfflineDownloadProgress = void Function(int completed, int total);
@@ -106,6 +134,14 @@ final class FundusOfflineStore {
         libraryId: libraryId,
         workId: workId,
         title: value['title'] is String ? value['title'] as String : 'Medium',
+        kind: value['kind'] is String ? value['kind'] as String : 'audiobook',
+        authors: (value['authors'] as List? ?? const [])
+            .whereType<String>()
+            .toList(growable: false),
+        series: value['series'] is String ? value['series'] as String : null,
+        description: value['description'] is String
+            ? value['description'] as String
+            : null,
         downloadedAt:
             DateTime.tryParse('${value['downloaded_at'] ?? ''}') ??
             DateTime.fromMillisecondsSinceEpoch(0),
@@ -229,6 +265,10 @@ final class FundusOfflineStore {
           'library_id': library.id,
           'work_id': work.id,
           'title': work.title,
+          'kind': work.kind,
+          'authors': work.authors,
+          if (work.series != null) 'series': work.series,
+          if (work.description != null) 'description': work.description,
           'downloaded_at': downloadedAt.toIso8601String(),
           if (coverPath != null) 'cover_path': p.basename(coverPath),
           'tracks': [
@@ -297,7 +337,7 @@ final class FundusOfflineStore {
     }
   }
 
-  Future<void> saveProgress({
+  Future<FundusOfflinePendingProgress> saveProgress({
     required String serverId,
     required String libraryId,
     required String workId,
@@ -309,18 +349,104 @@ final class FundusOfflineStore {
     await directory.create(recursive: true);
     final destination = File(p.join(directory.path, 'progress.json'));
     final partial = File('${destination.path}.part');
+    final updatedAt = DateTime.now().toUtc().toIso8601String();
+    final operationId = sha256
+        .convert(
+          utf8.encode(
+            '$serverId\u0000$libraryId\u0000$workId\u0000$fileId\u0000'
+            '${position.inMilliseconds}\u0000$updatedAt',
+          ),
+        )
+        .toString();
     await partial.writeAsString(
       jsonEncode({
         'file_id': fileId,
         'position_ms': position.inMilliseconds,
         'finished': finished,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
+        'updated_at': updatedAt,
+        'operation_id': 'offline-$operationId',
         'pending_sync': true,
       }),
       flush: true,
     );
     if (await destination.exists()) await destination.delete();
     await partial.rename(destination.path);
+    return FundusOfflinePendingProgress(
+      serverId: serverId,
+      libraryId: libraryId,
+      workId: workId,
+      fileId: fileId,
+      position: position,
+      finished: finished,
+      operationId: 'offline-$operationId',
+    );
+  }
+
+  Future<List<FundusOfflinePendingProgress>> pendingProgress() async {
+    final result = <FundusOfflinePendingProgress>[];
+    for (final work in await listAll()) {
+      final directory = await _workDirectory(
+        work.serverId,
+        work.libraryId,
+        work.workId,
+      );
+      final file = File(p.join(directory.path, 'progress.json'));
+      if (!await file.exists()) continue;
+      try {
+        final value = jsonDecode(await file.readAsString());
+        if (value is! Map ||
+            value['pending_sync'] != true ||
+            value['file_id'] is! String ||
+            value['operation_id'] is! String) {
+          continue;
+        }
+        result.add(
+          FundusOfflinePendingProgress(
+            serverId: work.serverId,
+            libraryId: work.libraryId,
+            workId: work.workId,
+            fileId: value['file_id'] as String,
+            position: Duration(
+              milliseconds: value['position_ms'] is int
+                  ? value['position_ms'] as int
+                  : 0,
+            ),
+            finished: value['finished'] == true,
+            operationId: value['operation_id'] as String,
+          ),
+        );
+      } on FileSystemException {
+        continue;
+      } on FormatException {
+        continue;
+      }
+    }
+    return result;
+  }
+
+  Future<void> markProgressSynced(FundusOfflinePendingProgress pending) async {
+    final directory = await _workDirectory(
+      pending.serverId,
+      pending.libraryId,
+      pending.workId,
+    );
+    final destination = File(p.join(directory.path, 'progress.json'));
+    if (!await destination.exists()) return;
+    try {
+      final value = jsonDecode(await destination.readAsString());
+      if (value is! Map || value['operation_id'] != pending.operationId) return;
+      final partial = File('${destination.path}.part');
+      await partial.writeAsString(
+        jsonEncode({...value, 'pending_sync': false}),
+        flush: true,
+      );
+      await destination.delete();
+      await partial.rename(destination.path);
+    } on FileSystemException {
+      return;
+    } on FormatException {
+      return;
+    }
   }
 
   Future<Directory> _workDirectory(

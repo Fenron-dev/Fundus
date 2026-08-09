@@ -14,6 +14,7 @@ final class FundusPairingInvitation {
     required this.nonce,
     required this.pin,
     required this.expiresAt,
+    this.serverName,
   });
 
   final Uri baseUri;
@@ -22,6 +23,7 @@ final class FundusPairingInvitation {
   final String nonce;
   final String pin;
   final DateTime expiresAt;
+  final String? serverName;
 
   FundusPairingInvitation withPin(String value) => FundusPairingInvitation(
     baseUri: baseUri,
@@ -30,6 +32,7 @@ final class FundusPairingInvitation {
     nonce: nonce,
     pin: value,
     expiresAt: expiresAt,
+    serverName: serverName,
   );
 
   static FundusPairingInvitation parse(String source) {
@@ -58,6 +61,9 @@ final class FundusPairingInvitation {
       nonce: '${value['nonce']}',
       pin: value['pin'] is String ? value['pin'] as String : '',
       expiresAt: expiresAt,
+      serverName: value['server_name'] is String
+          ? value['server_name'] as String
+          : null,
     );
   }
 }
@@ -69,6 +75,7 @@ final class FundusRemoteServer {
     required this.baseUri,
     required this.certificateFingerprint,
     required this.token,
+    this.serverName,
   });
 
   final String id;
@@ -76,6 +83,20 @@ final class FundusRemoteServer {
   final Uri baseUri;
   final String certificateFingerprint;
   final String token;
+  final String? serverName;
+
+  FundusRemoteServer copyWith({
+    String? name,
+    Uri? baseUri,
+    String? serverName,
+  }) => FundusRemoteServer(
+    id: id,
+    name: name ?? this.name,
+    baseUri: baseUri ?? this.baseUri,
+    certificateFingerprint: certificateFingerprint,
+    token: token,
+    serverName: serverName ?? this.serverName,
+  );
 
   Map<String, Object?> toJson() => {
     'id': id,
@@ -83,6 +104,7 @@ final class FundusRemoteServer {
     'base_url': baseUri.toString(),
     'certificate_sha256': certificateFingerprint,
     'token': token,
+    if (serverName != null) 'server_name': serverName,
   };
 
   static FundusRemoteServer? fromJson(Object? value) {
@@ -101,6 +123,9 @@ final class FundusRemoteServer {
       baseUri: baseUri,
       certificateFingerprint: value['certificate_sha256'] as String,
       token: value['token'] as String,
+      serverName: value['server_name'] is String
+          ? value['server_name'] as String
+          : null,
     );
   }
 }
@@ -117,12 +142,49 @@ final class FundusRemoteLibrary {
   final int workCount;
 }
 
+final class FundusRemoteLibraryReference {
+  const FundusRemoteLibraryReference({
+    required this.serverId,
+    required this.libraryId,
+    required this.name,
+    required this.workCount,
+  });
+
+  final String serverId;
+  final String libraryId;
+  final String name;
+  final int workCount;
+
+  Map<String, Object?> toJson() => {
+    'server_id': serverId,
+    'library_id': libraryId,
+    'name': name,
+    'work_count': workCount,
+  };
+
+  static FundusRemoteLibraryReference? fromJson(Object? value) {
+    if (value is! Map ||
+        value['server_id'] is! String ||
+        value['library_id'] is! String ||
+        value['name'] is! String) {
+      return null;
+    }
+    return FundusRemoteLibraryReference(
+      serverId: value['server_id'] as String,
+      libraryId: value['library_id'] as String,
+      name: value['name'] as String,
+      workCount: value['work_count'] is int ? value['work_count'] as int : 0,
+    );
+  }
+}
+
 final class FundusRemoteWork {
   const FundusRemoteWork({
     required this.id,
     required this.title,
     required this.authors,
     required this.hasCover,
+    this.kind = 'audiobook',
     this.series,
     this.seriesSequence,
     this.description,
@@ -132,6 +194,7 @@ final class FundusRemoteWork {
   final String title;
   final List<String> authors;
   final bool hasCover;
+  final String kind;
   final String? series;
   final num? seriesSequence;
   final String? description;
@@ -187,6 +250,8 @@ final class FundusRemoteServerStore {
 
   static const _serversKey = 'fundus.remote_servers.v1';
   static const _deviceIdKey = 'fundus.device_id.v1';
+  static const _deviceNameKey = 'fundus.device_name.v1';
+  static const _librariesKey = 'fundus.remote_libraries.v1';
   final FlutterSecureStorage _storage;
 
   Future<List<FundusRemoteServer>> load() async {
@@ -217,6 +282,78 @@ final class FundusRemoteServerStore {
     return value;
   }
 
+  Future<String> deviceName() async {
+    final existing = await _storage.read(key: _deviceNameKey);
+    if (existing != null && existing.trim().isNotEmpty) return existing.trim();
+    final value = _defaultDeviceName();
+    await _storage.write(key: _deviceNameKey, value: value);
+    return value;
+  }
+
+  Future<void> setDeviceName(String value) async {
+    final normalized = value.trim();
+    if (normalized.isEmpty || normalized.length > 80) return;
+    await _storage.write(key: _deviceNameKey, value: normalized);
+  }
+
+  Future<List<FundusRemoteLibraryReference>> loadLibraryReferences() async {
+    final source = await _storage.read(key: _librariesKey);
+    if (source == null) return const [];
+    try {
+      final value = jsonDecode(source);
+      if (value is! List) return const [];
+      return value
+          .map(FundusRemoteLibraryReference.fromJson)
+          .whereType<FundusRemoteLibraryReference>()
+          .toList(growable: false);
+    } on FormatException {
+      return const [];
+    }
+  }
+
+  Future<void> rememberLibraries(
+    FundusRemoteServer server,
+    List<FundusRemoteLibrary> libraries,
+  ) async {
+    final current = await loadLibraryReferences();
+    final updated = [
+      ...current.where((item) => item.serverId != server.id),
+      for (final library in libraries)
+        FundusRemoteLibraryReference(
+          serverId: server.id,
+          libraryId: library.id,
+          name: library.name,
+          workCount: library.workCount,
+        ),
+    ];
+    await _storage.write(
+      key: _librariesKey,
+      value: jsonEncode(updated.map((item) => item.toJson()).toList()),
+    );
+  }
+
+  Future<void> forgetServerLibraries(String serverId) async {
+    final current = await loadLibraryReferences();
+    await _storage.write(
+      key: _librariesKey,
+      value: jsonEncode(
+        current
+            .where((item) => item.serverId != serverId)
+            .map((item) => item.toJson())
+            .toList(),
+      ),
+    );
+  }
+
+  static String _defaultDeviceName() => switch (Platform.operatingSystem) {
+    'android' => 'Fundus auf Android',
+    'ios' => 'Fundus auf iOS',
+    'macos' => 'Fundus auf macOS',
+    'windows' => 'Fundus auf Windows',
+    'linux' => 'Fundus auf Linux',
+    _ => 'Fundus-Gerät',
+  };
+
   static String _randomValue(int count) {
     final random = Random.secure();
     final bytes = List<int>.generate(count, (_) => random.nextInt(256));
@@ -226,6 +363,24 @@ final class FundusRemoteServerStore {
 
 final class FundusRemoteClient {
   const FundusRemoteClient();
+
+  Future<FundusRemoteServer> verifyEndpoint(
+    FundusRemoteServer server,
+    Uri baseUri,
+  ) async {
+    final candidate = server.copyWith(baseUri: baseUri);
+    final value = await _json(candidate, '/v1/capabilities');
+    if (value['server_id'] != server.id) {
+      throw const HttpException(
+        'Gefundene Geräteidentität stimmt nicht überein.',
+      );
+    }
+    return candidate.copyWith(
+      serverName: value['server_name'] is String
+          ? value['server_name'] as String
+          : server.serverName,
+    );
+  }
 
   Future<FundusRemoteServer> pair(
     FundusPairingInvitation invitation, {
@@ -250,12 +405,18 @@ final class FundusRemoteClient {
     if (value is! Map || value['token'] is! String) {
       throw const HttpException('Ungültige Pairing-Antwort.');
     }
+    final advertisedName = value['server_name'] is String
+        ? value['server_name'] as String
+        : invitation.serverName;
     return FundusRemoteServer(
       id: invitation.serverId,
-      name: 'Fundus ${invitation.baseUri.host}',
+      name: advertisedName?.trim().isNotEmpty == true
+          ? advertisedName!.trim()
+          : 'Fundus ${invitation.baseUri.host}',
       baseUri: invitation.baseUri,
       certificateFingerprint: invitation.certificateFingerprint,
       token: value['token'] as String,
+      serverName: advertisedName,
     );
   }
 
@@ -293,6 +454,7 @@ final class FundusRemoteClient {
                 .whereType<String>()
                 .toList(growable: false),
             hasCover: item['has_cover'] == true,
+            kind: item['kind'] is String ? item['kind'] as String : 'unknown',
             series: item['series'] is String ? item['series'] as String : null,
             seriesSequence: item['series_sequence'] is num
                 ? item['series_sequence'] as num
@@ -475,6 +637,7 @@ final class FundusRemoteClient {
     String? range,
   }) async {
     final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 4);
     client.badCertificateCallback = (certificate, host, port) =>
         _fingerprint(certificate) == fingerprint;
     try {

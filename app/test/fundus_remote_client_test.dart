@@ -38,6 +38,7 @@ void main() {
       FundusServerHandler(
         token: 'loopback-test-token',
         serverId: identity.serverId,
+        serverName: 'Test-Desktop',
         registry: registry,
         pairingAuthority: authority,
       ).handler,
@@ -62,12 +63,18 @@ void main() {
       deviceName: 'Testgerät',
     );
     final libraries = await client.libraries(profile);
+    final verified = await client.verifyEndpoint(profile, invitation.baseUri);
 
     expect(profile.token, isNotEmpty);
+    expect(profile.name, 'Test-Desktop');
+    expect(profile.serverName, 'Test-Desktop');
+    expect(verified.id, profile.id);
+    expect(verified.baseUri, invitation.baseUri);
     expect(libraries.single.name, 'Testbibliothek');
     expect(libraries.single.workCount, 1);
 
     final works = await client.works(profile, libraries.single.id);
+    expect(works.single.kind, 'audiobook');
     final detail = await client.work(
       profile,
       libraries.single.id,
@@ -117,6 +124,7 @@ void main() {
       works.single,
     );
     expect(await File(offline.tracks.single.path).readAsBytes(), [1, 2, 3]);
+    expect(offline.kind, 'audiobook');
     expect(
       Directory('${temporary.path}/offline')
           .listSync(recursive: true)
@@ -124,7 +132,7 @@ void main() {
           .any((file) => file.path.endsWith('.part')),
       isFalse,
     );
-    await offlineStore.saveProgress(
+    final pending = await offlineStore.saveProgress(
       serverId: profile.id,
       libraryId: libraries.single.id,
       workId: works.single.id,
@@ -138,6 +146,12 @@ void main() {
       workId: works.single.id,
     );
     expect(offlineProgress?.position, const Duration(seconds: 1));
+    expect(
+      (await offlineStore.pendingProgress()).single.operationId,
+      pending.operationId,
+    );
+    await offlineStore.markProgressSynced(pending);
+    expect(await offlineStore.pendingProgress(), isEmpty);
     expect((await offlineStore.listAll()).single.workId, works.single.id);
     await offlineStore.remove(
       serverId: profile.id,

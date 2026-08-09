@@ -654,9 +654,16 @@ als Offline-Kopie gespeichert werden: Erst nach vollständigem Download aller
 Tracks wird das Manifest sichtbar; Teilstände tragen die Endung `.part`.
 Offline-Werke erscheinen nach einem Neustart auch ohne erreichbaren Server und
 besitzen einen lokalen Resume-Stand. Bei wieder erreichbarem Server versucht
-die Wiedergabe diesen Stand zurückzuschreiben. Als nächste Ausbaustufen folgen
-eine zentrale, automatisch wiederholte Offline-Operationsqueue sowie
-mDNS-Erkennung und feinere Rechte pro Bibliothek.
+Fundus ausstehende Fortschrittsoperationen automatisch zurückzuschreiben.
+Gekoppelte Remote-Bibliotheken erscheinen in der normalen Bibliotheksauswahl;
+ist ihr Server nicht erreichbar, bleiben heruntergeladene Werke innerhalb
+dieser Ursprungsbibliothek verfügbar. Geräte kündigen ihre stabile `device_id`
+und ihren frei wählbaren Namen per mDNS an. Eine dadurch gefundene neue Adresse
+wird erst gespeichert, nachdem `device_id` und gepinnter TLS-Fingerabdruck
+verifiziert wurden. Server, der eigene Peer und gekoppelte Clients können in
+den jeweiligen Einstellungen unabhängig benannt werden. Als nächste
+Ausbaustufen folgen feinere Rechte pro Bibliothek und weitere offline
+wartende Operationstypen wie Notizen, Tags und Lesezeichen.
 
 Desktop, Laptop und NAS bleiben die bevorzugten dauerhaft erreichbaren Peers;
 Mobile ist trotzdem kein künstlich eingeschränkter Nur-Client.
