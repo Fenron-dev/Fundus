@@ -5,6 +5,10 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
+export 'src/pairing.dart';
+
+import 'src/pairing.dart';
+
 final class SharedFundusLibrary {
   const SharedFundusLibrary({required this.name, required this.library});
 
@@ -44,17 +48,20 @@ final class FundusServerHandler {
     required this.token,
     required this.serverId,
     FundusLibraryRegistry? registry,
+    this.pairingAuthority,
   }) : registry = registry ?? FundusLibraryRegistry();
 
   final String token;
   final String serverId;
   final FundusLibraryRegistry registry;
+  final FundusPairingAuthority? pairingAuthority;
 
   Handler get handler {
     final router = Router()
       ..get('/health', _health)
       ..get('/api/v1/info', _capabilities)
       ..get('/v1/health', _health)
+      ..post('/v1/pairing/claim', _claimPairing)
       ..get('/v1/capabilities', _capabilities)
       ..get('/v1/libraries', _libraries)
       ..get('/v1/libraries/<libraryId>/works', _works)
@@ -70,11 +77,49 @@ final class FundusServerHandler {
         .addHandler(router.call);
   }
 
-  Response _health(Request request) => _json({
-    'status': 'ok',
-    'server_id': serverId,
-    'library_count': registry.libraries.length,
-  });
+  Response _health(Request request) =>
+      _json({'status': 'ok', 'server_id': serverId, 'api_version': 1});
+
+  Future<Response> _claimPairing(Request request) async {
+    final authority = pairingAuthority;
+    if (authority == null || authority.activeSession == null) {
+      return _json({'error': 'pairing_unavailable'}, statusCode: 403);
+    }
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(await request.readAsString());
+    } on FormatException {
+      return _badRequest('invalid_json');
+    }
+    if (decoded is! Map<String, dynamic>) {
+      return _badRequest('invalid_pairing_request');
+    }
+    try {
+      final result = await authority.claim(
+        nonce: decoded['nonce'] is String ? decoded['nonce'] as String : '',
+        pin: decoded['pin'] is String ? decoded['pin'] as String : '',
+        deviceId: decoded['device_id'] is String
+            ? decoded['device_id'] as String
+            : '',
+        deviceName: decoded['device_name'] is String
+            ? decoded['device_name'] as String
+            : '',
+      );
+      return _json({
+        'server_id': serverId,
+        'device_id': result.device.id,
+        'token': result.token,
+      });
+    } on FundusPairingException catch (error) {
+      final code = switch (error.failure) {
+        FundusPairingFailure.unavailable => 'pairing_unavailable',
+        FundusPairingFailure.invalid => 'invalid_pairing_code',
+        FundusPairingFailure.expired => 'pairing_expired',
+        FundusPairingFailure.locked => 'pairing_locked',
+      };
+      return _json({'error': code}, statusCode: 403);
+    }
+  }
 
   Response _capabilities(Request request) => _json({
     'server_id': serverId,
@@ -288,11 +333,17 @@ final class FundusServerHandler {
   Middleware _authentication() {
     return (inner) {
       return (request) {
-        if (request.url.path == 'health' || request.url.path == 'v1/health') {
+        if (request.url.path == 'health' ||
+            request.url.path == 'v1/health' ||
+            request.url.path == 'v1/pairing/claim') {
           return inner(request);
         }
         final authorization = request.headers['authorization'];
-        if (!_constantTimeEquals(authorization, 'Bearer $token')) {
+        final bearer = authorization?.startsWith('Bearer ') == true
+            ? authorization!.substring(7)
+            : null;
+        if (!_constantTimeEquals(authorization, 'Bearer $token') &&
+            !(pairingAuthority?.authorize(bearer) ?? false)) {
           return _json({'error': 'unauthorized'}, statusCode: 401);
         }
         return inner(request);

@@ -53,7 +53,8 @@ void main() {
       final body = jsonDecode(await utf8.decoder.bind(response).join()) as Map;
       expect(response.statusCode, 200);
       expect(body['server_id'], 'app-server-test');
-      expect(body['library_count'], 1);
+      expect(body['server_id'], 'app-server-test');
+      expect(body.containsKey('library_count'), isFalse);
 
       await controller.stop();
       expect(controller.state, PeerServerState.stopped);

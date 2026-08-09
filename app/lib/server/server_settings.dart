@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import 'fundus_peer_server_controller.dart';
+import 'remote_servers_view.dart';
 
 Future<void> showFundusServerSettings(
   BuildContext context,
@@ -29,6 +31,11 @@ class _ServerSettings extends StatelessWidget {
         automaticallyImplyLeading: false,
         actions: [
           IconButton(
+            onPressed: () => showFundusRemoteServers(context),
+            tooltip: 'Mit Server verbinden',
+            icon: const Icon(Icons.devices),
+          ),
+          IconButton(
             onPressed: () => Navigator.pop(context),
             tooltip: 'Schließen',
             icon: const Icon(Icons.close),
@@ -39,6 +46,21 @@ class _ServerSettings extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
         children: [
           _statusCard(context),
+          const SizedBox(height: 12),
+          SwitchListTile.adaptive(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+            secondary: const Icon(Icons.lan_outlined),
+            title: const Text('Im lokalen Netzwerk freigeben'),
+            subtitle: const Text(
+              'TLS-verschlüsselt; neue Geräte benötigen QR-Code und PIN.',
+            ),
+            value: controller.lanEnabled,
+            onChanged: controller.isBusy ? null : controller.setLanEnabled,
+          ),
+          if (controller.lanEnabled && controller.isRunning) ...[
+            const SizedBox(height: 12),
+            _pairingCard(context),
+          ],
           const SizedBox(height: 20),
           Text(
             'Freigegebene Bibliotheken',
@@ -82,9 +104,9 @@ class _ServerSettings extends StatelessWidget {
                   SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Der Server ist derzeit ausschließlich auf diesem Gerät erreichbar. '
-                      'LAN-Freigabe, QR/PIN-Pairing und widerrufbare Geräteberechtigungen '
-                      'werden vor einer Netzwerkfreigabe ergänzt.',
+                      'Ohne LAN-Freigabe ist der Server nur auf diesem Gerät erreichbar. '
+                      'Im LAN wird HTTPS mit einem gerätegebundenen Zertifikat verwendet. '
+                      'Freigaben können unten jederzeit widerrufen werden.',
                     ),
                   ),
                 ],
@@ -150,6 +172,114 @@ class _ServerSettings extends StatelessWidget {
                 error,
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _pairingCard(BuildContext context) {
+    final payload = controller.pairingPayload;
+    final session = controller.pairingSession;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Gerät verbinden',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                if (session == null)
+                  FilledButton.icon(
+                    onPressed: controller.networkUris.isEmpty
+                        ? null
+                        : controller.beginPairing,
+                    icon: const Icon(Icons.qr_code_2),
+                    label: const Text('Pairing starten'),
+                  )
+                else
+                  TextButton(
+                    onPressed: controller.cancelPairing,
+                    child: const Text('Abbrechen'),
+                  ),
+              ],
+            ),
+            if (controller.networkUris.isEmpty) ...[
+              const SizedBox(height: 8),
+              const Text('Keine verwendbare IPv4-Adresse im LAN gefunden.'),
+            ] else ...[
+              const SizedBox(height: 8),
+              DropdownButtonFormField<Uri>(
+                initialValue: controller.selectedPairingUri,
+                decoration: const InputDecoration(
+                  labelText: 'Adresse für den QR-Code',
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  for (final uri in controller.networkUris)
+                    DropdownMenuItem(value: uri, child: Text(uri.toString())),
+                ],
+                onChanged: session == null ? controller.setPairingUri : null,
+              ),
+            ],
+            if (payload != null && session != null) ...[
+              const SizedBox(height: 16),
+              Center(
+                child: DecoratedBox(
+                  decoration: const BoxDecoration(color: Colors.white),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: QrImageView(
+                      data: payload,
+                      size: 220,
+                      backgroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Center(
+                child: Text(
+                  session.pin,
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    letterSpacing: 8,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              Center(
+                child: Text(
+                  'Gültig bis ${TimeOfDay.fromDateTime(session.expiresAt).format(context)} Uhr',
+                ),
+              ),
+            ],
+            if (controller.pairedDevices.isNotEmpty) ...[
+              const Divider(height: 32),
+              Text(
+                'Berechtigte Geräte',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              for (final device in controller.pairedDevices)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.devices_other),
+                  title: Text(device.name),
+                  subtitle: Text(
+                    'Verbunden am ${MaterialLocalizations.of(context).formatShortDate(device.pairedAt.toLocal())}',
+                  ),
+                  trailing: IconButton(
+                    onPressed: () => controller.revokeDevice(device.id),
+                    tooltip: 'Berechtigung widerrufen',
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                ),
             ],
           ],
         ),

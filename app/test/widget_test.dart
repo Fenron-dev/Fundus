@@ -111,10 +111,8 @@ void main() {
     expect(find.text('Server & Freigaben'), findsWidgets);
     expect(find.text('Server ist aus'), findsOneWidget);
     expect(find.text('Freigegebene Bibliotheken'), findsOneWidget);
-    expect(
-      find.textContaining('ausschließlich auf diesem Gerät'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Ohne LAN-Freigabe'), findsOneWidget);
+    expect(find.text('Im lokalen Netzwerk freigeben'), findsOneWidget);
   });
 
   testWidgets('desktop search tolerates a misspelled title', (tester) async {

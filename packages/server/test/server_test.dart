@@ -45,13 +45,14 @@ void main() {
     await temporary.delete(recursive: true);
   });
 
-  test('health is public and reports all shared libraries', () async {
+  test('health is public without exposing library metadata', () async {
     final response = await server.handler(
       Request('GET', Uri.parse('http://localhost/v1/health')),
     );
     final body = await _json(response);
     expect(response.statusCode, 200);
-    expect(body['library_count'], 2);
+    expect(body['server_id'], 'server-test');
+    expect(body.containsKey('library_count'), isFalse);
   });
 
   test('API rejects missing token', () async {
@@ -59,6 +60,71 @@ void main() {
       Request('GET', Uri.parse('http://localhost/v1/libraries')),
     );
     expect(response.statusCode, 401);
+  });
+
+  test('pairs a device once and accepts its revocable token', () async {
+    final authority = FundusPairingAuthority();
+    final session = authority.begin(lifetime: const Duration(minutes: 1));
+    final pairedServer = FundusServerHandler(
+      token: 'local-only-secret',
+      serverId: 'server-test',
+      registry: registry,
+      pairingAuthority: authority,
+    );
+    final claim = await pairedServer.handler(
+      Request(
+        'POST',
+        Uri.parse('https://localhost/v1/pairing/claim'),
+        headers: {'content-type': 'application/json'},
+        body: jsonEncode({
+          'nonce': session.nonce,
+          'pin': session.pin,
+          'device_id': 'phone-1',
+          'device_name': 'Telefon',
+        }),
+      ),
+    );
+    final claimBody = await _json(claim);
+    final deviceToken = claimBody['token']! as String;
+    expect(claim.statusCode, 200);
+    expect(authority.activeSession, isNull);
+    expect(authority.devices.single.tokenHash, isNot(deviceToken));
+
+    final accepted = await pairedServer.handler(
+      Request(
+        'GET',
+        Uri.parse('https://localhost/v1/libraries'),
+        headers: {'authorization': 'Bearer $deviceToken'},
+      ),
+    );
+    expect(accepted.statusCode, 200);
+
+    await authority.revoke('phone-1');
+    final revoked = await pairedServer.handler(
+      Request(
+        'GET',
+        Uri.parse('https://localhost/v1/libraries'),
+        headers: {'authorization': 'Bearer $deviceToken'},
+      ),
+    );
+    expect(revoked.statusCode, 401);
+  });
+
+  test('locks pairing after five invalid attempts', () async {
+    final authority = FundusPairingAuthority();
+    final session = authority.begin();
+    for (var attempt = 0; attempt < 5; attempt++) {
+      await expectLater(
+        authority.claim(
+          nonce: session.nonce,
+          pin: '000000' == session.pin ? '111111' : '000000',
+          deviceId: 'phone-1',
+          deviceName: 'Telefon',
+        ),
+        throwsA(isA<FundusPairingException>()),
+      );
+    }
+    expect(authority.activeSession, isNull);
   });
 
   test('capabilities expose format versions and server features', () async {

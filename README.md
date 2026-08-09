@@ -52,12 +52,15 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - per Maus verstellbare Breite der linken und rechten Seitenleisten sowie
   sichtbarer Werk-Dateipfad in den Details; Doppelklick setzt die Breite zurück
 - rotierendes, exportierbares JSONL-Diagnoseprotokoll ohne absolute Medienpfade
-- token-geschützter lokaler Mehrbibliotheks-Server mit Werkliste, Details,
+- TLS- und token-geschützter LAN-Mehrbibliotheks-Server mit Werkliste, Details,
   Cover, ID-basiertem `Range`-Streaming und idempotentem Fortschrittsabgleich;
   absolute Medienpfade verlassen das Gerät nicht
 - App-Einstellungsdialog für Serverstatus und gleichzeitig freigegebene
-  Bibliotheken; derzeit absichtlich nur Loopback, bis Pairing und
-  Geräteberechtigungen die LAN-Freigabe absichern
+  Bibliotheken, explizite LAN-Freigabe und fünf Minuten gültiges QR/PIN-Pairing
+- stabile Peer-Identität, Zertifikats-Pinning, nur als Hash gespeicherte
+  Server-Tokens und widerrufbare Geräteberechtigungen
+- erster Remote-Client mit QR-Scanner, sicherem System-Schlüsselspeicher sowie
+  Server-, Bibliotheks-, Werk- und Coverübersicht
 
 ## Entwicklung
 

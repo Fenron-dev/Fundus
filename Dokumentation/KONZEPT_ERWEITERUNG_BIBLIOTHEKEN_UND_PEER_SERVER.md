@@ -619,6 +619,36 @@ aktiv laufen lässt. Die UI zeigt deshalb ausdrücklich:
 - nur im Vordergrund bereitstellen;
 - dauerhaftes Bereitstellen nicht verfügbar.
 
+### 6.10 Sicherheitsprofil und erster Implementierungsstand
+
+Eine LAN-Freigabe darf niemals ein dauerhaftes Bearer-Token über unverschlüsseltes
+HTTP senden. Für den ersten Peer-Meilenstein gelten deshalb diese Regeln:
+
+- Loopback-Betrieb und LAN-Freigabe sind getrennte Modi; LAN muss ausdrücklich
+  aktiviert werden.
+- Jeder Peer besitzt eine persistente `device_id` und ein persistentes,
+  selbstsigniertes TLS-Zertifikat.
+- Der QR-Code enthält Adresse, kurzlebigen Nonce und SHA-256-Fingerabdruck des
+  Zertifikats, aber weder PIN noch Zugriffstoken.
+- Die sechsstellige PIN wird getrennt angezeigt und am Client eingegeben. Eine
+  Pairing-Sitzung gilt fünf Minuten, ist einmal verwendbar und sperrt nach fünf
+  Fehlversuchen.
+- Der Client akzeptiert das selbstsignierte Zertifikat ausschließlich, wenn
+  sein SHA-256-Fingerabdruck exakt dem QR-Code entspricht.
+- Das ausgegebene Gerätetoken liegt nur im System-Schlüsselspeicher des Clients.
+  Der Server speichert lediglich dessen SHA-256-Hash.
+- Diagnoseprotokolle enthalten weder PIN, Nonce, Token, Zertifikatsschlüssel
+  noch lokale Medienpfade.
+- Der öffentliche Health-Check nennt keine Bibliotheksnamen, Medienzahlen oder
+  Pfade; Bibliotheksmetadaten gibt es erst nach erfolgreicher Authentifizierung.
+- Gekoppelte Geräte sind sichtbar und einzeln widerrufbar.
+
+Bereits umgesetzt sind TLS-LAN-Binding, persistente Peer-Identität,
+QR/PIN-Kopplung, widerrufbare Grundberechtigungen sowie ein erster Client für
+Server-, Bibliotheks-, Werk- und Coveranzeige. Als nächste Ausbaustufen folgen
+Range-Streaming im Remote-Player, Fortschrittssynchronisation, Offline-Queue
+und Downloads sowie mDNS-Erkennung und feinere Rechte pro Bibliothek.
+
 Desktop, Laptop und NAS bleiben die bevorzugten dauerhaft erreichbaren Peers;
 Mobile ist trotzdem kein künstlich eingeschränkter Nur-Client.
 

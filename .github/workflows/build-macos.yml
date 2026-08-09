@@ -31,6 +31,7 @@ jobs:
       - name: Verify release network entitlements
         run: |
           /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.server' app/macos/Runner/Release.entitlements | grep -qx true
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' app/macos/Runner/Release.entitlements | grep -qx true
 
       - name: Build macOS release
         working-directory: app
@@ -43,6 +44,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 build/macos/Build/Products/Release/fundus.app
           codesign -d --entitlements :- build/macos/Build/Products/Release/fundus.app > /tmp/fundus-release-entitlements.plist 2>/dev/null
           /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.server' /tmp/fundus-release-entitlements.plist | grep -qx true
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' /tmp/fundus-release-entitlements.plist | grep -qx true
 
       - name: Package application
         working-directory: app

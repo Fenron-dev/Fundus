@@ -9,6 +9,7 @@ import 'package:fundus_server/fundus_server.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
 import '../diagnostics/fundus_diagnostics.dart';
+import 'peer_server_identity_store.dart';
 
 final class PeerLibrarySource {
   const PeerLibrarySource({required this.path, required this.name});
@@ -40,12 +41,17 @@ final class PeerSharedLibraryStatus {
 enum PeerServerState { stopped, starting, running, stopping, failed }
 
 final class FundusPeerServerController extends ChangeNotifier {
-  FundusPeerServerController({String? serverId, String? token})
-    : serverId = serverId ?? 'fundus-${_randomValue(9)}',
-      _token = token ?? _randomValue(32);
+  FundusPeerServerController({
+    String? serverId,
+    String? token,
+    PeerServerIdentityStore? identityStore,
+  }) : _serverId = serverId,
+       _token = token ?? _randomValue(32),
+       _identityStore = identityStore;
 
-  final String serverId;
+  String? _serverId;
   final String _token;
+  PeerServerIdentityStore? _identityStore;
   final FundusLibraryRegistry _registry = FundusLibraryRegistry();
   List<PeerLibrarySource> _sources = const [];
   final Set<String> _sharedPaths = {};
@@ -53,20 +59,85 @@ final class FundusPeerServerController extends ChangeNotifier {
   HttpServer? _server;
   PeerServerState _state = PeerServerState.stopped;
   String? _error;
+  PeerServerIdentity? _identity;
+  FundusPairingAuthority? _pairingAuthority;
+  bool _lanEnabled = false;
+  List<Uri> _networkUris = const [];
+  Uri? _pairingUri;
 
+  String get serverId => _serverId ?? 'fundus-wird-vorbereitet';
   PeerServerState get state => _state;
   bool get isRunning => _state == PeerServerState.running;
   bool get isBusy =>
       _state == PeerServerState.starting || _state == PeerServerState.stopping;
   int? get port => _server?.port;
-  Uri? get localUri =>
-      port == null ? null : Uri.parse('http://127.0.0.1:$port');
+  Uri? get localUri => port == null
+      ? null
+      : Uri.parse('${_lanEnabled ? 'https' : 'http'}://127.0.0.1:$port');
+  bool get lanEnabled => _lanEnabled;
+  List<Uri> get networkUris => List.unmodifiable(_networkUris);
+  Uri? get selectedPairingUri => _pairingUri;
+  FundusPairingSession? get pairingSession => _pairingAuthority?.activeSession;
+  List<FundusPairedDevice> get pairedDevices =>
+      _pairingAuthority?.devices ?? const [];
+  String? get certificateFingerprint => _identity?.certificateFingerprint;
   String? get error => _error;
   List<PeerLibrarySource> get sources => List.unmodifiable(_sources);
   List<PeerSharedLibraryStatus> get libraries => List.unmodifiable(_libraries);
   bool get hasSharedSources => _sources.any(
     (source) => _sharedPaths.contains(Directory(source.path).absolute.path),
   );
+
+  Future<void> setLanEnabled(bool enabled) async {
+    if (_lanEnabled == enabled) return;
+    final wasRunning = isRunning;
+    if (wasRunning) await stop();
+    _lanEnabled = enabled;
+    notifyListeners();
+    if (wasRunning && hasSharedSources) await start();
+  }
+
+  Future<void> beginPairing() async {
+    if (!isRunning || !_lanEnabled || _networkUris.isEmpty) return;
+    _pairingAuthority?.begin();
+    notifyListeners();
+  }
+
+  void setPairingUri(Uri? uri) {
+    if (uri == null || !_networkUris.contains(uri) || _pairingUri == uri) {
+      return;
+    }
+    _pairingUri = uri;
+    _pairingAuthority?.cancel();
+    notifyListeners();
+  }
+
+  void cancelPairing() {
+    _pairingAuthority?.cancel();
+    notifyListeners();
+  }
+
+  String? get pairingPayload {
+    final session = pairingSession;
+    final pairingUri = _pairingUri;
+    if (session == null || pairingUri == null || _identity == null) {
+      return null;
+    }
+    return jsonEncode({
+      'type': 'fundus_pairing',
+      'version': 1,
+      'base_url': pairingUri.toString(),
+      'server_id': serverId,
+      'certificate_sha256': _identity!.certificateFingerprint,
+      'nonce': session.nonce,
+      'expires_at': session.expiresAt.toUtc().toIso8601String(),
+    });
+  }
+
+  Future<void> revokeDevice(String deviceId) async {
+    await _pairingAuthority?.revoke(deviceId);
+    notifyListeners();
+  }
 
   Future<void> setSources(Iterable<PeerLibrarySource> sources) async {
     final previousPaths = _sources
@@ -125,6 +196,7 @@ final class FundusPeerServerController extends ChangeNotifier {
     notifyListeners();
     final statuses = <PeerSharedLibraryStatus>[];
     try {
+      await _ensureIdentity();
       for (final source in _sources) {
         if (!_isShared(source.path)) {
           statuses.add(
@@ -178,13 +250,20 @@ final class FundusPeerServerController extends ChangeNotifier {
         token: _token,
         serverId: serverId,
         registry: _registry,
+        pairingAuthority: _pairingAuthority,
       );
+      final securityContext = _lanEnabled ? _createSecurityContext() : null;
       _server = await shelf_io.serve(
         handler.handler,
-        InternetAddress.loopbackIPv4,
+        _lanEnabled ? InternetAddress.anyIPv4 : InternetAddress.loopbackIPv4,
         0,
         shared: false,
+        securityContext: securityContext,
       );
+      _networkUris = _lanEnabled
+          ? await _findNetworkUris(_server!.port)
+          : const [];
+      _pairingUri = _networkUris.firstOrNull;
       _libraries = statuses;
       _state = PeerServerState.running;
       unawaited(
@@ -192,7 +271,8 @@ final class FundusPeerServerController extends ChangeNotifier {
           'server_id': serverId,
           'library_count': statuses.where((entry) => entry.available).length,
           'port': _server?.port,
-          'interface': 'loopback',
+          'interface': _lanEnabled ? 'lan' : 'loopback',
+          'tls': _lanEnabled,
         }),
       );
     } catch (error) {
@@ -219,6 +299,9 @@ final class FundusPeerServerController extends ChangeNotifier {
     notifyListeners();
     await _server?.close(force: true);
     _server = null;
+    _networkUris = const [];
+    _pairingUri = null;
+    _pairingAuthority?.cancel();
     _registry.close();
     _state = PeerServerState.stopped;
     _error = null;
@@ -255,6 +338,50 @@ final class FundusPeerServerController extends ChangeNotifier {
 
   bool _isShared(String path) =>
       _sharedPaths.contains(Directory(path).absolute.path);
+
+  Future<void> _ensureIdentity() async {
+    if (_identity != null && _pairingAuthority != null) return;
+    if (_serverId != null && !_lanEnabled) {
+      _pairingAuthority ??= FundusPairingAuthority();
+      return;
+    }
+    final store = _identityStore ??=
+        await PeerServerIdentityStore.platformDefaultAsync();
+    final identity = await store.loadOrCreate();
+    _identity = identity;
+    _serverId ??= identity.serverId;
+    _pairingAuthority = FundusPairingAuthority(
+      devices: identity.pairedDevices,
+      onChanged: (devices) async {
+        await store.savePairedDevices(devices);
+        notifyListeners();
+      },
+    );
+  }
+
+  SecurityContext _createSecurityContext() {
+    final identity = _identity!;
+    return SecurityContext()
+      ..useCertificateChainBytes(utf8.encode(identity.certificatePem))
+      ..usePrivateKeyBytes(utf8.encode(identity.privateKeyPem));
+  }
+
+  static Future<List<Uri>> _findNetworkUris(int port) async {
+    final interfaces = await NetworkInterface.list(
+      type: InternetAddressType.IPv4,
+      includeLoopback: false,
+    );
+    final values = <Uri>[];
+    for (final interface in interfaces) {
+      for (final address in interface.addresses) {
+        if (!address.isLoopback && !address.isLinkLocal) {
+          values.add(Uri(scheme: 'https', host: address.address, port: port));
+        }
+      }
+    }
+    values.sort((a, b) => a.host.compareTo(b.host));
+    return values;
+  }
 
   static String _displayStartError(Object error) {
     if (error is SocketException) {
