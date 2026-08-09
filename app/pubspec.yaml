@@ -21,6 +21,7 @@ dependencies:
   media_kit_libs_audio: ^1.0.7
   mobile_scanner: ^7.4.0
   path_provider: ^2.1.6
+  path: ^1.9.1
   qr_flutter: ^4.1.0
   shelf: ^1.4.2
 

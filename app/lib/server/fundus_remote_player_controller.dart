@@ -7,12 +7,15 @@ import 'package:media_kit/media_kit.dart';
 
 import 'fundus_remote_client.dart';
 import 'fundus_remote_stream_proxy.dart';
+import 'fundus_offline_store.dart';
 
 final class FundusRemotePlayerController extends ChangeNotifier {
   FundusRemotePlayerController({
     required this.deviceId,
     FundusRemoteClient client = const FundusRemoteClient(),
+    FundusOfflineStore? offlineStore,
   }) : _client = client,
+       _offlineStore = offlineStore ?? FundusOfflineStore(),
        _player = Player() {
     _subscriptions.addAll([
       _player.stream.playing.listen((value) {
@@ -57,6 +60,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
 
   final String deviceId;
   final FundusRemoteClient _client;
+  final FundusOfflineStore _offlineStore;
   final Player _player;
   final List<StreamSubscription<Object?>> _subscriptions = [];
   FundusRemoteStreamProxy? _proxy;
@@ -74,6 +78,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   bool _closed = false;
   DateTime? _lastPersistedAt;
   String? _error;
+  FundusOfflineWork? _offlineWork;
 
   FundusRemoteWork? get work => _work;
   FundusRemoteTrack? get track =>
@@ -89,8 +94,9 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   Future<void> open(
     FundusRemoteServer server,
     FundusRemoteLibrary library,
-    FundusRemoteWork work,
-  ) async {
+    FundusRemoteWork work, {
+    FundusOfflineWork? offlineWork,
+  }) async {
     if (_closed) return;
     await persist();
     await _player.pause();
@@ -102,35 +108,60 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     _server = server;
     _library = library;
     _work = work;
+    _offlineWork = offlineWork;
     _tracks = const [];
     _currentIndex = 0;
     _position = Duration.zero;
     notifyListeners();
     try {
-      final detail = await _client.work(server, library.id, work);
-      final progress = await _client.progress(server, library.id, work.id);
-      if (detail.tracks.isEmpty) {
+      final tracks = offlineWork == null
+          ? (await _client.work(server, library.id, work)).tracks
+          : [
+              for (final track in offlineWork.tracks)
+                FundusRemoteTrack(
+                  id: track.id,
+                  title: track.title,
+                  position: track.position,
+                  duration: track.duration,
+                ),
+            ];
+      FundusRemoteProgress? progress;
+      if (offlineWork != null) {
+        progress = await _offlineStore.loadProgress(
+          serverId: server.id,
+          libraryId: library.id,
+          workId: work.id,
+        );
+      }
+      if (progress == null) {
+        try {
+          progress = await _client.progress(server, library.id, work.id);
+        } catch (_) {
+          progress = null;
+        }
+      }
+      if (tracks.isEmpty) {
         throw StateError('Dieses Werk enthält keine abspielbaren Dateien.');
       }
-      _tracks = detail.tracks;
+      _tracks = tracks;
       final resumeIndex = progress?.fileId == null
           ? -1
           : _tracks.indexWhere((item) => item.id == progress!.fileId);
       if (resumeIndex >= 0) _currentIndex = resumeIndex;
-      final proxy = await FundusRemoteStreamProxy.start(
-        server: server,
-        libraryId: library.id,
-        tracks: _tracks,
-        client: _client,
-      );
-      _proxy = proxy;
-      await _player.open(
-        Playlist(
-          proxy.urls.map((uri) => Media(uri.toString())).toList(),
-          index: _currentIndex,
-        ),
-        play: false,
-      );
+      final List<Media> media;
+      if (offlineWork == null) {
+        final proxy = await FundusRemoteStreamProxy.start(
+          server: server,
+          libraryId: library.id,
+          tracks: _tracks,
+          client: _client,
+        );
+        _proxy = proxy;
+        media = proxy.urls.map((uri) => Media(uri.toString())).toList();
+      } else {
+        media = offlineWork.tracks.map((track) => Media(track.path)).toList();
+      }
+      await _player.open(Playlist(media, index: _currentIndex), play: false);
       _ready = true;
       _loading = false;
       _lastPersistedAt = DateTime.now();
@@ -204,17 +235,31 @@ final class FundusRemotePlayerController extends ChangeNotifier {
           measuredDuration != null && measuredDuration < _position
           ? _position
           : measuredDuration;
-      await _client.saveProgress(
-        server,
-        libraryId: library.id,
-        workId: work.id,
-        fileId: currentTrack.id,
-        position: _position,
-        duration: effectiveDuration,
-        finished: finished,
-        deviceId: deviceId,
-        operationId: _operationId(),
-      );
+      if (_offlineWork != null) {
+        await _offlineStore.saveProgress(
+          serverId: server.id,
+          libraryId: library.id,
+          workId: work.id,
+          fileId: currentTrack.id,
+          position: _position,
+          finished: finished,
+        );
+      }
+      try {
+        await _client.saveProgress(
+          server,
+          libraryId: library.id,
+          workId: work.id,
+          fileId: currentTrack.id,
+          position: _position,
+          duration: effectiveDuration,
+          finished: finished,
+          deviceId: deviceId,
+          operationId: _operationId(),
+        );
+      } catch (_) {
+        if (_offlineWork == null) rethrow;
+      }
       _lastPersistedAt = DateTime.now();
     } catch (_) {
       _error = 'Fortschritt konnte nicht zum Server übertragen werden.';

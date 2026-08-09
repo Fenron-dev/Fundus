@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/server/fundus_remote_client.dart';
 import 'package:fundus/server/fundus_remote_stream_proxy.dart';
+import 'package:fundus/server/fundus_offline_store.dart';
 import 'package:fundus/server/peer_server_identity_store.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_server/fundus_server.dart';
@@ -105,5 +106,51 @@ void main() {
     expect(saved.position, const Duration(seconds: 2));
     expect(loaded?.fileId, detail.tracks.single.id);
     expect(loaded?.position, const Duration(seconds: 2));
+
+    final offlineStore = FundusOfflineStore(
+      root: Directory('${temporary.path}/offline'),
+    );
+    final offline = await offlineStore.download(
+      client,
+      profile,
+      libraries.single,
+      works.single,
+    );
+    expect(await File(offline.tracks.single.path).readAsBytes(), [1, 2, 3]);
+    expect(
+      Directory('${temporary.path}/offline')
+          .listSync(recursive: true)
+          .whereType<File>()
+          .any((file) => file.path.endsWith('.part')),
+      isFalse,
+    );
+    await offlineStore.saveProgress(
+      serverId: profile.id,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+      fileId: detail.tracks.single.id,
+      position: const Duration(seconds: 1),
+      finished: false,
+    );
+    final offlineProgress = await offlineStore.loadProgress(
+      serverId: profile.id,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+    );
+    expect(offlineProgress?.position, const Duration(seconds: 1));
+    expect((await offlineStore.listAll()).single.workId, works.single.id);
+    await offlineStore.remove(
+      serverId: profile.id,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+    );
+    expect(
+      await offlineStore.lookup(
+        serverId: profile.id,
+        libraryId: libraries.single.id,
+        workId: works.single.id,
+      ),
+      isNull,
+    );
   });
 }

@@ -6,6 +6,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'fundus_remote_client.dart';
 import 'fundus_remote_player_controller.dart';
+import 'fundus_offline_store.dart';
 
 Future<void> showFundusRemoteServers(BuildContext context) =>
     Navigator.of(context).push(
@@ -23,6 +24,7 @@ class FundusRemoteServersView extends StatefulWidget {
 class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   final _store = FundusRemoteServerStore();
   final _client = const FundusRemoteClient();
+  final _offlineStore = FundusOfflineStore();
   List<FundusRemoteServer> _servers = const [];
   FundusRemoteServer? _selectedServer;
   List<FundusRemoteLibrary> _libraries = const [];
@@ -31,6 +33,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   bool _busy = true;
   String? _error;
   FundusRemotePlayerController? _remotePlayer;
+  final Set<String> _offlineKeys = {};
+  List<FundusOfflineWork> _offlineWorks = const [];
+  String? _downloadingKey;
+  int _downloadCompleted = 0;
+  int _downloadTotal = 0;
   late final AppLifecycleListener _lifecycleListener;
 
   @override
@@ -54,9 +61,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   Future<void> _load() async {
     try {
       final servers = await _store.load();
+      final offlineWorks = await _offlineStore.listAll();
       if (!mounted) return;
       setState(() {
         _servers = servers;
+        _offlineWorks = offlineWorks;
+        _offlineKeys.addAll(
+          offlineWorks.map(
+            (work) => '${work.serverId}/${work.libraryId}/${work.workId}',
+          ),
+        );
         _busy = false;
       });
     } catch (_) {
@@ -218,9 +232,24 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     });
     try {
       final works = await _client.works(server, library.id);
+      final offline = await Future.wait([
+        for (final work in works)
+          _offlineStore.lookup(
+            serverId: server.id,
+            libraryId: library.id,
+            workId: work.id,
+          ),
+      ]);
       if (!mounted) return;
       setState(() {
         _works = works;
+        _offlineKeys
+          ..removeWhere((key) => key.startsWith('${server.id}/${library.id}/'))
+          ..addAll([
+            for (var index = 0; index < works.length; index++)
+              if (offline[index] != null)
+                _offlineKey(server, library, works[index]),
+          ]);
         _busy = false;
       });
     } catch (_) {
@@ -267,6 +296,19 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     body: Column(
       children: [
         if (_busy) const LinearProgressIndicator(),
+        if (_downloadingKey != null) ...[
+          LinearProgressIndicator(
+            value: _downloadTotal <= 0
+                ? null
+                : _downloadCompleted / _downloadTotal,
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Text(
+              'Offline-Download: $_downloadCompleted / $_downloadTotal Datei(en)',
+            ),
+          ),
+        ],
         if (_error case final error?)
           MaterialBanner(
             content: Text(error),
@@ -370,6 +412,35 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             ),
           ),
         ),
+      if (_offlineWorks.isNotEmpty) ...[
+        const Padding(
+          padding: EdgeInsets.fromLTRB(4, 20, 4, 8),
+          child: Text(
+            'Offline verfügbar',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+        ),
+        for (final offline in _offlineWorks)
+          Card(
+            child: ListTile(
+              leading: offline.coverPath == null
+                  ? const Icon(Icons.download_done)
+                  : ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: Image.file(
+                        File(offline.coverPath!),
+                        width: 42,
+                        height: 52,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+              title: Text(offline.title),
+              subtitle: const Text('Auf diesem Gerät'),
+              trailing: const Icon(Icons.play_arrow),
+              onTap: () => _playOffline(offline),
+            ),
+          ),
+      ],
     ],
   );
 
@@ -468,6 +539,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
+                            if (_offlineKeys.contains(
+                              _offlineKey(server, library, work),
+                            ))
+                              const Row(
+                                children: [
+                                  Icon(Icons.download_done, size: 15),
+                                  SizedBox(width: 4),
+                                  Text('Offline'),
+                                ],
+                              ),
                           ],
                         ),
                       ),
@@ -487,7 +568,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     FundusRemoteLibrary library,
     FundusRemoteWork work,
   ) async {
-    final play = await showModalBottomSheet<bool>(
+    final key = _offlineKey(server, library, work);
+    final isOffline = _offlineKeys.contains(key);
+    final action = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
@@ -549,27 +632,168 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 Text(description),
               ],
               const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: () => Navigator.pop(context, true),
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('Abspielen / fortsetzen'),
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () => Navigator.pop(context, 'play'),
+                      icon: const Icon(Icons.play_arrow),
+                      label: const Text('Abspielen / fortsetzen'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  IconButton.filledTonal(
+                    onPressed: () => Navigator.pop(
+                      context,
+                      isOffline ? 'remove_download' : 'download',
+                    ),
+                    tooltip: isOffline
+                        ? 'Offline-Kopie löschen'
+                        : 'Offline speichern',
+                    icon: Icon(
+                      isOffline ? Icons.download_done : Icons.download_outlined,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
         ),
       ),
     );
-    if (play != true || !mounted) return;
+    if (action == 'download') {
+      await _downloadWork(server, library, work);
+      return;
+    }
+    if (action == 'remove_download') {
+      await _offlineStore.remove(
+        serverId: server.id,
+        libraryId: library.id,
+        workId: work.id,
+      );
+      if (mounted) {
+        setState(() {
+          _offlineKeys.remove(key);
+          _offlineWorks = _offlineWorks
+              .where(
+                (item) =>
+                    item.serverId != server.id ||
+                    item.libraryId != library.id ||
+                    item.workId != work.id,
+              )
+              .toList();
+        });
+      }
+      return;
+    }
+    if (action != 'play' || !mounted) return;
     final player =
         _remotePlayer ??
-        FundusRemotePlayerController(deviceId: await _store.deviceId());
+        FundusRemotePlayerController(
+          deviceId: await _store.deviceId(),
+          offlineStore: _offlineStore,
+        );
     if (_remotePlayer == null && mounted) {
       setState(() => _remotePlayer = player);
     }
-    await player.open(server, library, work);
+    final offlineWork = isOffline
+        ? await _offlineStore.lookup(
+            serverId: server.id,
+            libraryId: library.id,
+            workId: work.id,
+          )
+        : null;
+    await player.open(server, library, work, offlineWork: offlineWork);
+  }
+
+  Future<void> _downloadWork(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work,
+  ) async {
+    final key = _offlineKey(server, library, work);
+    setState(() {
+      _downloadingKey = key;
+      _downloadCompleted = 0;
+      _downloadTotal = 0;
+    });
+    try {
+      final offline = await _offlineStore.download(
+        _client,
+        server,
+        library,
+        work,
+        onProgress: (completed, total) {
+          if (!mounted) return;
+          setState(() {
+            _downloadCompleted = completed;
+            _downloadTotal = total;
+          });
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _offlineKeys.add(key);
+        _offlineWorks = [
+          offline,
+          ..._offlineWorks.where(
+            (item) =>
+                item.serverId != offline.serverId ||
+                item.libraryId != offline.libraryId ||
+                item.workId != offline.workId,
+          ),
+        ];
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('„${work.title}“ ist jetzt offline verfügbar.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Offline-Download fehlgeschlagen.')),
+      );
+    } finally {
+      if (mounted) setState(() => _downloadingKey = null);
+    }
+  }
+
+  static String _offlineKey(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work,
+  ) => '${server.id}/${library.id}/${work.id}';
+
+  Future<void> _playOffline(FundusOfflineWork offline) async {
+    final server =
+        _servers.where((item) => item.id == offline.serverId).firstOrNull ??
+        FundusRemoteServer(
+          id: offline.serverId,
+          name: 'Offline',
+          baseUri: Uri.parse('https://127.0.0.1'),
+          certificateFingerprint: ''.padLeft(64, '0'),
+          token: '',
+        );
+    final library = FundusRemoteLibrary(
+      id: offline.libraryId,
+      name: 'Offline',
+      workCount: 1,
+    );
+    final work = FundusRemoteWork(
+      id: offline.workId,
+      title: offline.title,
+      authors: const [],
+      hasCover: offline.coverPath != null,
+    );
+    final player =
+        _remotePlayer ??
+        FundusRemotePlayerController(
+          deviceId: await _store.deviceId(),
+          offlineStore: _offlineStore,
+        );
+    if (_remotePlayer == null && mounted) {
+      setState(() => _remotePlayer = player);
+    }
+    await player.open(server, library, work, offlineWork: offline);
   }
 }
 

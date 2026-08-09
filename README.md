@@ -63,6 +63,8 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
   Server-, Bibliotheks-, Werk- und Coverübersicht
 - gepinnte Remote-Wiedergabe über eine nur auf Loopback gebundene Range-Brücke
   sowie Fortschrittssynchronisation im Fünf-Sekunden-Takt und beim Pausieren
+- atomare Offline-Downloads mit lokalem Manifest, eigener Offline-Übersicht,
+  lokaler Wiedergabe und lokalem Resume auch ohne erreichbaren Server
 
 ## Entwicklung
 

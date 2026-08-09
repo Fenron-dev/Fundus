@@ -649,9 +649,14 @@ Bibliotheks-, Werk- und Coveranzeige. Remote-Audio wird über eine ausschließli
 an Loopback gebundene Brücke abgespielt: Sie prüft bei jeder Verbindung den
 Zertifikatsfingerabdruck, hält das Gerätetoken vom nativen Medienplayer fern und
 reicht HTTP-Range-Anfragen weiter. Fortschritt wird während der Wiedergabe und
-beim Pausieren zum Ursprungsserver geschrieben. Als nächste Ausbaustufen folgen
-Offline-Queue und Downloads sowie mDNS-Erkennung und feinere Rechte pro
-Bibliothek.
+beim Pausieren zum Ursprungsserver geschrieben. Werke können außerdem atomar
+als Offline-Kopie gespeichert werden: Erst nach vollständigem Download aller
+Tracks wird das Manifest sichtbar; Teilstände tragen die Endung `.part`.
+Offline-Werke erscheinen nach einem Neustart auch ohne erreichbaren Server und
+besitzen einen lokalen Resume-Stand. Bei wieder erreichbarem Server versucht
+die Wiedergabe diesen Stand zurückzuschreiben. Als nächste Ausbaustufen folgen
+eine zentrale, automatisch wiederholte Offline-Operationsqueue sowie
+mDNS-Erkennung und feinere Rechte pro Bibliothek.
 
 Desktop, Laptop und NAS bleiben die bevorzugten dauerhaft erreichbaren Peers;
 Mobile ist trotzdem kein künstlich eingeschränkter Nur-Client.
