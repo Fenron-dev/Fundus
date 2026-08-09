@@ -130,8 +130,9 @@ final class FundusDatabase {
 
   String upsertAudiobookCandidate(
     AudiobookImportCandidate candidate,
-    Map<String, String> fileIds,
-  ) {
+    Map<String, String> fileIds, {
+    String? preferredWorkId,
+  }) {
     final identity = candidate.identity;
     String? seriesId;
     if (identity.series case final series?) {
@@ -150,6 +151,17 @@ final class FundusDatabase {
       seriesName: identity.series,
       seriesSequence: identity.sequence,
       metadata: {'author': identity.author},
+      preferredId: preferredWorkId,
+    );
+    final previousTracks = _database.select(
+      '''
+      SELECT wf.file_id, wf.position, f.filename
+      FROM work_files wf
+      JOIN files f ON f.id = wf.file_id
+      WHERE wf.work_id = ? AND wf.role = 'content'
+      ORDER BY wf.position
+      ''',
+      [workId],
     );
     _database.execute('UPDATE works SET cover_file_id = NULL WHERE id = ?', [
       workId,
@@ -164,6 +176,12 @@ final class FundusDatabase {
         [workId, fileId, index, 'content'],
       );
     }
+    _reassociateTrackReferences(
+      workId,
+      previousTracks,
+      candidate.audioFiles,
+      fileIds,
+    );
     for (var index = 0; index < candidate.coverFiles.length; index++) {
       final file = candidate.coverFiles[index];
       final fileId = fileIds[file.relativePath];
@@ -194,6 +212,41 @@ final class FundusDatabase {
       ],
     );
     return workId;
+  }
+
+  void _reassociateTrackReferences(
+    String workId,
+    ResultSet previousTracks,
+    List<ScannedFile> currentTracks,
+    Map<String, String> fileIds,
+  ) {
+    for (final previous in previousTracks) {
+      final previousId = previous['file_id'] as String;
+      final previousName = previous['filename'] as String;
+      final previousPosition = previous['position'] as int;
+      ScannedFile? replacement;
+      for (final track in currentTracks) {
+        if (track.filename == previousName) {
+          replacement = track;
+          break;
+        }
+      }
+      if (replacement == null && previousPosition < currentTracks.length) {
+        replacement = currentTracks[previousPosition];
+      }
+      final replacementId = replacement == null
+          ? null
+          : fileIds[replacement.relativePath];
+      if (replacementId == null || replacementId == previousId) continue;
+      _database.execute(
+        'UPDATE progress SET file_id = ? WHERE work_id = ? AND file_id = ?',
+        [replacementId, workId, previousId],
+      );
+      _database.execute(
+        'UPDATE bookmarks SET file_id = ? WHERE work_id = ? AND file_id = ?',
+        [replacementId, workId, previousId],
+      );
+    }
   }
 
   void setGeneratedCoverPath(String workId, String? path) {
@@ -597,13 +650,44 @@ final class FundusDatabase {
     String? parentId,
     String? seriesName,
     double? seriesSequence,
+    String? preferredId,
   }) {
     final existing = _database.select(
       'SELECT id FROM works WHERE source_path = ?',
       [sourcePath],
     );
+    final preferred = preferredId == null
+        ? null
+        : _database.select('SELECT id FROM works WHERE id = ?', [preferredId]);
+    if (preferred?.isNotEmpty ?? false) {
+      if (existing.isNotEmpty && existing.first['id'] != preferredId) {
+        throw StateError(
+          'Die portable Werk-ID kollidiert mit einem anderen Werk.',
+        );
+      }
+      _database.execute(
+        '''
+        UPDATE works SET kind = ?, source_path = ?, parent_id = ?, title = ?,
+          sort_title = ?, series_name = ?, series_sequence = ?, metadata_json = ?,
+          status = 'available'
+        WHERE id = ?
+        ''',
+        [
+          kind,
+          sourcePath,
+          parentId,
+          title,
+          title.toLowerCase(),
+          seriesName,
+          seriesSequence,
+          jsonEncode(metadata),
+          preferredId,
+        ],
+      );
+      return preferredId!;
+    }
     final id = existing.isEmpty
-        ? FundusId.generate()
+        ? preferredId ?? FundusId.generate()
         : existing.first['id'] as String;
     _database.execute(
       '''

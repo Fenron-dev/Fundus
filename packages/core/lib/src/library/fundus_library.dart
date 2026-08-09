@@ -248,6 +248,12 @@ final class FundusLibrary {
                   mediaRootNames: configuration.rootsFor('audiobook'),
                 ))
             .group(files);
+    final portableIdentities = <String, ({String? workId, bool writable})>{};
+    for (final candidate in candidates) {
+      portableIdentities[candidate.directory] = await _readPortableIdentity(
+        candidate,
+      );
+    }
     yield LibraryIndexEvent(
       phase: LibraryIndexPhase.importing,
       fileCount: files.length,
@@ -263,7 +269,11 @@ final class FundusLibrary {
       for (final candidate in candidates) {
         indexed.add((
           candidate: candidate,
-          workId: _database.upsertAudiobookCandidate(candidate, ids),
+          workId: _database.upsertAudiobookCandidate(
+            candidate,
+            ids,
+            preferredWorkId: portableIdentities[candidate.directory]?.workId,
+          ),
         ));
       }
       return indexed;
@@ -286,6 +296,9 @@ final class FundusLibrary {
         // The user can repair malformed portable metadata and scan again.
       }
       await _cacheEmbeddedCover(indexed.candidate, indexed.workId);
+      if (portableIdentities[indexed.candidate.directory]?.writable ?? false) {
+        await _writeMetadataSidecar(indexed.workId);
+      }
     }
     yield LibraryIndexEvent(
       phase: LibraryIndexPhase.completed,
@@ -377,14 +390,7 @@ final class FundusLibrary {
     await File(
       p.join(sidecarDirectory.path, 'notes.md'),
     ).writeAsString(_serializeNotes(annotations.notes), flush: true);
-    await File(p.join(sidecarDirectory.path, 'meta.yaml')).writeAsString(
-      const JsonEncoder.withIndent('  ').convert({
-        'format_version': 1,
-        'language': _database.workLanguage(workId),
-        'tags': annotations.tags,
-      }),
-      flush: true,
-    );
+    await _writeMetadataSidecar(workId);
     final tracksById = {
       for (final track in playbackTracks(workId))
         track.fileId: track.relativePath,
@@ -404,6 +410,52 @@ final class FundusLibrary {
             },
         ],
       }),
+      flush: true,
+    );
+  }
+
+  Future<({String? workId, bool writable})> _readPortableIdentity(
+    AudiobookImportCandidate candidate,
+  ) async {
+    final file = File(
+      p.joinAll([
+        root.path,
+        ...p.posix.split(candidate.directory),
+        '_fundus',
+        'meta.yaml',
+      ]),
+    );
+    if (!await file.exists()) return (workId: null, writable: true);
+    try {
+      final value = loadYaml(await file.readAsString());
+      if (value is! Map) return (workId: null, writable: false);
+      final baseKind = value['base_kind'];
+      if (baseKind != null && baseKind != 'audiobook') {
+        return (workId: null, writable: false);
+      }
+      final workId = value['work_id'];
+      if (workId == null) return (workId: null, writable: true);
+      if (workId is! String || !_uuidPattern.hasMatch(workId)) {
+        return (workId: null, writable: false);
+      }
+      return (workId: workId, writable: true);
+    } on FileSystemException {
+      return (workId: null, writable: false);
+    } on YamlException {
+      return (workId: null, writable: false);
+    }
+  }
+
+  Future<void> _writeMetadataSidecar(String workId) async {
+    final sourcePath = _database.workSourcePath(workId);
+    if (sourcePath == null) return;
+    final directory = Directory(
+      p.join(_safeWorkDirectory(sourcePath).path, '_fundus'),
+    );
+    await directory.create(recursive: true);
+    final annotations = loadAnnotations(workId);
+    await File(p.join(directory.path, 'meta.yaml')).writeAsString(
+      '${const JsonEncoder.withIndent('  ').convert({'format_version': 2, 'work_id': workId, 'base_kind': 'audiobook', 'custom_type': null, 'language': _database.workLanguage(workId), 'tags': annotations.tags})}\n',
       flush: true,
     );
   }
@@ -578,4 +630,8 @@ final class FundusLibrary {
 
   static File _configurationFile(Directory root) =>
       File('${root.path}/$metadataDirectoryName/$configurationFileName');
+
+  static final _uuidPattern = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+  );
 }

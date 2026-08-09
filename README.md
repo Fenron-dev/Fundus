@@ -34,6 +34,8 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - datierte Notiz-Historie mit portablem Markdown-Sidecar
 - Sprachimport aus Sidecars sowie M4B/M4A- und MP3-Metadaten
 - portabler Sidecar-Spiegel unter `_fundus/`, der einen Index-Neuaufbau überlebt
+- stabile `work_id` und `base_kind` im Sidecar; Verschieben und Index-Neuaufbau
+  erhalten Werkidentität, Resume, Tags, Notizen und Lesezeichen
 - responsive Flutter-Oberfläche für Desktop, Tablet und Mobile
 - Grundgerüst für den token-geschützten lokalen HTTP-Server
 

@@ -152,6 +152,7 @@ void main() {
     final rebuiltWork = rebuilt.listWorks().single;
     final restored = rebuilt.loadAnnotations(rebuiltWork.id);
 
+    expect(rebuiltWork.id, work.id);
     expect(restored.tags, ['Fantasy', 'Favorit']);
     expect(restored.notes, hasLength(2));
     expect(
@@ -164,6 +165,63 @@ void main() {
       const Duration(minutes: 12, seconds: 34),
     );
   });
+
+  test(
+    'keeps work progress and bookmarks when an audiobook is moved',
+    () async {
+      final root = await Directory.systemTemp.createTemp('fundus-move-');
+      addTearDown(() => root.delete(recursive: true));
+      final original = Directory('${root.path}/Autor/Serie/01 - Titel');
+      await original.create(recursive: true);
+      await File('${original.path}/01 - Anfang.mp3').writeAsBytes([1, 2, 3]);
+      await File('${original.path}/02 - Ende.mp3').writeAsBytes([4, 5, 6]);
+
+      final library = await FundusLibrary.create(root);
+      addTearDown(library.close);
+      await library.index().drain<void>();
+      final originalWork = library.listWorks().single;
+      final originalTracks = library.playbackTracks(originalWork.id);
+      library.saveProgress(
+        workId: originalWork.id,
+        fileId: originalTracks[1].fileId,
+        position: const Duration(minutes: 17, seconds: 42),
+        operationId: 'before-move',
+      );
+      await library.addBookmark(
+        workId: originalWork.id,
+        fileId: originalTracks[1].fileId,
+        position: const Duration(minutes: 12),
+        label: 'Vor dem Verschieben',
+      );
+      await library.replaceWorkTags(originalWork.id, ['Bleibt erhalten']);
+
+      final metadata = await File(
+        '${original.path}/_fundus/meta.yaml',
+      ).readAsString();
+      expect(metadata, contains('"format_version": 2'));
+      expect(metadata, contains('"work_id": "${originalWork.id}"'));
+      expect(metadata, contains('"base_kind": "audiobook"'));
+
+      final destinationParent = Directory(
+        '${root.path}/Audiobooks/Autor/Serie',
+      );
+      await destinationParent.create(recursive: true);
+      await original.rename('${destinationParent.path}/01 - Titel');
+      await library.index().drain<void>();
+
+      final movedWork = library.listWorks().single;
+      final movedTracks = library.playbackTracks(movedWork.id);
+      final progress = library.loadProgress(movedWork.id)!;
+      final annotations = library.loadAnnotations(movedWork.id);
+      expect(movedWork.id, originalWork.id);
+      expect(progress.position.displayValue, '00:17:42');
+      expect(progress.fileId, movedTracks[1].fileId);
+      expect(progress.fileId, isNot(originalTracks[1].fileId));
+      expect(annotations.tags, ['Bleibt erhalten']);
+      expect(annotations.bookmarks.single.fileId, movedTracks[1].fileId);
+      expect(annotations.bookmarks.single.label, 'Vor dem Verschieben');
+    },
+  );
 
   test('open rejects a directory without a manifest', () async {
     final root = await Directory.systemTemp.createTemp('fundus-empty-');

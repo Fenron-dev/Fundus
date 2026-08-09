@@ -392,11 +392,12 @@ Aufbewahrungsdatum.
 > unterstützt inzwischen sowohl die bisherige Autorenebene unmittelbar unter
 > der Bibliothekswurzel als auch konfigurierte Bereiche wie `Audiobooks/` oder
 > `Hörbücher/`. Weitere Medientypen und die Oberfläche zur Konfiguration der
-> Bereiche folgen schrittweise. Die aktuelle `_fundus/meta.yaml` enthält noch
-> keine vollständige stabile Werkidentität mit Grundtyp; die Datenbank allein macht
-> den Import daher noch nicht ortsunabhängig. Bestehende Ordner deshalb noch
-> nicht manuell verschieben, bevor Bereichserkennung, erweiterte Sidecars und
-> Migrationsassistent verfügbar sind.
+> Bereiche folgen schrittweise. Für eingelesene Hörbücher schreibt und liest
+> Fundus inzwischen `work_id` und `base_kind` in `_fundus/meta.yaml`; beim
+> Verschieben werden Resume und Lesezeichen auf die neuen Track-IDs umgesetzt.
+> Für andere Medientypen gilt diese Zusage erst mit deren jeweiligem Importer.
+> Größere Bestände sollten weiterhin über den zukünftigen Migrationsassistenten
+> umsortiert werden, der vorab eine Vorschau und Konfliktprüfung anbietet.
 
 Die aktuell verwendete Struktur
 
