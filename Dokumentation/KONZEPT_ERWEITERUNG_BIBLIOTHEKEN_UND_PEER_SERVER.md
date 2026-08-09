@@ -10,8 +10,8 @@
 ## 1. Entscheidungen in Kurzform
 
 1. Eine Fundus-Bibliothek ist **medienübergreifend**. Sie kann gleichzeitig
-   Hörbücher, Filme, Serien, E-Books, Manga, Musik, Dokumente und weitere
-   Medientypen enthalten.
+   Hörbücher, Filme, Serien, E-Books, Manga, Musik, Podcasts, Bilder,
+   Dokumente, Archive und weitere Medientypen enthalten.
 2. Medientypen sind **keine eigenen Bibliotheken**, sondern standardmäßig
    Bereiche beziehungsweise oberste Inhaltsordner innerhalb einer Bibliothek.
 3. Mehrere Bibliotheken werden nach betrieblichen Grenzen angelegt: anderer
@@ -26,6 +26,11 @@
 6. Remote-Bibliotheken und Offline-Downloads werden nicht automatisch erneut
    freigegeben. So entstehen keine Schleifen, ungewollten Kopien oder
    mehrdeutigen Zuständigkeiten.
+7. Der Speicherort ist nicht die Identität eines Werks. Fundus soll Werke
+   vorrangig über stabile IDs und Metadaten erkennen; Ordnernamen bleiben ein
+   wichtiges Erkennungs- und Kompatibilitätssignal.
+8. Fundus besitzt feste Grundtypen für die jeweilige Medienlogik. Nutzer dürfen
+   zusätzlich eigene Untertypen, Tags, Sammlungen und Eigenschaften anlegen.
 
 ---
 
@@ -36,6 +41,8 @@
 | **Gerät / Peer** | Eine Fundus-Installation auf Desktop, Laptop, Smartphone, Tablet oder NAS |
 | **Bibliothek** | Ein selbstenthaltender Medienbestand mit eigener `library_id`, `.library/` und Datenbank |
 | **Medienbereich** | Ein oberster Inhaltsordner einer Bibliothek, beispielsweise `Audiobooks` oder `Movies` |
+| **Grundtyp** | Von Fundus definierter Typ mit technischem Verhalten, beispielsweise `audiobook`, `podcast`, `image` oder `document` |
+| **Eigener Typ** | Frei benannte Unterkategorie eines Grundtyps, beispielsweise `Backup` unter `archive` |
 | **Werk** | Das logische Medium, etwa ein Hörbuch, Film, Serienepisode oder Buch |
 | **Datei** | Die physische Datei, die einem Werk mit einer Rolle zugeordnet ist |
 | **lokale Bibliothek** | Eine Bibliothek, deren Stammordner auf diesem Gerät erreichbar ist |
@@ -64,8 +71,11 @@ Meine Medien/                         ← eine Bibliothek
   Books/
   Manga/
   Music/
+  Podcasts/
+  Pictures/
   Documents/
   TTRPG/
+  Archives/
 ```
 
 `Audiobooks`, `Movies` und `TV Shows` sind hier keine Bibliotheken. Sie gehören
@@ -211,6 +221,15 @@ media_roots:
   document:
     - Documents
     - Dokumente
+  podcast:
+    - Podcasts
+  image:
+    - Pictures
+    - Bilder
+    - Fotos
+  archive:
+    - Archives
+    - Backups
 ```
 
 Dadurch funktionieren deutsche Namen, bestehende Ordner und selbst gewählte
@@ -222,7 +241,46 @@ einzige. Dateityp, Sidecars, eingebettete Metadaten und Ordnerstruktur bleiben
 weitere Signale. Fundus darf Inhalte in einem unbekannten Bereich anzeigen und
 als „noch nicht zugeordnet“ markieren, statt sie zu ignorieren.
 
-### 4.3 Regeln je Medientyp
+### 4.3 Wie Fundus ein Werk unabhängig vom Speicherort erkennt
+
+Im Zielbild ist es grundsätzlich egal, an welcher Stelle innerhalb einer
+Bibliothek ein Werk liegt. Ein Hörbuch bleibt ein Hörbuch, wenn es verschoben
+oder in einem neutral benannten Ordner abgelegt wird. Fundus verwendet dazu die
+folgenden Signale in absteigender Priorität:
+
+1. stabile `work_id` und expliziter `base_kind` im Fundus-Sidecar;
+2. kompatible Fremd-Sidecars wie `metadata.json` oder `_source.json`;
+3. eingebettete Metadaten, MIME-Typ und Container-/Codec-Informationen;
+4. der in `.library/config.yaml` konfigurierte Medienbereich;
+5. Ordner- und Dateinamensmuster als Fallback.
+
+Die Datenbank ist der schnelle lokale Index, aber nicht die einzige Wahrheit:
+Sie muss nach Verlust oder auf einem anderen Gerät aus den Dateien, Sidecars
+und eingebetteten Metadaten wiederaufgebaut werden können. Ein zukünftiges
+Fundus-Sidecar kann beispielsweise enthalten:
+
+```yaml
+format_version: 2
+work_id: 019fe6f4-6f91-7b30-9de8-98dce07bcfab
+base_kind: audiobook
+custom_type: null
+```
+
+Die physischen Typordner sind deshalb nicht bloß Kosmetik. Sie bieten:
+
+- eine verständliche Ansicht in Finder, Explorer und Dateimanagern;
+- einen sicheren Fallback, wenn Sidecars oder Datenbank fehlen;
+- weniger Mehrdeutigkeiten und schnellere Teilscans;
+- gezielte Quellen für Fremdprogramme: Plex kann beispielsweise nur `Movies/`
+  und `TV Shows/`, Audiobookshelf nur `Audiobooks/` verwenden.
+
+Eine neutrale, mit anderen Programmen kompatible Ablage ist ausdrücklich
+erlaubt. Fundus darf daraus keine harte Pfadabhängigkeit ableiten. Beim
+Verschieben ordnet Fundus die Datei über `work_id`, Hash und Metadaten wieder
+dem bestehenden Werk zu, damit Fortschritt, Notizen und Lesezeichen erhalten
+bleiben.
+
+### 4.4 Regeln je Medientyp
 
 #### Hörbücher
 
@@ -259,13 +317,42 @@ Belletristik kann wie Hörbücher nach Autor und Reihe strukturiert werden.
 Dokumente, Handbücher und lose PDFs gehören in `Documents` oder einen fachlich
 benannten Unterordner.
 
+#### Podcasts
+
+```text
+Podcasts/Podcasttitel/Episoden
+```
+
+Podcasts und Episoden sind eigene Grundtypen. Fundus verwaltet Feed-URL,
+Episodennummer beziehungsweise Veröffentlichungsdatum, Downloadstatus und
+individuellen Hörfortschritt. Manuell abgelegte Episoden funktionieren auch
+ohne Feed; die Feed-Zuordnung ist optionale Metadatenanreicherung.
+
+#### Bilder
+
+```text
+Pictures/Sammlung oder Ereignis/Bilddateien
+```
+
+Bilder erscheinen als eigener Eintrag in Navigation, Suche, Filterung und
+Übersicht. Fundus unterstützt Einzelbilder ebenso wie Sammlungen, Alben oder
+Bildfolgen. EXIF-Daten, Aufnahmedatum, Abmessungen, Bewertung, Personen, Tags
+und Sammlungen bleiben unabhängig von der physischen Ordnerhierarchie nutzbar.
+
+#### Archive und Backups
+
+Archive können als virtuelle Ordner geöffnet oder als eigenständige Werke
+verwaltet werden. `Backup` ist kein eigenes Wiedergabeformat, sondern sinnvoll
+als eigener Untertyp des Grundtyps `archive` oder — bei Dokumentensätzen — als
+Sammlung beziehungsweise Tag.
+
 #### Gemischte Produkte
 
 Ein TTRPG-Produkt, Kurs oder Archivpaket darf PDFs, Bilder, Audio und Anhänge in
 einem Werkordner mischen. Der oberste Bereich beschreibt den **Werktyp**, nicht
 jeden einzelnen Dateityp.
 
-### 4.4 Sidecars und Metadaten
+### 4.5 Sidecars und Metadaten
 
 - `.library/` gehört zur gesamten Bibliothek.
 - `_fundus/` gehört zu genau einem Werkordner.
@@ -275,6 +362,28 @@ jeden einzelnen Dateityp.
   Werkzeuge erhalten bleiben.
 - Fundus verschiebt oder benennt Nutzerdateien niemals allein durch einen Scan.
 
+### 4.6 Eigene Typen ohne Verlust der Medienlogik
+
+Frei definierbare Typen sind vorgesehen, ersetzen aber nicht den technischen
+Grundtyp. Die Trennung verhindert, dass Fundus bei einem selbst benannten Typ
+nicht mehr weiß, welchen Player, Viewer, Fortschrittstyp oder Codec-Test es
+verwenden muss.
+
+| Wunsch | Empfohlene Abbildung |
+|---|---|
+| `Wichtig` medienübergreifend | Tag `Wichtig` oder intelligente Sammlung |
+| `Wichtige Dokumente` | gespeicherter Filter `Grundtyp = Dokument` und `Tag = Wichtig` |
+| `Backup` | eigener Typ `Backup` unter dem Grundtyp `archive` |
+| `Steuerunterlagen` | eigener Typ unter `document`, optional zusätzlich Jahr als Eigenschaft |
+| eigener physischer Ordner `Backups/` | Medienbereich mit Grundtyp `archive` und optional vorbelegtem eigenen Typ `Backup` |
+
+Eigene Typen sind in Suche, Filterung, Gruppierung und Sortierung gleichwertig
+nutzbar. Sie können Farbe, Symbol, sichtbare Eigenschaften, Standardansicht und
+zulässige Grundtypen konfigurieren. Tags eignen sich für viele-zu-viele-
+Merkmale, Sammlungen für bewusst zusammengestellte oder regelbasierte Mengen
+und eigene Eigenschaften für strukturierte Werte wie Frist, Projekt oder
+Aufbewahrungsdatum.
+
 ---
 
 ## 5. Umgang mit bestehenden Bibliotheken
@@ -282,8 +391,11 @@ jeden einzelnen Dateityp.
 > **Wichtig zum aktuellen Entwicklungsstand:** Der derzeitige Hörbuchimporter
 > erwartet die Autorenebene noch unmittelbar unter der Bibliothekswurzel. Die
 > hier definierte Medienbereich-Ebene ist die Zielstruktur, aber noch nicht
-> implementiert. Bestehende Ordner deshalb noch nicht manuell verschieben,
-> bevor Bereichserkennung und Migrationsassistent verfügbar sind.
+> implementiert. Die aktuelle `_fundus/meta.yaml` enthält außerdem noch keine
+> vollständige stabile Werkidentität mit Grundtyp; die Datenbank allein macht
+> den Import daher noch nicht ortsunabhängig. Bestehende Ordner deshalb noch
+> nicht manuell verschieben, bevor Bereichserkennung, erweiterte Sidecars und
+> Migrationsassistent verfügbar sind.
 
 Die aktuell verwendete Struktur
 
@@ -512,6 +624,12 @@ Mobile ist trotzdem kein künstlich eingeschränkter Nur-Client.
 
 ## 7. Oberfläche
 
+Die primäre Medienübersicht enthält mindestens die Grundbereiche Hörbücher,
+Filme & Serien, E-Books/PDFs, Musik, Podcasts, Bilder und Dokumente/Archive.
+Weitere Grundtypen und eigene Typen können über die Einstellungen ein- oder
+ausgeblendet, umbenannt und angeordnet werden. Eigene Typen erscheinen je nach
+Wahl als Navigationseintrag, Filter oder gespeicherte Ansicht.
+
 ### 7.1 Quellenansicht
 
 ```text
@@ -596,7 +714,8 @@ Tokens in Logs, QR-Verlauf oder mDNS.
 1. **Bibliotheksregistry lokal:** mehrere Bibliotheken gleichzeitig öffnen,
    Status prüfen und unabhängig von der aktuellen UI-Auswahl verwalten.
 2. **Medienbereiche:** `config.yaml`, Standardbereiche, Legacy-Zuordnung und
-   Scanner-Unterstützung für gemischte Bibliotheken.
+   Scanner-Unterstützung für gemischte Bibliotheken einschließlich Podcasts
+   und Bilder.
 3. **Migrationsassistent:** Vorschau, Konfliktprüfung, sichere Verschiebung und
    Erhalt der Werk-/Nutzerdaten.
 4. **Mehrbibliotheks-Server:** `/v1/libraries`, Werkliste, Details, Cover,
@@ -612,6 +731,9 @@ Tokens in Logs, QR-Verlauf oder mDNS.
    automatische Weiterfreigabe.
 10. **Mobile Peer-Fähigkeit:** sichtbare Laufzeitgrenzen und kontrollierter
     Vorder-/Hintergrundbetrieb.
+11. **Ortsunabhängige Werke und eigene Typen:** stabile Werk-IDs und Grundtypen
+    in Sidecars, Wiederzuordnung nach Verschieben sowie konfigurierbare
+    Untertypen, Eigenschaften und gespeicherte Ansichten.
 
 ---
 
@@ -619,6 +741,12 @@ Tokens in Logs, QR-Verlauf oder mDNS.
 
 - Eine Bibliothek mit `Audiobooks`, `Movies` und `TV Shows` wird als **eine**
   Bibliothek geöffnet und kann nach Medientyp gefiltert werden.
+- Podcasts und Bilder besitzen eigene Einträge in Navigation, Suche und
+  Filterung und können innerhalb derselben Bibliothek liegen.
+- Ein verschobenes Werk mit stabiler `work_id` wird wiedererkannt; Fortschritt,
+  Tags, Notizen und Lesezeichen bleiben erhalten.
+- Ein eigener Typ `Backup` unter dem Grundtyp `archive` kann angelegt, gesucht,
+  gefiltert, gruppiert und sortiert werden, ohne die Archivlogik zu verlieren.
 - Eine reine Legacy-Hörbuchbibliothek ohne Typ-Überordner bleibt lesbar.
 - Der Migrationsplan verschiebt nichts ohne Bestätigung und erhält Fortschritt,
   Tags, Notizen und Lesezeichen.

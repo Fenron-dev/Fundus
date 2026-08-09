@@ -61,6 +61,14 @@ Das ist das Eagle-Modell: eine Zeile pro physischer Datei, Duplikaterkennung üb
 
 `kind`: `audiobook`, `book_series`, `movie`, `series`/`season`/`episode`, `album`/`track`, `manga`/`chapter`, `book`, `ttrpg_product`, `image`, `document`, `archive`, `podcast`/`podcast_episode`.
 
+`kind` ist der feste technische Grundtyp und bestimmt Player, Viewer,
+Fortschrittsformat und typspezifische Prüfungen. Die persönliche Ordnung wird
+nicht in diesen Grundtyp gepresst: Frei definierbare Untertypen wie `Backup`
+oder `Steuerunterlagen`, Tags wie `Wichtig`, Sammlungen und eigene
+Eigenschaften bleiben separat und sind vollständig such-, filter-, gruppier-
+und sortierbar. Details zur ortsunabhängigen Erkennung und Ordnerstruktur stehen
+in [Konzept-Erweiterung: Bibliotheken, Ordnerstruktur und Peer-Server](KONZEPT_ERWEITERUNG_BIBLIOTHEKEN_UND_PEER_SERVER.md).
+
 **Werke sind nicht überall nötig.** Bei einer Einzeldatei wird das Werk automatisch 1:1 abgeleitet und bleibt in der UI unsichtbar — du siehst weiterhin einfach Dateien. Bei einem Hörbuch aus 30 Tracks oder einem TTRPG-Produkt aus PDF, Karten und Handouts bündelt es. Beide Fälle nutzen dieselben Tags, Bewertungen, Notizen und Sammlungen, weil alles am Werk hängt.
 
 `parent_id` ist bewusst **generisch**, nicht auf „Serie → Band" beschränkt: Es trägt genauso „Produktlinie → Produkt" oder „Kampagne → Abenteuer".
