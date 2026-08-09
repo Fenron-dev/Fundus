@@ -40,6 +40,8 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
   erhalten Werkidentität, Resume, Tags, Notizen und Lesezeichen
 - responsive Flutter-Oberfläche für Desktop, Tablet und Mobile
 - ein-/ausblendbare Detailleiste und Inline-Details bei mittleren Fensterbreiten
+- per Maus verstellbare Breite der linken und rechten Seitenleisten sowie
+  sichtbarer Werk-Dateipfad in den Details
 - rotierendes, exportierbares JSONL-Diagnoseprotokoll ohne absolute Medienpfade
 - Grundgerüst für den token-geschützten lokalen HTTP-Server
 

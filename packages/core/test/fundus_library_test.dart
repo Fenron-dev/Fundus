@@ -26,6 +26,7 @@ void main() {
     expect(works.single.seriesSequence, 1);
     expect(works.single.fileCount, 2);
     expect(works.single.coverPath, endsWith('cover.jpg'));
+    expect(library.workDirectoryPath(works.single.id), book.path);
 
     final tracks = library.playbackTracks(works.single.id);
     expect(tracks.map((track) => track.title), [

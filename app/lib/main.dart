@@ -210,9 +210,17 @@ class _FundusAppState extends State<FundusApp> {
   Future<void> _exportDiagnostics() async {
     final source = FundusDiagnostics.instance.file;
     if (source == null || !await source.exists()) return;
+    final now = DateTime.now();
+    final timestamp =
+        '${now.year.toString().padLeft(4, '0')}'
+        '${now.month.toString().padLeft(2, '0')}'
+        '${now.day.toString().padLeft(2, '0')}-'
+        '${now.hour.toString().padLeft(2, '0')}'
+        '${now.minute.toString().padLeft(2, '0')}'
+        '${now.second.toString().padLeft(2, '0')}';
     final destination = await FilePicker.saveFile(
       dialogTitle: 'Fundus-Diagnoseprotokoll exportieren',
-      fileName: 'fundus-diagnostics.log',
+      fileName: 'fundus-diagnostics-$timestamp.log',
       bytes: await source.readAsBytes(),
     );
     if (destination != null) {
@@ -478,6 +486,8 @@ class _LibraryShellState extends State<LibraryShell> {
   bool _detailPaneVisible = true;
   bool _playerExpanded = false;
   LibraryWorkSummary? _inlineDetailWork;
+  double _leftPaneWidth = 236;
+  double _detailPaneWidth = 368;
 
   List<LibraryWorkSummary> get _visibleWorks =>
       LibraryWorkSearch.apply(widget.works, _query);
@@ -555,8 +565,15 @@ class _LibraryShellState extends State<LibraryShell> {
             Expanded(
               child: Row(
                 children: [
-                  const SizedBox(width: 236, child: _Sidebar()),
-                  const VerticalDivider(width: 1),
+                  SizedBox(width: _leftPaneWidth, child: const _Sidebar()),
+                  _ResizeHandle(
+                    onDrag: (delta) => setState(
+                      () => _leftPaneWidth = (_leftPaneWidth + delta).clamp(
+                        180,
+                        420,
+                      ),
+                    ),
+                  ),
                   Expanded(
                     child: _playerExpanded && widget.player != null
                         ? _ExpandedPlayer(
@@ -571,9 +588,14 @@ class _LibraryShellState extends State<LibraryShell> {
                         : _library(context),
                   ),
                   if (_detailPaneVisible && !_playerExpanded) ...[
-                    const VerticalDivider(width: 1),
+                    _ResizeHandle(
+                      onDrag: (delta) => setState(
+                        () => _detailPaneWidth = (_detailPaneWidth - delta)
+                            .clamp(280, 680),
+                      ),
+                    ),
                     SizedBox(
-                      width: 368,
+                      width: _detailPaneWidth,
                       child: _DetailPanel(
                         work: selected,
                         library: widget.library,
@@ -1385,6 +1407,25 @@ class _SectionLabel extends StatelessWidget {
   );
 }
 
+class _ResizeHandle extends StatelessWidget {
+  const _ResizeHandle({required this.onDrag});
+
+  final ValueChanged<double> onDrag;
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+    cursor: SystemMouseCursors.resizeColumn,
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragUpdate: (details) => onDrag(details.delta.dx),
+      child: const SizedBox(
+        width: 7,
+        child: Center(child: VerticalDivider(width: 1)),
+      ),
+    ),
+  );
+}
+
 class _WorkCard extends StatelessWidget {
   const _WorkCard({
     required this.work,
@@ -1550,6 +1591,7 @@ class _DetailPanelState extends State<_DetailPanel> {
     if (widget.work == null) return const _EmptyLibrary();
     final selectedWork = widget.work!;
     final canBookmark = _bookmarkAvailable;
+    final directoryPath = widget.library?.workDirectoryPath(selectedWork.id);
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -1575,6 +1617,15 @@ class _DetailPanelState extends State<_DetailPanel> {
         ),
         const SizedBox(height: 14),
         Text('${selectedWork.fileCount} Mediendatei(en)'),
+        if (directoryPath != null) ...[
+          const SizedBox(height: 8),
+          Text('Dateipfad', style: Theme.of(context).textTheme.labelMedium),
+          const SizedBox(height: 3),
+          SelectableText(
+            directoryPath,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
         const SizedBox(height: 12),
         FilledButton.icon(
           onPressed: widget.onPlay == null
@@ -2033,6 +2084,7 @@ class _ExpandedPlayer extends StatefulWidget {
 
 class _ExpandedPlayerState extends State<_ExpandedPlayer> {
   _PlayerContextTab _tab = _PlayerContextTab.files;
+  double _contextWidth = 340;
 
   @override
   Widget build(BuildContext context) {
@@ -2080,24 +2132,27 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
                               widget.controller.track?.title ?? '',
                               textAlign: TextAlign.center,
                             ),
-                            const SizedBox(height: 14),
-                            LayoutBuilder(
-                              builder: (context, constraints) => _PlayerBar(
-                                controller: widget.controller,
-                                compact: constraints.maxWidth < 760,
-                              ),
-                            ),
                           ],
                         ),
                       ),
                     ),
                   ),
+                  LayoutBuilder(
+                    builder: (context, constraints) => _PlayerBar(
+                      controller: widget.controller,
+                      compact: constraints.maxWidth < 760,
+                    ),
+                  ),
                 ],
               ),
             ),
-            const VerticalDivider(width: 1),
+            _ResizeHandle(
+              onDrag: (delta) => setState(
+                () => _contextWidth = (_contextWidth - delta).clamp(300, 720),
+              ),
+            ),
             SizedBox(
-              width: 340,
+              width: _contextWidth,
               child: Column(
                 children: [
                   SingleChildScrollView(
@@ -2144,7 +2199,7 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
 
   Widget _context(LibraryWorkSummary? work) => switch (_tab) {
     _PlayerContextTab.files => _trackList('Dateien'),
-    _PlayerContextTab.playlist => _trackList('Aktuelle Playlist'),
+    _PlayerContextTab.playlist => _playlist(work),
     _PlayerContextTab.chapters => const Center(
       child: Padding(
         padding: EdgeInsets.all(24),
@@ -2161,6 +2216,35 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
       onPlay: widget.onPlay,
     ),
   };
+
+  Widget _playlist(LibraryWorkSummary? work) {
+    if (work == null) return const Center(child: Text('Playlist ist leer.'));
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        Text(
+          'Aktuelle Playlist',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 8),
+        ListTile(
+          selected: true,
+          leading: SizedBox.square(
+            dimension: 48,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: _WorkCover(work: work, iconSize: 24),
+            ),
+          ),
+          title: Text(work.title),
+          subtitle: Text(
+            '${work.author} · ${widget.controller.trackCount} Datei(en)',
+          ),
+          trailing: const Icon(Icons.graphic_eq),
+        ),
+      ],
+    );
+  }
 
   Widget _trackList(String title) => ListView.builder(
     padding: const EdgeInsets.symmetric(vertical: 8),

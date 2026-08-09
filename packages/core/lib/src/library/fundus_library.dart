@@ -137,6 +137,11 @@ final class FundusLibrary {
         .toList(growable: false);
   }
 
+  String? workDirectoryPath(String workId) {
+    final sourcePath = _database.workSourcePath(workId);
+    return sourcePath == null ? null : _safeWorkDirectory(sourcePath).path;
+  }
+
   LibraryPlaybackProgress? loadProgress(String workId) =>
       _database.loadProgress(workId);
 

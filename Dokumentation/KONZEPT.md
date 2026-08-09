@@ -376,7 +376,7 @@ Fundus soll möglichst weitgehend an den eigenen Arbeitsablauf anpassbar sein, o
 
 | Bereich | Steuerbare Punkte |
 |---|---|
-| Darstellung | Hell/Dunkel/System, Akzent, Dichte, Rastergröße, Listenzeilen, sichtbare Spalten, Panelbreiten, Cover-Seitenverhältnis, Animationen |
+| Darstellung | Hell/Dunkel/System, Akzent, Dichte, Rastergröße, Listenzeilen, sichtbare Spalten, per Maus verstellbare Panelbreiten, ein-/ausblendbares Detailpanel, Cover-Seitenverhältnis, Animationen |
 | Navigation | sichtbare Medientypen und Module, angeheftete Sammlungen, Startansicht, Detailpanel-Verhalten, Kürzel und Kommandopalette |
 | Suche | Fuzzy an/aus, Fehlertoleranz, Standardscope, Standardfilter, Standardsortierung, Suchverlauf |
 | Bibliothek & Scan | Ignore-Regeln, Symlinks, Dateitypen, Hash-Strategie, Watcher, Thumbnail-Qualität, Offline-/Missing-Fristen |

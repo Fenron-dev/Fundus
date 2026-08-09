@@ -147,8 +147,8 @@ final class FundusPlayerController extends ChangeNotifier {
       notifyListeners();
       await _player.play();
       if (resumePosition != null && resumePosition > Duration.zero) {
-        await _player.seek(resumePosition);
-        _position = resumePosition;
+        final appliedPosition = await _seekAndVerify(resumePosition);
+        _position = appliedPosition;
         notifyListeners();
         unawaited(
           FundusDiagnostics.instance.record('playback.resume_applied', {
@@ -156,11 +156,16 @@ final class FundusPlayerController extends ChangeNotifier {
             'file_id': track?.fileId,
             'track_index': _currentIndex,
             'position_ms': resumePosition.inMilliseconds,
-            'player_position_ms': _player.state.position.inMilliseconds,
+            'player_position_ms': appliedPosition.inMilliseconds,
+            'verified':
+                (appliedPosition - resumePosition).abs() <=
+                const Duration(seconds: 2),
           }),
         );
       }
     } catch (error) {
+      _ready = false;
+      await _player.pause();
       _loading = false;
       _error = 'Wiedergabe konnte nicht gestartet werden: $error';
       unawaited(
@@ -324,6 +329,29 @@ final class FundusPlayerController extends ChangeNotifier {
   Future<void> _pauseForSleepTimer() async {
     if (_closed) return;
     await _pauseAndPersist();
+  }
+
+  Future<Duration> _seekAndVerify(Duration target) async {
+    var actual = _player.state.position;
+    for (var attempt = 1; attempt <= 6; attempt++) {
+      await _player.seek(target);
+      await Future<void>.delayed(Duration(milliseconds: 100 * attempt));
+      actual = _player.state.position;
+      final difference = (actual - target).abs();
+      unawaited(
+        FundusDiagnostics.instance.record('playback.resume_seek_attempt', {
+          'work_id': _work?.id,
+          'attempt': attempt,
+          'target_ms': target.inMilliseconds,
+          'actual_ms': actual.inMilliseconds,
+          'duration_ms': _player.state.duration.inMilliseconds,
+        }),
+      );
+      if (difference <= const Duration(seconds: 2)) return actual;
+    }
+    throw StateError(
+      'Resume-Position konnte nach sechs Versuchen nicht gesetzt werden.',
+    );
   }
 
   Future<void> _pauseAndPersist() async {
