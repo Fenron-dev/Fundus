@@ -8,6 +8,20 @@ import '../diagnostics/fundus_diagnostics.dart';
 import 'playback_sleep_timer.dart';
 import 'playback_resume_policy.dart';
 
+final class PlayerWorkProgress {
+  const PlayerWorkProgress({
+    required this.position,
+    required this.duration,
+    required this.trackIndex,
+    required this.finished,
+  });
+
+  final Duration position;
+  final Duration? duration;
+  final int trackIndex;
+  final bool finished;
+}
+
 final class FundusPlayerController extends ChangeNotifier {
   static const progressPersistInterval = Duration(seconds: 5);
 
@@ -68,6 +82,7 @@ final class FundusPlayerController extends ChangeNotifier {
   bool _skipNextTrackTransition = false;
   double _rate = 1;
   String? _error;
+  final Map<String, PlayerWorkProgress> _sessionProgress = {};
 
   LibraryWorkSummary? get work => _work;
   LibraryPlaybackTrack? get track =>
@@ -93,6 +108,8 @@ final class FundusPlayerController extends ChangeNotifier {
   double get rate => _rate;
   String? get error => _error;
   PlaybackSleepTimer get sleepTimer => _sleepTimer;
+  PlayerWorkProgress? progressForWork(String workId) =>
+      _sessionProgress[workId];
 
   Future<void> open(
     FundusLibrary library,
@@ -310,6 +327,12 @@ final class FundusPlayerController extends ChangeNotifier {
         fileId: currentTrack.fileId,
         position: _position,
         duration: _duration > Duration.zero ? _duration : currentTrack.duration,
+        finished: finished,
+      );
+      _sessionProgress[work.id] = PlayerWorkProgress(
+        position: _position,
+        duration: _duration > Duration.zero ? _duration : currentTrack.duration,
+        trackIndex: _currentIndex,
         finished: finished,
       );
       _lastPersistedAt = DateTime.now();

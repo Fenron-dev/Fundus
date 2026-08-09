@@ -860,6 +860,7 @@ class _LibraryShellState extends State<LibraryShell> {
                     final work = works[index];
                     return _WorkCard(
                       work: work,
+                      player: widget.player,
                       selected: !detailAsDialog && index == _selectedIndex,
                       onTap: () {
                         setState(() => _selectedIndex = index);
@@ -1109,7 +1110,7 @@ class _LibraryShellState extends State<LibraryShell> {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.all(16),
         child: SizedBox(
-          width: constraints.maxWidth > 882 ? constraints.maxWidth - 32 : 850,
+          width: constraints.maxWidth > 1082 ? constraints.maxWidth - 32 : 1050,
           child: SingleChildScrollView(
             child: DataTable(
               showCheckboxColumn: false,
@@ -1120,6 +1121,7 @@ class _LibraryShellState extends State<LibraryShell> {
                 DataColumn(label: Text('Serie')),
                 DataColumn(label: Text('Band')),
                 DataColumn(label: Text('Sprache')),
+                DataColumn(label: Text('Fortschritt')),
               ],
               rows: [
                 for (var index = 0; index < works.length; index++)
@@ -1148,6 +1150,12 @@ class _LibraryShellState extends State<LibraryShell> {
                         ),
                       ),
                       DataCell(Text(_displayLanguage(works[index].language))),
+                      DataCell(
+                        _ProgressLabel(
+                          work: works[index],
+                          player: widget.player,
+                        ),
+                      ),
                     ],
                   ),
               ],
@@ -1503,11 +1511,13 @@ class _WorkCard extends StatelessWidget {
     required this.work,
     required this.selected,
     required this.onTap,
+    this.player,
   });
 
   final LibraryWorkSummary work;
   final bool selected;
   final VoidCallback onTap;
+  final FundusPlayerController? player;
 
   @override
   Widget build(BuildContext context) {
@@ -1544,7 +1554,7 @@ class _WorkCard extends StatelessWidget {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        _WorkCover(work: work, iconSize: 42),
+                        _WorkCover(work: work, iconSize: 42, player: player),
                         if (work.seriesSequence case final sequence?)
                           Positioned(
                             left: 8,
@@ -1695,7 +1705,11 @@ class _DetailPanelState extends State<_DetailPanel> {
             dimension: 180,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(10),
-              child: _WorkCover(work: selectedWork, iconSize: 72),
+              child: _WorkCover(
+                work: selectedWork,
+                iconSize: 72,
+                player: widget.player,
+              ),
             ),
           ),
         ),
@@ -2160,13 +2174,74 @@ class _DetailPanelState extends State<_DetailPanel> {
 enum _BookmarkJumpAction { jumpDirectly, rememberAndJump }
 
 class _WorkCover extends StatelessWidget {
-  const _WorkCover({required this.work, required this.iconSize});
+  const _WorkCover({required this.work, required this.iconSize, this.player});
 
   final LibraryWorkSummary work;
   final double iconSize;
+  final FundusPlayerController? player;
 
   @override
   Widget build(BuildContext context) {
+    final controller = player;
+    if (controller != null) {
+      return AnimatedBuilder(
+        animation: controller,
+        builder: (context, child) => _coverWithProgress(context),
+      );
+    }
+    return _coverWithProgress(context);
+  }
+
+  Widget _coverWithProgress(BuildContext context) {
+    final progress = _progressFor(work, player);
+    final artwork = _artwork();
+    if (progress == null) return artwork;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        artwork,
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: ColoredBox(
+            color: Colors.black.withValues(alpha: .72),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                iconSize < 30 ? 2 : 7,
+                iconSize < 30 ? 2 : 5,
+                iconSize < 30 ? 2 : 7,
+                3,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (iconSize >= 30)
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        progress.label,
+                        maxLines: 1,
+                        style: Theme.of(
+                          context,
+                        ).textTheme.labelSmall?.copyWith(color: Colors.white),
+                      ),
+                    ),
+                  LinearProgressIndicator(
+                    value: progress.fraction,
+                    minHeight: iconSize < 30 ? 3 : 4,
+                    backgroundColor: Colors.white24,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _artwork() {
     final path = work.coverPath;
     if (path == null || path.isEmpty) return _placeholder();
     return Image.file(
@@ -2179,6 +2254,71 @@ class _WorkCover extends StatelessWidget {
 
   Widget _placeholder() =>
       Center(child: Icon(Icons.music_note, size: iconSize));
+}
+
+class _ProgressLabel extends StatelessWidget {
+  const _ProgressLabel({required this.work, this.player});
+
+  final LibraryWorkSummary work;
+  final FundusPlayerController? player;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = player;
+    if (controller == null) return _label();
+    return AnimatedBuilder(animation: controller, builder: (_, _) => _label());
+  }
+
+  Widget _label() {
+    final progress = _progressFor(work, player);
+    return Text(progress?.label ?? '—');
+  }
+}
+
+({double fraction, String label})? _progressFor(
+  LibraryWorkSummary work,
+  FundusPlayerController? player,
+) {
+  final current = player?.work?.id == work.id;
+  final session = player?.progressForWork(work.id);
+  final position = current
+      ? player!.position
+      : session?.position ?? work.progressPosition;
+  final duration = current && player!.duration > Duration.zero
+      ? player.duration
+      : session?.duration ?? work.progressDuration;
+  if (position == null || position <= Duration.zero) return null;
+  final finished = !current && (session?.finished ?? work.progressFinished);
+  final fraction = finished
+      ? 1.0
+      : duration == null || duration <= Duration.zero
+      ? 0.0
+      : (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0);
+  final trackIndex = current
+      ? player!.currentIndex
+      : session?.trackIndex ?? work.progressTrackIndex;
+  final trackPrefix = work.fileCount > 1 && trackIndex != null
+      ? 'Datei ${trackIndex + 1}/${work.fileCount} · '
+      : '';
+  if (duration == null || duration <= Duration.zero) {
+    return (
+      fraction: fraction,
+      label: '${trackPrefix}gehört ${_progressTime(position)}',
+    );
+  }
+  final remaining = duration > position ? duration - position : Duration.zero;
+  return (
+    fraction: fraction,
+    label:
+        '$trackPrefix${_progressTime(position)} / ${_progressTime(duration)} · Rest ${_progressTime(remaining)}',
+  );
+}
+
+String _progressTime(Duration value) {
+  final hours = value.inHours.toString().padLeft(2, '0');
+  final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
+  final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
+  return '$hours:$minutes:$seconds';
 }
 
 enum _PlayerContextTab { files, chapters, details, playlist }
@@ -2203,6 +2343,14 @@ class _ExpandedPlayer extends StatefulWidget {
 class _ExpandedPlayerState extends State<_ExpandedPlayer> {
   _PlayerContextTab _tab = _PlayerContextTab.files;
   double _contextWidth = 340;
+  late final PageController _mainPageController = PageController();
+  int _mainPage = 0;
+
+  @override
+  void dispose() {
+    _mainPageController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2223,38 +2371,7 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
                       icon: const Icon(Icons.close_fullscreen),
                     ),
                   ),
-                  Expanded(
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 900),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            SizedBox.square(
-                              dimension: 260,
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(18),
-                                child: work == null
-                                    ? const Icon(Icons.headphones, size: 96)
-                                    : _WorkCover(work: work, iconSize: 96),
-                              ),
-                            ),
-                            const SizedBox(height: 22),
-                            Text(
-                              work?.title ?? 'Wiedergabe',
-                              style: Theme.of(context).textTheme.headlineSmall,
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              widget.controller.track?.title ?? '',
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
+                  Expanded(child: _mainPager(work)),
                   LayoutBuilder(
                     builder: (context, constraints) => _PlayerBar(
                       controller: widget.controller,
@@ -2316,6 +2433,145 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
     );
   }
 
+  Widget _mainPager(LibraryWorkSummary? work) {
+    const labels = ['Player', 'Chapters', 'Details'];
+    return Column(
+      children: [
+        Text(labels[_mainPage], style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 4),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            for (var index = 0; index < labels.length; index++)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 3),
+                child: Icon(
+                  index == _mainPage ? Icons.circle : Icons.circle_outlined,
+                  size: 9,
+                ),
+              ),
+          ],
+        ),
+        Expanded(
+          child: Stack(
+            children: [
+              PageView(
+                controller: _mainPageController,
+                onPageChanged: (page) => setState(() => _mainPage = page),
+                children: [
+                  _artworkPage(work),
+                  _chapterList(),
+                  _detailsPage(work),
+                ],
+              ),
+              if (_mainPage > 0)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: IconButton.filledTonal(
+                    onPressed: () => _showMainPage(_mainPage - 1),
+                    tooltip: labels[_mainPage - 1],
+                    icon: const Icon(Icons.chevron_left),
+                  ),
+                ),
+              if (_mainPage < labels.length - 1)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: IconButton.filledTonal(
+                    onPressed: () => _showMainPage(_mainPage + 1),
+                    tooltip: labels[_mainPage + 1],
+                    icon: const Icon(Icons.chevron_right),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showMainPage(int page) => _mainPageController.animateToPage(
+    page,
+    duration: const Duration(milliseconds: 220),
+    curve: Curves.easeOut,
+  );
+
+  Widget _artworkPage(LibraryWorkSummary? work) => Center(
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 900),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox.square(
+            dimension: 260,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child: work == null
+                  ? const Icon(Icons.headphones, size: 96)
+                  : _WorkCover(
+                      work: work,
+                      iconSize: 96,
+                      player: widget.controller,
+                    ),
+            ),
+          ),
+          const SizedBox(height: 22),
+          Text(
+            work?.title ?? 'Wiedergabe',
+            style: Theme.of(context).textTheme.headlineSmall,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            widget.controller.track?.title ?? '',
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _detailsPage(LibraryWorkSummary? work) {
+    if (work == null) {
+      return const Center(child: Text('Keine Details verfügbar.'));
+    }
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(64, 24, 64, 24),
+      children: [
+        Text(work.title, style: Theme.of(context).textTheme.headlineSmall),
+        if (work.subtitle case final subtitle?) ...[
+          const SizedBox(height: 4),
+          Text(subtitle, style: Theme.of(context).textTheme.titleMedium),
+        ],
+        const SizedBox(height: 12),
+        Text('Autor: ${work.author}'),
+        if (work.narrators.isNotEmpty)
+          Text('Gelesen von: ${work.narrators.join(', ')}'),
+        if (work.series case final series?)
+          Text(
+            work.seriesSequence == null
+                ? 'Serie: $series'
+                : 'Serie: $series · Band ${_formatSequence(work.seriesSequence!)}',
+          ),
+        if (work.language case final language?)
+          Text('Sprache: ${_displayLanguage(language)}'),
+        if (work.publisher case final publisher?)
+          Text(
+            work.publishedYear == null
+                ? 'Verlag: $publisher'
+                : 'Verlag: $publisher · ${work.publishedYear}',
+          ),
+        const SizedBox(height: 20),
+        _ProgressLabel(work: work, player: widget.controller),
+        if (work.description case final description?) ...[
+          const SizedBox(height: 24),
+          Text('Beschreibung', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          SelectableText(description),
+        ],
+      ],
+    );
+  }
+
   Widget _context(LibraryWorkSummary? work) => switch (_tab) {
     _PlayerContextTab.files => _trackList('Dateien'),
     _PlayerContextTab.playlist => _playlist(work),
@@ -2344,7 +2600,11 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
             dimension: 48,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(6),
-              child: _WorkCover(work: work, iconSize: 24),
+              child: _WorkCover(
+                work: work,
+                iconSize: 24,
+                player: widget.controller,
+              ),
             ),
           ),
           title: Text(work.title),

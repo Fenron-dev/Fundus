@@ -32,6 +32,10 @@ final class LibraryWorkSummary {
     this.asin,
     this.explicit,
     this.abridged,
+    this.progressPosition,
+    this.progressDuration,
+    this.progressTrackIndex,
+    this.progressFinished = false,
   });
 
   final String id;
@@ -54,6 +58,10 @@ final class LibraryWorkSummary {
   final String? asin;
   final bool? explicit;
   final bool? abridged;
+  final Duration? progressPosition;
+  final Duration? progressDuration;
+  final int? progressTrackIndex;
+  final bool progressFinished;
 }
 
 final class FundusDatabase {
@@ -304,13 +312,22 @@ final class FundusDatabase {
     final rows = _database.select('''
       SELECT w.id, w.kind, w.title, w.series_name, w.series_sequence, w.added_at,
              w.metadata_json, COUNT(content.id) AS file_count,
-             COALESCE(cover.path, w.generated_cover_path) AS cover_path
+             COALESCE(cover.path, w.generated_cover_path) AS cover_path,
+             progress.numeric_value AS progress_position,
+             progress.total AS progress_total,
+             progress.finished AS progress_finished,
+             progress_file.position AS progress_track_index
       FROM works w
       LEFT JOIN work_files wf ON wf.work_id = w.id AND wf.role = 'content'
       LEFT JOIN files content ON content.id = wf.file_id
         AND content.status = 'available'
       LEFT JOIN files cover ON cover.id = w.cover_file_id
         AND cover.status = 'available'
+      LEFT JOIN progress ON progress.work_id = w.id
+        AND progress.user_id = 'default'
+      LEFT JOIN work_files progress_file ON progress_file.work_id = w.id
+        AND progress_file.file_id = progress.file_id
+        AND progress_file.role = 'content'
       WHERE w.kind != 'book_series' AND w.status = 'available'
       GROUP BY w.id
       ORDER BY COALESCE(w.series_name, w.title) COLLATE NOCASE,
@@ -344,6 +361,10 @@ final class FundusDatabase {
             asin: metadata['asin'] as String?,
             explicit: metadata['explicit'] as bool?,
             abridged: metadata['abridged'] as bool?,
+            progressPosition: _seconds(row['progress_position']),
+            progressDuration: _seconds(row['progress_total']),
+            progressTrackIndex: row['progress_track_index'] as int?,
+            progressFinished: (row['progress_finished'] as int?) == 1,
           );
         })
         .toList(growable: false);
@@ -352,6 +373,13 @@ final class FundusDatabase {
   static List<String> _metadataStrings(Object? value) => value is List
       ? value.whereType<String>().toList(growable: false)
       : const [];
+
+  static Duration? _seconds(Object? value) {
+    if (value is! num || !value.isFinite || value < 0) return null;
+    return Duration(
+      microseconds: (value * Duration.microsecondsPerSecond).round(),
+    );
+  }
 
   List<
     ({String fileId, String path, String title, int position, int? durationMs})
@@ -811,9 +839,7 @@ final class FundusDatabase {
     mergedMetadata.addAll(metadata);
     if (preferred?.isNotEmpty ?? false) {
       if (existing.isNotEmpty && existing.first['id'] != preferredId) {
-        throw StateError(
-          'Die portable Werk-ID kollidiert mit einem anderen Werk.',
-        );
+        _mergeWorkIntoPreferred(existing.first['id'] as String, preferredId!);
       }
       _database.execute(
         '''
@@ -869,6 +895,95 @@ final class FundusDatabase {
       ],
     );
     return id;
+  }
+
+  void _mergeWorkIntoPreferred(String obsoleteId, String preferredId) {
+    if (obsoleteId == preferredId) return;
+    final preferredProgress = _database.select(
+      'SELECT updated_at FROM progress WHERE work_id = ? AND user_id = ?',
+      [preferredId, 'default'],
+    );
+    final obsoleteProgress = _database.select(
+      'SELECT updated_at FROM progress WHERE work_id = ? AND user_id = ?',
+      [obsoleteId, 'default'],
+    );
+    if (obsoleteProgress.isNotEmpty &&
+        (preferredProgress.isEmpty ||
+            (obsoleteProgress.first['updated_at'] as int) >
+                (preferredProgress.first['updated_at'] as int))) {
+      _database.execute(
+        'DELETE FROM progress WHERE work_id = ? AND user_id = ?',
+        [preferredId, 'default'],
+      );
+      _database.execute('UPDATE progress SET work_id = ? WHERE work_id = ?', [
+        preferredId,
+        obsoleteId,
+      ]);
+    }
+
+    _copyWorkLinks('work_tags', ['work_id', 'tag_id'], obsoleteId, preferredId);
+    _copyWorkLinks(
+      'work_files',
+      ['work_id', 'file_id', 'position', 'role', 'target_profile'],
+      obsoleteId,
+      preferredId,
+    );
+    _copyWorkLinks(
+      'work_people',
+      ['work_id', 'person_id', 'role', 'position'],
+      obsoleteId,
+      preferredId,
+    );
+    _copyWorkLinks(
+      'collection_works',
+      ['collection_id', 'work_id', 'position'],
+      obsoleteId,
+      preferredId,
+    );
+    _copyWorkLinks(
+      'work_properties',
+      ['work_id', 'definition_id', 'value_json', 'source', 'updated_at'],
+      obsoleteId,
+      preferredId,
+    );
+    for (final table in const [
+      'notes',
+      'bookmarks',
+      'play_events',
+      'playlist_items',
+      'playback_session_items',
+    ]) {
+      _database.execute('UPDATE $table SET work_id = ? WHERE work_id = ?', [
+        preferredId,
+        obsoleteId,
+      ]);
+    }
+    _database.execute('UPDATE works SET parent_id = ? WHERE parent_id = ?', [
+      preferredId,
+      obsoleteId,
+    ]);
+    _database.execute(
+      "DELETE FROM search_index WHERE entity_type = 'work' AND entity_id = ?",
+      [obsoleteId],
+    );
+    _database.execute('DELETE FROM works WHERE id = ?', [obsoleteId]);
+  }
+
+  void _copyWorkLinks(
+    String table,
+    List<String> columns,
+    String obsoleteId,
+    String preferredId,
+  ) {
+    final selectColumns = columns
+        .map((column) => column == 'work_id' ? '?' : column)
+        .join(', ');
+    _database.execute(
+      'INSERT OR IGNORE INTO $table (${columns.join(', ')}) '
+      'SELECT $selectColumns FROM $table WHERE work_id = ?',
+      [preferredId, obsoleteId],
+    );
+    _database.execute('DELETE FROM $table WHERE work_id = ?', [obsoleteId]);
   }
 
   void close() => _database.close();

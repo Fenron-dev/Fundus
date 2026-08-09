@@ -127,6 +127,8 @@ void main() {
         seriesSequence: 1,
         coverPath: '/tmp/fundus-test-cover.jpg',
         fileCount: 1,
+        progressPosition: const Duration(hours: 1, minutes: 12, seconds: 15),
+        progressDuration: const Duration(hours: 12, minutes: 45, seconds: 30),
         addedAt: DateTime(2026),
       ),
     ];
@@ -139,6 +141,8 @@ void main() {
     expect(find.text('#Abenteuer'), findsNothing);
     expect(find.text('Versammlung der Apachen'), findsNothing);
     expect(find.text('Noch keine Tags vergeben.'), findsOneWidget);
+    expect(find.textContaining('01:12:15 / 12:45:30'), findsWidgets);
+    expect(find.textContaining('Rest 11:33:15'), findsWidgets);
     expect(find.byType(Image), findsWidgets);
   });
 

@@ -488,6 +488,10 @@ final class FundusLibrary {
       asin: work.asin,
       explicit: work.explicit,
       abridged: work.abridged,
+      progressPosition: work.progressPosition,
+      progressDuration: work.progressDuration,
+      progressTrackIndex: work.progressTrackIndex,
+      progressFinished: work.progressFinished,
     );
   }
 

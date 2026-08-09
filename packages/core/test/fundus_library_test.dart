@@ -49,6 +49,13 @@ void main() {
     );
     expect(saved.revision, 1);
     expect(saved.position.displayValue, '00:12:07');
+    final progressSummary = library.listWorks().single;
+    expect(
+      progressSummary.progressPosition,
+      const Duration(minutes: 12, seconds: 7),
+    );
+    expect(progressSummary.progressDuration, const Duration(minutes: 30));
+    expect(progressSummary.progressTrackIndex, 1);
     final duplicate = library.saveProgress(
       workId: works.single.id,
       fileId: tracks[1].fileId,
@@ -356,6 +363,64 @@ void main() {
     expect(work.publishedYear, 2025);
     expect(library.loadAnnotations(work.id).tags, ['Fantasy', 'Favorit']);
   });
+
+  test(
+    'merges a portable work into an older entry at its destination',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'fundus-move-collision-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final destination = Directory('${root.path}/Autor/Serie/01 - Titel');
+      await destination.create(recursive: true);
+      final audio = File('${destination.path}/Titel.mp3');
+      await audio.writeAsBytes([1, 2, 3]);
+
+      final library = await FundusLibrary.create(root);
+      addTearDown(library.close);
+      await library.index().drain<void>();
+      final destinationWork = library.listWorks().single;
+      final destinationTrack = library
+          .playbackTracks(destinationWork.id)
+          .single;
+      await library.addBookmark(
+        workId: destinationWork.id,
+        fileId: destinationTrack.fileId,
+        position: const Duration(minutes: 3),
+        label: 'Aus altem Zieleintrag',
+      );
+      await Directory('${destination.path}/_fundus').delete(recursive: true);
+      final loose = await destination.rename('${root.path}/Loser Titel');
+      await File('${loose.path}/Titel.mp3').writeAsBytes([1, 2, 3, 4]);
+      await library.index().drain<void>();
+      final portableWork = library.listWorks().single;
+      expect(portableWork.id, isNot(destinationWork.id));
+      final looseTrack = library.playbackTracks(portableWork.id).single;
+      library.saveProgress(
+        workId: portableWork.id,
+        fileId: looseTrack.fileId,
+        position: const Duration(minutes: 7),
+        operationId: 'portable-collision-progress',
+      );
+      await library.replaceWorkTags(portableWork.id, ['Bleibt erhalten']);
+
+      await loose.rename(destination.path);
+      await library.index().drain<void>();
+
+      final merged = library.listWorks().single;
+      expect(merged.id, portableWork.id);
+      expect(library.workDirectoryPath(merged.id), destination.path);
+      expect(library.playbackTracks(merged.id), hasLength(1));
+      expect(
+        library.loadProgress(merged.id)!.position.displayValue,
+        '00:07:00',
+      );
+      expect(library.loadAnnotations(merged.id).tags, ['Bleibt erhalten']);
+      final bookmark = library.loadAnnotations(merged.id).bookmarks.single;
+      expect(bookmark.label, 'Aus altem Zieleintrag');
+      expect(bookmark.fileId, library.playbackTracks(merged.id).single.fileId);
+    },
+  );
 
   test('open rejects a directory without a manifest', () async {
     final root = await Directory.systemTemp.createTemp('fundus-empty-');
