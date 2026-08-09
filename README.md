@@ -20,6 +20,9 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - transaktionaler SQLite-Index unter `.library/index.db`
 - rekursiver, abbrechbarer Dateiscan mit portablen relativen Pfaden
 - Import der ABS-Struktur `Autor/Serie/01 - Titel`
+- gemischte Bibliothekswurzel mit portablem `.library/config.yaml`; Hörbücher
+  funktionieren sowohl in der bisherigen Struktur als auch unter
+  `Audiobooks/Autor/Serie/01 - Titel`
 - persistierte Serien-, Cover- und Track-Zuordnung
 - durchgehende Desktop-Audiowiedergabe mit Tracknavigation und Geschwindigkeit
 - werkbezogener Resume-Punkt über Datei- und Hörbuchwechsel mit Revisionshistorie

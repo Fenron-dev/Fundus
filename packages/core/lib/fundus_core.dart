@@ -6,6 +6,7 @@ export 'src/import/embedded_cover.dart';
 export 'src/library/fundus_library.dart';
 export 'src/library/work_annotations.dart';
 export 'src/model/fundus_id.dart';
+export 'src/model/library_configuration.dart';
 export 'src/model/library_manifest.dart';
 export 'src/model/media_position.dart';
 export 'src/model/playback_session.dart';

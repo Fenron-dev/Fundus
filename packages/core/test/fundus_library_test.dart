@@ -83,6 +83,27 @@ void main() {
     expect(coverBytes.sublist(0, 3), [0xff, 0xd8, 0xff]);
   });
 
+  test('indexes audiobooks inside the standard mixed-library root', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-mixed-');
+    addTearDown(() => root.delete(recursive: true));
+    final book = Directory(
+      '${root.path}/Audiobooks/Autor/Serie/03 - Gemischte Bibliothek',
+    );
+    await book.create(recursive: true);
+    await File('${book.path}/01 - Kapitel.mp3').writeAsBytes([1, 2, 3]);
+
+    final library = await FundusLibrary.create(root);
+    addTearDown(library.close);
+    await library.index().drain<void>();
+
+    final work = library.listWorks().single;
+    expect(work.author, 'Autor');
+    expect(work.series, 'Serie');
+    expect(work.seriesSequence, 3);
+    expect(work.title, 'Gemischte Bibliothek');
+    expect(await File('${root.path}/.library/config.yaml').exists(), isTrue);
+  });
+
   test('restores tags notes and bookmarks from portable sidecars', () async {
     final root = await Directory.systemTemp.createTemp('fundus-sidecars-');
     addTearDown(() => root.delete(recursive: true));

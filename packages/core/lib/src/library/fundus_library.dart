@@ -8,6 +8,7 @@ import '../database/fundus_database.dart';
 import '../import/abs_importer.dart';
 import '../import/embedded_cover.dart';
 import '../model/fundus_id.dart';
+import '../model/library_configuration.dart';
 import '../model/library_manifest.dart';
 import '../playback/library_playback.dart';
 import '../scan/library_scanner.dart';
@@ -34,6 +35,7 @@ final class FundusLibrary {
   FundusLibrary._({
     required this.root,
     required this.manifest,
+    required this.configuration,
     required this.openMode,
     required FundusDatabase database,
   }) : _database = database;
@@ -41,9 +43,11 @@ final class FundusLibrary {
   static const metadataDirectoryName = '.library';
   static const manifestFileName = 'version.json';
   static const databaseFileName = 'index.db';
+  static const configurationFileName = 'config.yaml';
 
   final Directory root;
   final LibraryManifest manifest;
+  final LibraryConfiguration configuration;
   final LibraryOpenMode openMode;
   final FundusDatabase _database;
 
@@ -63,9 +67,12 @@ final class FundusLibrary {
       createdBy: createdBy,
     );
     await manifest.write(manifestFile);
+    final configuration = LibraryConfiguration();
+    await configuration.write(_configurationFile(root));
     return FundusLibrary._(
       root: root.absolute,
       manifest: manifest,
+      configuration: configuration,
       openMode: LibraryOpenMode.readWrite,
       database: FundusDatabase.openFile(_databaseFile(root)),
     );
@@ -80,6 +87,9 @@ final class FundusLibrary {
       );
     }
     final manifest = await LibraryManifest.read(manifestFile);
+    final configuration = await LibraryConfiguration.readOrDefault(
+      _configurationFile(root),
+    );
     final compatibility = manifest.compatibility();
     if (compatibility.mode == LibraryOpenMode.incompatible) {
       throw StateError(compatibility.message);
@@ -87,6 +97,7 @@ final class FundusLibrary {
     return FundusLibrary._(
       root: root.absolute,
       manifest: manifest,
+      configuration: configuration,
       openMode: compatibility.mode,
       database: FundusDatabase.openFile(
         _databaseFile(root),
@@ -231,7 +242,12 @@ final class FundusLibrary {
       }
     }
 
-    final candidates = (importer ?? AbsImporter()).group(files);
+    final candidates =
+        (importer ??
+                AbsImporter(
+                  mediaRootNames: configuration.rootsFor('audiobook'),
+                ))
+            .group(files);
     yield LibraryIndexEvent(
       phase: LibraryIndexPhase.importing,
       fileCount: files.length,
@@ -559,4 +575,7 @@ final class FundusLibrary {
 
   static File _databaseFile(Directory root) =>
       File('${root.path}/$metadataDirectoryName/$databaseFileName');
+
+  static File _configurationFile(Directory root) =>
+      File('${root.path}/$metadataDirectoryName/$configurationFileName');
 }

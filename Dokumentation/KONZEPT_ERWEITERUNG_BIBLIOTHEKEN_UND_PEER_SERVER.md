@@ -389,10 +389,11 @@ Aufbewahrungsdatum.
 ## 5. Umgang mit bestehenden Bibliotheken
 
 > **Wichtig zum aktuellen Entwicklungsstand:** Der derzeitige Hörbuchimporter
-> erwartet die Autorenebene noch unmittelbar unter der Bibliothekswurzel. Die
-> hier definierte Medienbereich-Ebene ist die Zielstruktur, aber noch nicht
-> implementiert. Die aktuelle `_fundus/meta.yaml` enthält außerdem noch keine
-> vollständige stabile Werkidentität mit Grundtyp; die Datenbank allein macht
+> unterstützt inzwischen sowohl die bisherige Autorenebene unmittelbar unter
+> der Bibliothekswurzel als auch konfigurierte Bereiche wie `Audiobooks/` oder
+> `Hörbücher/`. Weitere Medientypen und die Oberfläche zur Konfiguration der
+> Bereiche folgen schrittweise. Die aktuelle `_fundus/meta.yaml` enthält noch
+> keine vollständige stabile Werkidentität mit Grundtyp; die Datenbank allein macht
 > den Import daher noch nicht ortsunabhängig. Bestehende Ordner deshalb noch
 > nicht manuell verschieben, bevor Bereichserkennung, erweiterte Sidecars und
 > Migrationsassistent verfügbar sind.

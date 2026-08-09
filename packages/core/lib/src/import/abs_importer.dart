@@ -47,11 +47,29 @@ final class AbsImporter {
     'folder.jpg',
   };
 
+  AbsImporter({this.mediaRootNames = const ['Audiobooks', 'Hörbücher']});
+
+  final List<String> mediaRootNames;
+
   AbsBookIdentity? parseBookDirectory(String relativeDirectory) {
-    final parts = p.posix
+    var parts = p.posix
         .split(p.posix.normalize(relativeDirectory))
         .where((part) => part != '.' && part.isNotEmpty)
         .toList(growable: false);
+    final matchingRoots =
+        mediaRootNames
+            .map(
+              (root) => p.posix
+                  .split(p.posix.normalize(root.replaceAll('\\', '/')))
+                  .where((part) => part != '.' && part.isNotEmpty)
+                  .toList(growable: false),
+            )
+            .where((root) => root.isNotEmpty && _startsWith(parts, root))
+            .toList()
+          ..sort((left, right) => right.length.compareTo(left.length));
+    if (matchingRoots.isNotEmpty) {
+      parts = parts.sublist(matchingRoots.first.length);
+    }
     if (parts.length < 2) return null;
 
     final author = parts.first;
@@ -70,6 +88,16 @@ final class AbsImporter {
       title: parsedTitle.title,
       sequence: parsedTitle.sequence,
     );
+  }
+
+  static bool _startsWith(List<String> path, List<String> prefix) {
+    if (prefix.length > path.length) return false;
+    for (var index = 0; index < prefix.length; index++) {
+      if (path[index].toLowerCase() != prefix[index].toLowerCase()) {
+        return false;
+      }
+    }
+    return true;
   }
 
   List<AudiobookImportCandidate> group(Iterable<ScannedFile> files) {
