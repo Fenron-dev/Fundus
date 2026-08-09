@@ -4,10 +4,14 @@ import 'package:flutter/foundation.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:media_kit/media_kit.dart';
 
+import 'playback_sleep_timer.dart';
+
 final class FundusPlayerController extends ChangeNotifier {
   static const progressPersistInterval = Duration(seconds: 5);
 
   FundusPlayerController() : _player = Player() {
+    _sleepTimer = PlaybackSleepTimer(onElapsed: _pauseForSleepTimer);
+    _sleepTimer.addListener(notifyListeners);
     _subscriptions.addAll([
       _player.stream.playing.listen((value) {
         _playing = value;
@@ -28,8 +32,11 @@ final class FundusPlayerController extends ChangeNotifier {
       }),
       _player.stream.playlist.listen(_onPlaylist),
       _player.stream.completed.listen((completed) {
-        if (completed && _currentIndex == _tracks.length - 1) {
-          unawaited(persist(finished: true));
+        if (!completed) return;
+        if (_currentIndex == _tracks.length - 1) {
+          unawaited(_finishLastTrack());
+        } else {
+          unawaited(_sleepTimer.trackEnded());
         }
       }),
       _player.stream.error.listen((value) {
@@ -40,6 +47,7 @@ final class FundusPlayerController extends ChangeNotifier {
   }
 
   final Player _player;
+  late final PlaybackSleepTimer _sleepTimer;
   final List<StreamSubscription<Object?>> _subscriptions = [];
 
   FundusLibrary? _library;
@@ -54,6 +62,7 @@ final class FundusPlayerController extends ChangeNotifier {
   bool _ready = false;
   bool _persisting = false;
   bool _closed = false;
+  bool _skipNextTrackTransition = false;
   double _rate = 1;
   String? _error;
 
@@ -68,10 +77,12 @@ final class FundusPlayerController extends ChangeNotifier {
   bool get loading => _loading;
   double get rate => _rate;
   String? get error => _error;
+  PlaybackSleepTimer get sleepTimer => _sleepTimer;
 
   Future<void> open(FundusLibrary library, LibraryWorkSummary work) async {
     if (_closed) return;
     await persist();
+    _sleepTimer.cancel();
     _ready = false;
     _loading = true;
     _error = null;
@@ -125,6 +136,7 @@ final class FundusPlayerController extends ChangeNotifier {
   Future<void> next() async {
     if (_currentIndex >= _tracks.length - 1) return;
     await persist();
+    _skipNextTrackTransition = true;
     await _player.next();
   }
 
@@ -135,6 +147,7 @@ final class FundusPlayerController extends ChangeNotifier {
     }
     if (_currentIndex <= 0) return;
     await persist();
+    _skipNextTrackTransition = true;
     await _player.previous();
   }
 
@@ -190,15 +203,33 @@ final class FundusPlayerController extends ChangeNotifier {
     for (final subscription in _subscriptions) {
       await subscription.cancel();
     }
+    _sleepTimer.removeListener(notifyListeners);
+    _sleepTimer.dispose();
     await _player.dispose();
   }
 
   void _onPlaylist(Playlist playlist) {
     if (_tracks.isEmpty || playlist.index == _currentIndex) return;
+    if (_skipNextTrackTransition) {
+      _skipNextTrackTransition = false;
+    } else {
+      unawaited(_sleepTimer.trackEnded());
+    }
     _currentIndex = playlist.index.clamp(0, _tracks.length - 1);
     _position = Duration.zero;
     notifyListeners();
     if (_ready) unawaited(persist());
+  }
+
+  Future<void> _pauseForSleepTimer() async {
+    if (_closed) return;
+    await _player.pause();
+    await persist();
+  }
+
+  Future<void> _finishLastTrack() async {
+    await _sleepTimer.trackEnded();
+    await persist(finished: true);
   }
 
   @override

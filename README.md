@@ -23,6 +23,7 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - persistierte Serien-, Cover- und Track-Zuordnung
 - durchgehende Desktop-Audiowiedergabe mit Tracknavigation und Geschwindigkeit
 - persistenter Resume-Punkt über Dateigrenzen mit Revisionshistorie
+- Sleep-Timer mit festen Laufzeiten, Countdown und Stopp am Trackende
 - bearbeitbare Tags und Markdown-Notizen sowie Zeit-Lesezeichen
 - portabler Sidecar-Spiegel unter `_fundus/`, der einen Index-Neuaufbau überlebt
 - responsive Flutter-Oberfläche für Desktop, Tablet und Mobile
