@@ -137,6 +137,50 @@ final class FundusRemoteWork {
   final String? description;
 }
 
+final class FundusRemoteTrack {
+  const FundusRemoteTrack({
+    required this.id,
+    required this.title,
+    required this.position,
+    this.duration,
+  });
+
+  final String id;
+  final String title;
+  final int position;
+  final Duration? duration;
+}
+
+final class FundusRemoteProgress {
+  const FundusRemoteProgress({
+    required this.fileId,
+    required this.position,
+    required this.finished,
+    required this.revision,
+  });
+
+  final String? fileId;
+  final Duration position;
+  final bool finished;
+  final int revision;
+}
+
+final class FundusRemoteWorkDetail {
+  const FundusRemoteWorkDetail({required this.work, required this.tracks});
+
+  final FundusRemoteWork work;
+  final List<FundusRemoteTrack> tracks;
+}
+
+final class FundusRemoteStream {
+  FundusRemoteStream(this.client, this.response);
+
+  final HttpClient client;
+  final HttpClientResponse response;
+
+  void close() => client.close(force: true);
+}
+
 final class FundusRemoteServerStore {
   FundusRemoteServerStore({FlutterSecureStorage? storage})
     : _storage = storage ?? const FlutterSecureStorage();
@@ -270,6 +314,118 @@ final class FundusRemoteClient {
     token: server.token,
   );
 
+  Future<FundusRemoteWorkDetail> work(
+    FundusRemoteServer server,
+    String libraryId,
+    FundusRemoteWork summary,
+  ) async {
+    final value = await _json(
+      server,
+      '/v1/libraries/$libraryId/works/${summary.id}',
+    );
+    final files = value['files'];
+    return FundusRemoteWorkDetail(
+      work: summary,
+      tracks: [
+        for (final item in (files is List ? files : const []).whereType<Map>())
+          if (item['id'] is String && item['title'] is String)
+            FundusRemoteTrack(
+              id: item['id'] as String,
+              title: item['title'] as String,
+              position: item['position'] is int ? item['position'] as int : 0,
+              duration: item['duration_seconds'] is num
+                  ? Duration(
+                      milliseconds: ((item['duration_seconds'] as num) * 1000)
+                          .round(),
+                    )
+                  : null,
+            ),
+      ]..sort((a, b) => a.position.compareTo(b.position)),
+    );
+  }
+
+  Future<FundusRemoteProgress?> progress(
+    FundusRemoteServer server,
+    String libraryId,
+    String workId,
+  ) async {
+    final value = await _json(
+      server,
+      '/v1/libraries/$libraryId/progress/$workId',
+    );
+    final progress = value['progress'];
+    if (progress is! Map) return null;
+    final position = progress['position'];
+    if (position is! Map) return null;
+    final seconds = position['numeric_value'];
+    return FundusRemoteProgress(
+      fileId: progress['file_id'] is String
+          ? progress['file_id'] as String
+          : position['file_id'] is String
+          ? position['file_id'] as String
+          : null,
+      position: Duration(
+        milliseconds: seconds is num ? (seconds * 1000).round() : 0,
+      ),
+      finished: progress['finished'] == true,
+      revision: progress['revision'] is int ? progress['revision'] as int : 0,
+    );
+  }
+
+  Future<FundusRemoteProgress> saveProgress(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String fileId,
+    required Duration position,
+    required Duration? duration,
+    required bool finished,
+    required String deviceId,
+    required String operationId,
+  }) async {
+    final bytes = await _request(
+      server.baseUri.resolve('/v1/libraries/$libraryId/progress/$workId'),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'PUT',
+      body: jsonEncode({
+        'operation_id': operationId,
+        'device_id': deviceId,
+        'file_id': fileId,
+        'position_seconds': position.inMilliseconds / 1000,
+        if (duration != null)
+          'duration_seconds': duration.inMilliseconds / 1000,
+        'finished': finished,
+      }),
+    );
+    final value = jsonDecode(utf8.decode(bytes));
+    if (value is! Map) {
+      throw const HttpException('Ungültige Fortschrittsantwort.');
+    }
+    final positionValue = value['position'];
+    final seconds = positionValue is Map ? positionValue['numeric_value'] : 0;
+    return FundusRemoteProgress(
+      fileId: value['file_id'] is String ? value['file_id'] as String : fileId,
+      position: Duration(
+        milliseconds: seconds is num ? (seconds * 1000).round() : 0,
+      ),
+      finished: value['finished'] == true,
+      revision: value['revision'] is int ? value['revision'] as int : 0,
+    );
+  }
+
+  Future<FundusRemoteStream> openContent(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String fileId,
+    String? range,
+  }) => _open(
+    server.baseUri.resolve('/v1/libraries/$libraryId/files/$fileId/content'),
+    fingerprint: server.certificateFingerprint,
+    token: server.token,
+    range: range,
+  );
+
   Future<Map<String, dynamic>> _json(
     FundusRemoteServer server,
     String path,
@@ -293,16 +449,42 @@ final class FundusRemoteClient {
     String? token,
     String? body,
   }) async {
+    final stream = await _open(
+      uri,
+      fingerprint: fingerprint,
+      method: method,
+      token: token,
+      body: body,
+    );
+    try {
+      final bytes = Uint8List.fromList(
+        await stream.response.expand((chunk) => chunk).toList(),
+      );
+      return bytes;
+    } finally {
+      stream.close();
+    }
+  }
+
+  Future<FundusRemoteStream> _open(
+    Uri uri, {
+    required String fingerprint,
+    String method = 'GET',
+    String? token,
+    String? body,
+    String? range,
+  }) async {
     final client = HttpClient();
     client.badCertificateCallback = (certificate, host, port) =>
         _fingerprint(certificate) == fingerprint;
     try {
       final request = await client.openUrl(method, uri);
       request.followRedirects = false;
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      request.headers.set(HttpHeaders.acceptHeader, '*/*');
       if (token != null) {
         request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
       }
+      if (range != null) request.headers.set(HttpHeaders.rangeHeader, range);
       if (body != null) {
         request.headers.contentType = ContentType.json;
         request.write(body);
@@ -315,15 +497,14 @@ final class FundusRemoteClient {
           'Zertifikat stimmt nicht mit dem QR-Code überein.',
         );
       }
-      final bytes = Uint8List.fromList(
-        await response.expand((chunk) => chunk).toList(),
-      );
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        await response.drain<void>();
         throw HttpException('Serverfehler ${response.statusCode}.');
       }
-      return bytes;
-    } finally {
+      return FundusRemoteStream(client, response);
+    } catch (_) {
       client.close(force: true);
+      rethrow;
     }
   }
 

@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'fundus_remote_client.dart';
+import 'fundus_remote_player_controller.dart';
 
 Future<void> showFundusRemoteServers(BuildContext context) =>
     Navigator.of(context).push(
@@ -28,11 +30,25 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   List<FundusRemoteWork> _works = const [];
   bool _busy = true;
   String? _error;
+  FundusRemotePlayerController? _remotePlayer;
+  late final AppLifecycleListener _lifecycleListener;
 
   @override
   void initState() {
     super.initState();
+    _lifecycleListener = AppLifecycleListener(
+      onInactive: () => unawaited(_remotePlayer?.persist()),
+      onHide: () => unawaited(_remotePlayer?.persist()),
+      onPause: () => unawaited(_remotePlayer?.persist()),
+    );
     _load();
+  }
+
+  @override
+  void dispose() {
+    _lifecycleListener.dispose();
+    _remotePlayer?.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -271,6 +287,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             label: const Text('Server verbinden'),
           )
         : null,
+    bottomNavigationBar: _remotePlayer == null
+        ? null
+        : _RemotePlayerBar(controller: _remotePlayer!),
   );
 
   Future<void> _manualPairingCodeThenConnect() async {
@@ -407,48 +426,53 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
               final work = _works[index];
               return Card(
                 clipBehavior: Clip.antiAlias,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(
-                      child: work.hasCover
-                          ? FutureBuilder(
-                              future: _client.cover(
-                                server,
-                                library.id,
-                                work.id,
-                              ),
-                              builder: (context, snapshot) => snapshot.hasData
-                                  ? Image.memory(
-                                      snapshot.data!,
-                                      fit: BoxFit.cover,
-                                    )
-                                  : const Center(
-                                      child: CircularProgressIndicator(),
-                                    ),
-                            )
-                          : const Icon(Icons.audiotrack, size: 72),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.all(10),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            work.title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          Text(
-                            work.authors.join(', '),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
+                child: InkWell(
+                  onTap: () => _showWork(server, library, work),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: work.hasCover
+                            ? FutureBuilder(
+                                future: _client.cover(
+                                  server,
+                                  library.id,
+                                  work.id,
+                                ),
+                                builder: (context, snapshot) => snapshot.hasData
+                                    ? Image.memory(
+                                        snapshot.data!,
+                                        fit: BoxFit.cover,
+                                      )
+                                    : const Center(
+                                        child: CircularProgressIndicator(),
+                                      ),
+                              )
+                            : const Icon(Icons.audiotrack, size: 72),
                       ),
-                    ),
-                  ],
+                      Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              work.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              work.authors.join(', '),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               );
             },
@@ -457,6 +481,198 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       ],
     );
   }
+
+  Future<void> _showWork(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work,
+  ) async {
+    final play = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 120,
+                    height: 170,
+                    child: work.hasCover
+                        ? FutureBuilder(
+                            future: _client.cover(server, library.id, work.id),
+                            builder: (context, snapshot) => snapshot.hasData
+                                ? ClipRRect(
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: Image.memory(
+                                      snapshot.data!,
+                                      fit: BoxFit.cover,
+                                    ),
+                                  )
+                                : const Center(
+                                    child: CircularProgressIndicator(),
+                                  ),
+                          )
+                        : const Icon(Icons.audiotrack, size: 72),
+                  ),
+                  const SizedBox(width: 18),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          work.title,
+                          style: Theme.of(context).textTheme.headlineSmall,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(work.authors.join(', ')),
+                        if (work.series case final series?) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            work.seriesSequence == null
+                                ? series
+                                : '$series · Band ${work.seriesSequence}',
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (work.description case final description?) ...[
+                const SizedBox(height: 20),
+                Text(description),
+              ],
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () => Navigator.pop(context, true),
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Abspielen / fortsetzen'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (play != true || !mounted) return;
+    final player =
+        _remotePlayer ??
+        FundusRemotePlayerController(deviceId: await _store.deviceId());
+    if (_remotePlayer == null && mounted) {
+      setState(() => _remotePlayer = player);
+    }
+    await player.open(server, library, work);
+  }
+}
+
+class _RemotePlayerBar extends StatelessWidget {
+  const _RemotePlayerBar({required this.controller});
+
+  final FundusRemotePlayerController controller;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: controller,
+    builder: (context, child) {
+      final maximum = controller.duration.inMilliseconds.toDouble();
+      final position = controller.position.inMilliseconds
+          .clamp(0, maximum > 0 ? maximum : 1)
+          .toDouble();
+      return Material(
+        elevation: 12,
+        color: Theme.of(context).colorScheme.surfaceContainer,
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (controller.loading) const LinearProgressIndicator(),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            controller.work?.title ?? 'Remote-Wiedergabe',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            controller.track?.title ?? 'Wird geladen …',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: controller.previous,
+                      icon: const Icon(Icons.skip_previous),
+                    ),
+                    IconButton.filled(
+                      onPressed: controller.loading
+                          ? null
+                          : controller.playOrPause,
+                      icon: Icon(
+                        controller.playing ? Icons.pause : Icons.play_arrow,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: controller.next,
+                      icon: const Icon(Icons.skip_next),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Text(_formatRemoteDuration(controller.position)),
+                    Expanded(
+                      child: Slider(
+                        value: position,
+                        max: maximum > 0 ? maximum : 1,
+                        onChanged: maximum > 0
+                            ? (value) => controller.seek(
+                                Duration(milliseconds: value.round()),
+                              )
+                            : null,
+                      ),
+                    ),
+                    Text(_formatRemoteDuration(controller.duration)),
+                  ],
+                ),
+                if (controller.error case final error?)
+                  Text(
+                    error,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
+
+String _formatRemoteDuration(Duration value) {
+  final hours = value.inHours;
+  final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
+  final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
+  return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
 }
 
 class _PairingScanner extends StatefulWidget {

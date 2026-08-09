@@ -644,10 +644,14 @@ HTTP senden. Für den ersten Peer-Meilenstein gelten deshalb diese Regeln:
 - Gekoppelte Geräte sind sichtbar und einzeln widerrufbar.
 
 Bereits umgesetzt sind TLS-LAN-Binding, persistente Peer-Identität,
-QR/PIN-Kopplung, widerrufbare Grundberechtigungen sowie ein erster Client für
-Server-, Bibliotheks-, Werk- und Coveranzeige. Als nächste Ausbaustufen folgen
-Range-Streaming im Remote-Player, Fortschrittssynchronisation, Offline-Queue
-und Downloads sowie mDNS-Erkennung und feinere Rechte pro Bibliothek.
+QR/PIN-Kopplung, widerrufbare Grundberechtigungen sowie ein Client für Server-,
+Bibliotheks-, Werk- und Coveranzeige. Remote-Audio wird über eine ausschließlich
+an Loopback gebundene Brücke abgespielt: Sie prüft bei jeder Verbindung den
+Zertifikatsfingerabdruck, hält das Gerätetoken vom nativen Medienplayer fern und
+reicht HTTP-Range-Anfragen weiter. Fortschritt wird während der Wiedergabe und
+beim Pausieren zum Ursprungsserver geschrieben. Als nächste Ausbaustufen folgen
+Offline-Queue und Downloads sowie mDNS-Erkennung und feinere Rechte pro
+Bibliothek.
 
 Desktop, Laptop und NAS bleiben die bevorzugten dauerhaft erreichbaren Peers;
 Mobile ist trotzdem kein künstlich eingeschränkter Nur-Client.

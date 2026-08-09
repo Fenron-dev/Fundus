@@ -61,6 +61,8 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
   Server-Tokens und widerrufbare Geräteberechtigungen
 - erster Remote-Client mit QR-Scanner, sicherem System-Schlüsselspeicher sowie
   Server-, Bibliotheks-, Werk- und Coverübersicht
+- gepinnte Remote-Wiedergabe über eine nur auf Loopback gebundene Range-Brücke
+  sowie Fortschrittssynchronisation im Fünf-Sekunden-Takt und beim Pausieren
 
 ## Entwicklung
 
