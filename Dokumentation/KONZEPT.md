@@ -3,7 +3,9 @@
 > Gemeinsames Konzeptdokument für die drei Anwendungen.
 > Stand: 2026-08-08 · Status: Entwurf zur Diskussion, noch nicht umgesetzt
 >
-> Ergänzend: `DESIGN_PROMPT.md` im selben Ordner.
+> Ergänzend: [Design-Prompt](DESIGN_PROMPT.md) im selben Ordner.
+> Verbindliche Erweiterung für gemischte Bibliotheken und das Peer-/Servermodell:
+> [Bibliotheken und Peer-Server](KONZEPT_ERWEITERUNG_BIBLIOTHEKEN_UND_PEER_SERVER.md).
 
 ---
 
@@ -149,27 +151,45 @@ Aufrufe erfolgen **nur auf ausdrückliche Auslösung**, mit Host-Allowlist, HTTP
 
 ### 2.4 Server und Clients
 
-Der Server läuft **eingebettet in der Desktop-App**, aber als eigenes Dart-Paket (`packages/server/`) — damit der spätere Schritt zu einem headless Binary (NAS, Raspberry Pi) ohne Umbau möglich bleibt.
+> **Aktualisiert am 2026-08-09:** Die feste Trennung in Server und Client wird
+> durch ein Peer-Modell ersetzt. Jede Fundus-Installation kann gleichzeitig
+> eigene Bibliotheken bereitstellen und Bibliotheken anderer Geräte verwenden.
+> Die verbindlichen Details stehen in der Erweiterung
+> [Bibliotheken und Peer-Server](KONZEPT_ERWEITERUNG_BIBLIOTHEKEN_UND_PEER_SERVER.md).
+
+Der Serverdienst läuft **eingebettet in jeder Fundus-App**, soweit die Plattform
+den Betrieb zulässt, aber als eigenes Dart-Paket (`packages/server/`). So bleibt
+auch ein späteres headless Binary für NAS oder Raspberry Pi ohne Umbau möglich.
 
 ```
-Client (Android / Desktop)
- └── Server A  „Desktop zuhause"
-      ├── Bibliothek „Hörbücher"    (externe Platte)
-      └── Bibliothek „TTRPG"        (interne SSD)
- └── Server B  „Laptop"
-      └── Bibliothek „Anime & Manga"
+Peer „Desktop zuhause"
+ ├── stellt Bibliothek „Meine Medien" bereit
+ └── verwendet Bibliothek „Familie" vom NAS
+Peer „Laptop"
+ ├── stellt Bibliothek „Archiv" bereit
+ └── verwendet „Meine Medien" vom Desktop
 ```
 
-**Zwei Ebenen:** Ein Server liefert *mehrere Bibliotheken* aus (wie Audiobookshelf), und ein Client kennt *mehrere Server* und schaltet zwischen ihnen um. „Server" = die Maschine, „Bibliothek" = der Ordner bzw. die Platte, die gerade angesteckt ist.
+**Zwei Ebenen:** Ein Peer kann mehrere lokale Bibliotheken gleichzeitig
+bereitstellen und mehrere andere Peers kennen. „Peer" bezeichnet die
+Fundus-Installation; „Bibliothek" bezeichnet den selbstenthaltenden Ordner
+beziehungsweise Datenträger. Eine Bibliothek kann mehrere Medientypen enthalten.
 
 - Bindung standardmäßig nur aufs LAN-Interface, nicht `0.0.0.0`.
-- Auth über ein beim ersten Start erzeugtes Token; Kopplung per QR-Code in der Desktop-UI.
+- Auth über Geräteschlüssel und kurzlebige Pairing-Codes; Kopplung per QR, PIN,
+  lokaler Suche oder manueller Adresse.
 - `shelf` + `shelf_router`, echte HTTP-Statuscodes.
 - Datei-Streaming **mit `Range`-Unterstützung** (Pflicht, sonst kein Seeking).
-- Client-Cache und Downloads getrennt nach `server_id` + `library_id`.
+- Cache und Downloads getrennt nach `device_id` + `library_id`.
 - Kein automatisches Zusammenführen desselben Titels über Server hinweg.
 
-**Fortschritts-Sync:** Der Server ist die Autorität. Clients schreiben beim Pausieren, Stoppen und alle ~30 s während der Wiedergabe. Der Server vergibt eine monotone Revision und die maßgebliche Änderungszeit; jede Client-Operation trägt eine eindeutige ID und ist wiederholbar, ohne den Stand doppelt anzuwenden. Offline sammelt der Client in einer Warteschlange und schiebt beim Verbinden nach. Live-Push per WebSocket ist wünschenswert, nicht v1. Gilt einheitlich für Hören, Sehen und Lesen.
+**Fortschritts-Sync:** Die Schreibautorität gilt pro Bibliothek. Das Gerät,
+das ihre lokale `.library/` bereitstellt, vergibt die monotone Revision und die
+maßgebliche Änderungszeit. Andere Geräte schreiben beim Pausieren, Stoppen und
+alle ~30 s während der Wiedergabe. Jede Operation trägt eine eindeutige ID und
+ist wiederholbar, ohne den Stand doppelt anzuwenden. Offline sammelt der Peer
+in einer Warteschlange und schiebt beim Verbinden nach. Live-Push per WebSocket
+ist wünschenswert, nicht v1. Das gilt einheitlich für Hören, Sehen und Lesen.
 
 Ein eindeutiger neuerer Stand wird automatisch übernommen. Sind zwei Stände unabhängig voneinander weitergelaufen oder widersprechen sich, fragt Fundus nach und zeigt **nicht nur Gerät und Datum, sondern die inhaltliche Position**:
 
@@ -178,7 +198,14 @@ Ein eindeutiger neuerer Stand wird automatisch übernommen. Sind zwei Stände un
 - EPUB: aufgelöstes Kapitel plus Prozent; der CFI bleibt die technische Position
 - Playlist/Queue: Playlist-Revision, aktueller Titel, Position innerhalb des Titels, Listenindex und abweichende Reihenfolge
 
-Die Konfliktansicht stellt „Server" und „dieses Gerät" nebeneinander und bietet **diesen Stand verwenden**, **anderen Stand verwenden** und — wo semantisch möglich — **zusammenführen**. Bei Metadaten, Notizen, Einstellungen und Sidecars werden stattdessen alle abweichenden Felder mit Alt-/Neuwert, Quelle und Änderungszeit angezeigt; unabhängige Felder können einzeln übernommen werden. Eine kurze Revisionshistorie macht Fehlentscheidungen rückholbar. `finished` wird durch einen älteren Offline-Stand nie still zurückgesetzt.
+Die Konfliktansicht stellt „Bibliotheksquelle" und „dieses Gerät" nebeneinander
+und bietet **diesen Stand verwenden**, **anderen Stand verwenden** und — wo
+semantisch möglich — **zusammenführen**. Bei Metadaten, Notizen, Einstellungen
+und Sidecars werden stattdessen alle abweichenden Felder mit Alt-/Neuwert,
+Quelle und Änderungszeit angezeigt; unabhängige Felder können einzeln
+übernommen werden. Eine kurze Revisionshistorie macht Fehlentscheidungen
+rückholbar. `finished` wird durch einen älteren Offline-Stand nie still
+zurückgesetzt.
 
 **Playlist- und Queue-Resume:** Beim Start einer Playlist wird ihre tatsächlich abgespielte Folge als `playback_session` eingefroren. Das gilt besonders für Smart Playlists: deren Filterergebnis darf sich später ändern, ohne den alten Resume-Punkt unbrauchbar zu machen. Gespeichert werden Playlist-ID und -Revision, die aufgelösten Werke/Dateien in Reihenfolge, aktueller Eintrag und dessen Position, Shuffle-Reihenfolge, Repeat-Modus und optionale Änderungen an der laufenden Queue. Beim Fortsetzen wird zunächst der Snapshot wiederhergestellt. Hat sich die Ursprungs-Playlist verändert, zeigt Fundus auf Wunsch den Unterschied und bietet „alte Sitzung fortsetzen" oder „auf neue Playlist übertragen" an.
 
