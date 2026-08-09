@@ -182,7 +182,12 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('Notiz speichern'),
       300,
-      scrollable: find.byType(Scrollable).last,
+      scrollable: find
+          .descendant(
+            of: find.byKey(const ValueKey('detail-panel-scroll')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
     );
     expect(find.text('Notiz speichern'), findsOneWidget);
     expect(find.byTooltip('Tag hinzufügen'), findsOneWidget);

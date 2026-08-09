@@ -1686,6 +1686,7 @@ class _DetailPanelState extends State<_DetailPanel> {
     final canBookmark = _bookmarkAvailable;
     final directoryPath = widget.library?.workDirectoryPath(selectedWork.id);
     return ListView(
+      key: const ValueKey('detail-panel-scroll'),
       padding: const EdgeInsets.all(20),
       children: [
         const SizedBox(height: 8),
