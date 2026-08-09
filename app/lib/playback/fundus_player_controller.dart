@@ -5,6 +5,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'playback_sleep_timer.dart';
+import 'playback_resume_policy.dart';
 
 final class FundusPlayerController extends ChangeNotifier {
   static const progressPersistInterval = Duration(seconds: 5);
@@ -79,7 +80,12 @@ final class FundusPlayerController extends ChangeNotifier {
   String? get error => _error;
   PlaybackSleepTimer get sleepTimer => _sleepTimer;
 
-  Future<void> open(FundusLibrary library, LibraryWorkSummary work) async {
+  Future<void> open(
+    FundusLibrary library,
+    LibraryWorkSummary work, {
+    String? startFileId,
+    Duration? startPosition,
+  }) async {
     if (_closed) return;
     await persist();
     _sleepTimer.cancel();
@@ -101,7 +107,8 @@ final class FundusPlayerController extends ChangeNotifier {
     }
 
     final progress = library.loadProgress(work.id);
-    if (progress?.fileId case final fileId?) {
+    final targetFileId = startFileId ?? progress?.fileId;
+    if (targetFileId case final fileId?) {
       final resumeIndex = _tracks.indexWhere((track) => track.fileId == fileId);
       if (resumeIndex >= 0) _currentIndex = resumeIndex;
     }
@@ -113,9 +120,9 @@ final class FundusPlayerController extends ChangeNotifier {
         ),
         play: false,
       );
-      if (progress != null && !progress.finished) {
-        final seconds = progress.position.numericValue ?? 0;
-        final resumePosition = Duration(milliseconds: (seconds * 1000).round());
+      final resumePosition =
+          startPosition ?? PlaybackResumePolicy.resumePosition(progress);
+      if (resumePosition != null) {
         await _player.seek(resumePosition);
         _position = resumePosition;
       }
@@ -152,6 +159,28 @@ final class FundusPlayerController extends ChangeNotifier {
   }
 
   Future<void> seek(Duration value) => _player.seek(value);
+
+  Future<void> jumpToBookmark(LibraryBookmark bookmark) async {
+    if (!_ready || bookmark.workId != _work?.id) {
+      throw StateError('Das Lesezeichen gehört nicht zum geöffneten Hörbuch.');
+    }
+    final fileId = bookmark.fileId;
+    final index = fileId == null
+        ? _currentIndex
+        : _tracks.indexWhere((track) => track.fileId == fileId);
+    if (index < 0) {
+      throw StateError('Die Datei des Lesezeichens ist nicht mehr verfügbar.');
+    }
+    if (index != _currentIndex) {
+      _skipNextTrackTransition = true;
+      await _player.jump(index);
+      _currentIndex = index;
+    }
+    await _player.seek(bookmark.position);
+    _position = bookmark.position;
+    notifyListeners();
+    await persist();
+  }
 
   Future<void> seekRelative(Duration delta) async {
     final target = _position + delta;
@@ -229,7 +258,10 @@ final class FundusPlayerController extends ChangeNotifier {
 
   Future<void> _finishLastTrack() async {
     await _sleepTimer.trackEnded();
-    await persist(finished: true);
+    final finished = PlaybackResumePolicy.isAtEnd(_position, _duration);
+    if (finished || _position > Duration.zero) {
+      await persist(finished: finished);
+    }
   }
 
   @override

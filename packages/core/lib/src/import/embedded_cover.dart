@@ -31,6 +31,15 @@ final class EmbeddedCoverExtractor {
     };
   }
 
+  Future<String?> extractLanguage(File file) async {
+    final extension = file.path.split('.').last.toLowerCase();
+    return switch (extension) {
+      'm4a' || 'm4b' || 'mp4' => _extractMp4Language(file),
+      'mp3' => _extractMp3Language(file),
+      _ => null,
+    };
+  }
+
   Future<EmbeddedCover?> _extractMp4(File file) async {
     final input = await file.open();
     try {
@@ -55,7 +64,7 @@ final class EmbeddedCoverExtractor {
       final header = await input.read(8);
       if (header.length != 8) return null;
       var size = _uint32(header, 0);
-      final type = ascii.decode(header.sublist(4, 8), allowInvalid: true);
+      final type = latin1.decode(header.sublist(4, 8), allowInvalid: true);
       var headerSize = 8;
       if (size == 1) {
         final extended = await input.read(8);
@@ -130,6 +139,138 @@ final class EmbeddedCoverExtractor {
     } finally {
       await input.close();
     }
+  }
+
+  Future<String?> _extractMp4Language(File file) async {
+    final input = await file.open();
+    try {
+      return await _walkMp4Language(input, 0, await input.length(), depth: 0);
+    } finally {
+      await input.close();
+    }
+  }
+
+  Future<String?> _walkMp4Language(
+    RandomAccessFile input,
+    int start,
+    int end, {
+    required int depth,
+    String? parentType,
+  }) async {
+    if (depth > 12 || start < 0 || end <= start) return null;
+    var offset = start;
+    while (offset + 8 <= end) {
+      await input.setPosition(offset);
+      final header = await input.read(8);
+      if (header.length != 8) return null;
+      var size = _uint32(header, 0);
+      final type = latin1.decode(header.sublist(4, 8), allowInvalid: true);
+      var headerSize = 8;
+      if (size == 1) {
+        final extended = await input.read(8);
+        if (extended.length != 8) return null;
+        size = _uint64(extended, 0);
+        headerSize = 16;
+      } else if (size == 0) {
+        size = end - offset;
+      }
+      if (size < headerSize || offset + size > end) return null;
+      var payloadStart = offset + headerSize;
+      final atomEnd = offset + size;
+      if (type == 'data' && parentType == '©lan') {
+        final payloadSize = atomEnd - payloadStart;
+        if (payloadSize <= 8 || payloadSize > 264) return null;
+        await input.setPosition(payloadStart + 8);
+        final value = utf8
+            .decode(await input.read(payloadSize - 8), allowMalformed: true)
+            .replaceAll('\u0000', '')
+            .trim();
+        return value.isEmpty ? null : value;
+      }
+      const containers = {'moov', 'udta', 'meta', 'ilst', '©lan'};
+      if (containers.contains(type)) {
+        if (type == 'meta') payloadStart += 4;
+        final value = await _walkMp4Language(
+          input,
+          payloadStart,
+          atomEnd,
+          depth: depth + 1,
+          parentType: type,
+        );
+        if (value != null) return value;
+      }
+      offset = atomEnd;
+    }
+    return null;
+  }
+
+  Future<String?> _extractMp3Language(File file) async {
+    final input = await file.open();
+    try {
+      final header = await input.read(10);
+      if (header.length != 10 || ascii.decode(header.sublist(0, 3)) != 'ID3') {
+        return null;
+      }
+      final version = header[3];
+      if (version != 3 && version != 4) return null;
+      var remaining = _synchsafe(header, 6);
+      while (remaining >= 10) {
+        final frameHeader = await input.read(10);
+        if (frameHeader.length != 10) return null;
+        remaining -= 10;
+        final id = ascii.decode(frameHeader.sublist(0, 4), allowInvalid: true);
+        if (frameHeader.every((value) => value == 0)) return null;
+        final size = version == 4
+            ? _synchsafe(frameHeader, 4)
+            : _uint32(frameHeader, 4);
+        if (size <= 0 || size > remaining) return null;
+        if (id == 'TLAN' && size <= 256) {
+          final payload = await input.read(size);
+          return _decodeId3Text(payload);
+        }
+        await input.setPosition(await input.position() + size);
+        remaining -= size;
+      }
+      return null;
+    } finally {
+      await input.close();
+    }
+  }
+
+  static String? _decodeId3Text(List<int> payload) {
+    if (payload.length < 2) return null;
+    final encoding = payload.first;
+    final bytes = payload.sublist(1);
+    String value;
+    if (encoding == 0) {
+      value = latin1.decode(bytes, allowInvalid: true);
+    } else if (encoding == 3) {
+      value = utf8.decode(bytes, allowMalformed: true);
+    } else if (encoding == 1 || encoding == 2) {
+      var offset = 0;
+      var littleEndian = false;
+      if (encoding == 1 && bytes.length >= 2) {
+        if (bytes[0] == 0xff && bytes[1] == 0xfe) {
+          littleEndian = true;
+          offset = 2;
+        } else if (bytes[0] == 0xfe && bytes[1] == 0xff) {
+          offset = 2;
+        }
+      }
+      final codeUnits = <int>[];
+      for (var index = offset; index + 1 < bytes.length; index += 2) {
+        codeUnits.add(
+          littleEndian
+              ? bytes[index] | (bytes[index + 1] << 8)
+              : (bytes[index] << 8) | bytes[index + 1],
+        );
+      }
+      value = String.fromCharCodes(codeUnits);
+    } else {
+      return null;
+    }
+    value = value.replaceAll('\u0000', '').trim();
+    return value.isEmpty ? null : value;
   }
 
   static EmbeddedCover? _identifyFromPayload(List<int> payload) {

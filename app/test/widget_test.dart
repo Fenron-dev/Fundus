@@ -151,4 +151,34 @@ void main() {
     expect(find.text('Notiz speichern'), findsOneWidget);
     expect(find.byTooltip('Tag hinzufügen'), findsOneWidget);
   });
+
+  testWidgets('browses from authors through series to books', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(FundusApp(initialWorks: testWorks));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Bücher'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Nach Autoren'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Karl May'), findsOneWidget);
+    await tester.tap(find.text('Karl May'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Winnetou'), findsOneWidget);
+    expect(find.text('Einzelbände'), findsOneWidget);
+    await tester.tap(find.text('Winnetou'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Winnetou I'), findsWidgets);
+    expect(find.text('Der Ölprinz'), findsNothing);
+
+    await tester.tap(find.byTooltip('Tabelle'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sprache'), findsOneWidget);
+  });
 }

@@ -49,7 +49,11 @@ final class LibraryWorkSearch {
   }
 
   static double _score(LibraryWorkSummary work, String needle) {
-    final fields = [work.title, work.author, work.series ?? '']
+    return _scoreFields([work.title, work.author, work.series ?? ''], needle);
+  }
+
+  static double _scoreFields(Iterable<String> values, String needle) {
+    final fields = values
         .map(_normalize)
         .where((field) => field.isNotEmpty)
         .toList(growable: false);
@@ -146,5 +150,19 @@ final class LibraryWorkSearch {
       previous = current;
     }
     return previous.last;
+  }
+}
+
+final class LibraryFuzzySearch {
+  const LibraryFuzzySearch._();
+
+  static bool matches(
+    String candidate,
+    String query, {
+    double threshold = .58,
+  }) {
+    final needle = LibraryWorkSearch._normalize(query);
+    if (needle.isEmpty) return true;
+    return LibraryWorkSearch._scoreFields([candidate], needle) >= threshold;
   }
 }

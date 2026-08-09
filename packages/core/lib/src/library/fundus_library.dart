@@ -150,6 +150,8 @@ final class FundusLibrary {
   WorkAnnotations loadAnnotations(String workId) =>
       _database.loadAnnotations(workId);
 
+  List<String> listTags() => _database.listTags();
+
   Future<WorkAnnotations> replaceWorkTags(
     String workId,
     Iterable<String> tags,
@@ -250,6 +252,15 @@ final class FundusLibrary {
     });
     for (final indexed in indexedCandidates) {
       try {
+        await _importLanguage(indexed.candidate, indexed.workId);
+      } on FileSystemException {
+        // A broken metadata source must not hide the complete library.
+      } on YamlException {
+        // The user can repair malformed language metadata and scan again.
+      } on FormatException {
+        // Invalid source JSON is ignored until repaired.
+      }
+      try {
         await _importAnnotationSidecars(indexed.candidate, indexed.workId);
       } on FileSystemException {
         // A broken sidecar must not make the complete library unavailable.
@@ -288,6 +299,7 @@ final class FundusLibrary {
       series: work.series,
       seriesSequence: work.seriesSequence,
       coverPath: absolutePath,
+      language: work.language,
     );
   }
 
@@ -348,9 +360,11 @@ final class FundusLibrary {
       p.join(sidecarDirectory.path, 'notes.md'),
     ).writeAsString(annotations.note, flush: true);
     await File(p.join(sidecarDirectory.path, 'meta.yaml')).writeAsString(
-      const JsonEncoder.withIndent(
-        '  ',
-      ).convert({'format_version': 1, 'tags': annotations.tags}),
+      const JsonEncoder.withIndent('  ').convert({
+        'format_version': 1,
+        'language': _database.workLanguage(workId),
+        'tags': annotations.tags,
+      }),
       flush: true,
     );
     final tracksById = {
@@ -434,6 +448,50 @@ final class FundusLibrary {
           );
         }
       }
+    }
+  }
+
+  Future<void> _importLanguage(
+    AudiobookImportCandidate candidate,
+    String workId,
+  ) async {
+    final workDirectory = _safeWorkDirectory(candidate.directory);
+    final fundusMeta = File(p.join(workDirectory.path, '_fundus', 'meta.yaml'));
+    if (await fundusMeta.exists()) {
+      final value = loadYaml(await fundusMeta.readAsString());
+      if (value is Map && value['language'] is String) {
+        _database.setWorkLanguage(workId, value['language'] as String);
+        return;
+      }
+    }
+
+    final sourceFile = File(p.join(workDirectory.path, '_source.json'));
+    if (await sourceFile.exists()) {
+      final value = jsonDecode(await sourceFile.readAsString());
+      if (value is Map) {
+        final direct = value['language'];
+        final metadata = value['metadata'];
+        final nested = metadata is Map ? metadata['language'] : null;
+        final language = direct is String
+            ? direct
+            : nested is String
+            ? nested
+            : null;
+        if (language != null && language.trim().isNotEmpty) {
+          _database.setWorkLanguage(workId, language);
+          return;
+        }
+      }
+    }
+
+    const extractor = EmbeddedCoverExtractor();
+    for (final audio in candidate.audioFiles) {
+      final language = await extractor.extractLanguage(
+        File(audio.absolutePath),
+      );
+      if (language == null || language.trim().isEmpty) continue;
+      _database.setWorkLanguage(workId, language);
+      return;
     }
   }
 

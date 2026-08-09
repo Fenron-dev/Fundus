@@ -31,6 +31,19 @@ void main() {
               ..._atom('covr', [
                 ..._atom('data', [0, 0, 0, 13, 0, 0, 0, 0, ...jpeg]),
               ]),
+              ..._atom('©lan', [
+                ..._atom('data', [
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  0,
+                  ...'de-DE'.codeUnits,
+                ]),
+              ]),
             ]),
           ]),
         ]),
@@ -43,6 +56,40 @@ void main() {
     expect(cover!.extension, 'jpg');
     expect(cover.mimeType, 'image/jpeg');
     expect(cover.bytes, jpeg);
+    expect(await const EmbeddedCoverExtractor().extractLanguage(file), 'de-DE');
+  });
+
+  test('extracts UTF-16 language from an MP3 TLAN frame', () async {
+    final directory = await Directory.systemTemp.createTemp('fundus-language-');
+    addTearDown(() => directory.delete(recursive: true));
+    final text = <int>[1, 0xff, 0xfe];
+    for (final unit in 'de-DE'.codeUnits) {
+      text.addAll([unit, 0]);
+    }
+    final frame = <int>[
+      ...'TLAN'.codeUnits,
+      0,
+      0,
+      0,
+      text.length,
+      0,
+      0,
+      ...text,
+    ];
+    final file = File('${directory.path}/book.mp3');
+    await file.writeAsBytes([
+      ...'ID3'.codeUnits,
+      4,
+      0,
+      0,
+      0,
+      0,
+      0,
+      frame.length,
+      ...frame,
+    ]);
+
+    expect(await const EmbeddedCoverExtractor().extractLanguage(file), 'de-DE');
   });
 }
 

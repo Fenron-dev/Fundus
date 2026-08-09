@@ -10,6 +10,31 @@ import 'package:media_kit/media_kit.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/playback_sleep_timer.dart';
 
+typedef WorkPlaybackCallback =
+    Future<void> Function(
+      LibraryWorkSummary work, {
+      String? startFileId,
+      Duration? startPosition,
+    });
+
+String _formatSequence(double value) => value == value.roundToDouble()
+    ? value.toInt().toString()
+    : value.toString().replaceAll('.', ',');
+
+String _displayLanguage(String? language) {
+  if (language == null || language.trim().isEmpty) return '—';
+  final normalized = language.toLowerCase().replaceAll('_', '-');
+  return switch (normalized.split('-').first) {
+    'de' || 'deu' || 'ger' => 'Deutsch',
+    'en' || 'eng' => 'Englisch',
+    'fr' || 'fra' || 'fre' => 'Französisch',
+    'es' || 'spa' => 'Spanisch',
+    'it' || 'ita' => 'Italienisch',
+    'ja' || 'jpn' => 'Japanisch',
+    _ => language,
+  };
+}
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
@@ -146,12 +171,21 @@ class _FundusAppState extends State<FundusApp> {
     }
   }
 
-  Future<void> _startPlayback(LibraryWorkSummary work) async {
+  Future<void> _startPlayback(
+    LibraryWorkSummary work, {
+    String? startFileId,
+    Duration? startPosition,
+  }) async {
     final library = _library;
     if (library == null) return;
     final player = _player ?? FundusPlayerController();
     if (_player == null) setState(() => _player = player);
-    await player.open(library, work);
+    await player.open(
+      library,
+      work,
+      startFileId: startFileId,
+      startPosition: startPosition,
+    );
   }
 
   Future<void> _stopPlayer() async {
@@ -314,7 +348,7 @@ class LibraryShell extends StatefulWidget {
   final VoidCallback? onRescan;
   final VoidCallback? onClose;
   final FundusPlayerController? player;
-  final ValueChanged<LibraryWorkSummary>? onPlay;
+  final WorkPlaybackCallback? onPlay;
 
   @override
   State<LibraryShell> createState() => _LibraryShellState();
@@ -324,9 +358,33 @@ class _LibraryShellState extends State<LibraryShell> {
   int _selectedIndex = 0;
   int _mobileDestination = 0;
   LibraryWorkQuery _query = const LibraryWorkQuery();
+  _LibraryLayout _layout = _LibraryLayout.grid;
+  _LibraryGrouping _grouping = _LibraryGrouping.books;
+  String? _selectedAuthor;
+  String? _selectedSeries;
 
   List<LibraryWorkSummary> get _visibleWorks =>
       LibraryWorkSearch.apply(widget.works, _query);
+
+  bool get _showingGroups => switch (_grouping) {
+    _LibraryGrouping.books => false,
+    _LibraryGrouping.authors =>
+      _selectedAuthor == null || _selectedSeries == null,
+    _LibraryGrouping.series => _selectedSeries == null,
+  };
+
+  List<LibraryWorkSummary> get _displayedWorks {
+    var works = _visibleWorks;
+    final author = _selectedAuthor;
+    final series = _selectedSeries;
+    if (author != null) {
+      works = works.where((work) => work.author == author).toList();
+    }
+    if (series != null) {
+      works = works.where((work) => (work.series ?? '') == series).toList();
+    }
+    return works;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -340,8 +398,8 @@ class _LibraryShellState extends State<LibraryShell> {
   }
 
   Widget _desktop(BuildContext context) {
-    final works = _visibleWorks;
-    final selected = works.isEmpty
+    final works = _displayedWorks;
+    final selected = _showingGroups || works.isEmpty
         ? null
         : works[_selectedIndex.clamp(0, works.length - 1)];
     return Scaffold(
@@ -483,7 +541,7 @@ class _LibraryShellState extends State<LibraryShell> {
     bool detailAsDialog = false,
     bool showSearch = false,
   }) {
-    final works = _visibleWorks;
+    final works = _displayedWorks;
     return Column(
       children: [
         if (showSearch)
@@ -497,47 +555,42 @@ class _LibraryShellState extends State<LibraryShell> {
           ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: Row(
-            children: [
-              Text(
-                'Hörbücher & Hörspiele',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const Spacer(),
-              _MediaFilterButton(
-                selectedKinds: _query.kinds,
-                onChanged: _setKinds,
-              ),
-              const SizedBox(width: 8),
-              MenuAnchor(
-                builder: (context, controller, child) => OutlinedButton.icon(
-                  onPressed: controller.isOpen
-                      ? controller.close
-                      : controller.open,
-                  icon: const Icon(Icons.sort, size: 18),
-                  label: Text(_sortLabel(_query.sort)),
-                ),
-                menuChildren: [
-                  for (final sort in LibraryWorkSort.values)
-                    MenuItemButton(
-                      onPressed: () => _setSort(sort),
-                      leadingIcon: _query.sort == sort
-                          ? const Icon(Icons.check)
-                          : const SizedBox(width: 24),
-                      child: Text(_sortLabel(sort)),
-                    ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final title = _libraryTitle(context);
+              final controls = _libraryControls();
+              if (constraints.maxWidth >= 720) {
+                return Row(
+                  children: [
+                    Expanded(child: title),
+                    controls,
+                  ],
+                );
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  title,
+                  const SizedBox(height: 6),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: controls,
+                  ),
                 ],
-              ),
-            ],
+              );
+            },
           ),
         ),
         Expanded(
-          child: works.isEmpty
+          child: _showingGroups
+              ? _groupBrowser(detailAsDialog: detailAsDialog)
+              : works.isEmpty
               ? _EmptyLibrary(
                   searchActive:
                       _query.text.isNotEmpty || _query.kinds.isNotEmpty,
                 )
-              : GridView.builder(
+              : _layout == _LibraryLayout.grid
+              ? GridView.builder(
                   padding: const EdgeInsets.all(16),
                   gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                     maxCrossAxisExtent: 220,
@@ -572,11 +625,340 @@ class _LibraryShellState extends State<LibraryShell> {
                       },
                     );
                   },
-                ),
+                )
+              : _workTable(works, detailAsDialog: detailAsDialog),
         ),
       ],
     );
   }
+
+  Widget _libraryTitle(BuildContext context) => Row(
+    children: [
+      if (_selectedAuthor != null || _selectedSeries != null)
+        IconButton(
+          onPressed: _navigateUp,
+          tooltip: 'Eine Ebene zurück',
+          icon: const Icon(Icons.arrow_back),
+        ),
+      Expanded(
+        child: Text(
+          _browserTitle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+      ),
+    ],
+  );
+
+  Widget _libraryControls() => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      _MediaFilterButton(selectedKinds: _query.kinds, onChanged: _setKinds),
+      PopupMenuButton<_LibraryGrouping>(
+        tooltip: 'Gliederung wählen',
+        initialValue: _grouping,
+        onSelected: _setGrouping,
+        itemBuilder: (context) => const [
+          PopupMenuItem(
+            value: _LibraryGrouping.books,
+            child: Text('Nach Büchern'),
+          ),
+          PopupMenuItem(
+            value: _LibraryGrouping.authors,
+            child: Text('Nach Autoren'),
+          ),
+          PopupMenuItem(
+            value: _LibraryGrouping.series,
+            child: Text('Nach Serien'),
+          ),
+        ],
+        child: Chip(
+          avatar: const Icon(Icons.account_tree_outlined, size: 18),
+          label: Text(_groupingLabel),
+        ),
+      ),
+      const SizedBox(width: 8),
+      SegmentedButton<_LibraryLayout>(
+        showSelectedIcon: false,
+        segments: const [
+          ButtonSegment(
+            value: _LibraryLayout.grid,
+            icon: Icon(Icons.grid_view),
+            tooltip: 'Kacheln',
+          ),
+          ButtonSegment(
+            value: _LibraryLayout.table,
+            icon: Icon(Icons.table_rows_outlined),
+            tooltip: 'Tabelle',
+          ),
+        ],
+        selected: {_layout},
+        onSelectionChanged: (value) => setState(() => _layout = value.single),
+      ),
+      const SizedBox(width: 8),
+      MenuAnchor(
+        builder: (context, controller, child) => OutlinedButton.icon(
+          onPressed: controller.isOpen ? controller.close : controller.open,
+          icon: const Icon(Icons.sort, size: 18),
+          label: Text(_sortLabel(_query.sort)),
+        ),
+        menuChildren: [
+          for (final sort in LibraryWorkSort.values)
+            MenuItemButton(
+              onPressed: () => _setSort(sort),
+              leadingIcon: _query.sort == sort
+                  ? const Icon(Icons.check)
+                  : const SizedBox(width: 24),
+              child: Text(_sortLabel(sort)),
+            ),
+        ],
+      ),
+    ],
+  );
+
+  String get _browserTitle {
+    if (_selectedSeries != null) {
+      return _selectedSeries!.isEmpty ? 'Einzelbände' : _selectedSeries!;
+    }
+    if (_selectedAuthor != null) return _selectedAuthor!;
+    return 'Hörbücher & Hörspiele';
+  }
+
+  String get _groupingLabel => switch (_grouping) {
+    _LibraryGrouping.books => 'Bücher',
+    _LibraryGrouping.authors => 'Autoren',
+    _LibraryGrouping.series => 'Serien',
+  };
+
+  List<_LibraryGroup> get _groups {
+    final works = _visibleWorks;
+    final grouped = <String, List<LibraryWorkSummary>>{};
+    if (_grouping == _LibraryGrouping.authors && _selectedAuthor == null) {
+      for (final work in works) {
+        grouped.putIfAbsent(work.author, () => []).add(work);
+      }
+      return grouped.entries
+          .map(
+            (entry) => _LibraryGroup(
+              title: entry.key,
+              subtitle: '${entry.value.length} Hörbuch/Hörbücher',
+              author: entry.key,
+              series: null,
+              icon: Icons.person_outline,
+            ),
+          )
+          .toList()
+        ..sort(
+          (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+        );
+    }
+
+    final authorWorks = _selectedAuthor == null
+        ? works
+        : works.where((work) => work.author == _selectedAuthor).toList();
+    for (final work in authorWorks) {
+      final series = work.series ?? '';
+      final key = '${work.author}\u0000$series';
+      grouped.putIfAbsent(key, () => []).add(work);
+    }
+    return grouped.entries.map((entry) {
+      final values = entry.value;
+      final first = values.first;
+      final series = first.series ?? '';
+      return _LibraryGroup(
+        title: series.isEmpty ? 'Einzelbände' : series,
+        subtitle: _selectedAuthor == null
+            ? '${first.author} · ${values.length} Hörbuch/Hörbücher'
+            : '${values.length} Hörbuch/Hörbücher',
+        author: first.author,
+        series: series,
+        icon: series.isEmpty ? Icons.menu_book_outlined : Icons.library_books,
+      );
+    }).toList()..sort((a, b) {
+      final author = a.author.toLowerCase().compareTo(b.author.toLowerCase());
+      if (author != 0 && _selectedAuthor == null) return author;
+      return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+    });
+  }
+
+  Widget _groupBrowser({required bool detailAsDialog}) {
+    final groups = _groups;
+    if (groups.isEmpty) {
+      return _EmptyLibrary(
+        searchActive: _query.text.isNotEmpty || _query.kinds.isNotEmpty,
+      );
+    }
+    if (_layout == _LibraryLayout.table) {
+      return ListView.separated(
+        padding: const EdgeInsets.all(16),
+        itemCount: groups.length,
+        separatorBuilder: (context, index) => const Divider(height: 1),
+        itemBuilder: (context, index) {
+          final group = groups[index];
+          return ListTile(
+            leading: Icon(group.icon),
+            title: Text(group.title),
+            subtitle: Text(group.subtitle),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _openGroup(group),
+          );
+        },
+      );
+    }
+    return GridView.builder(
+      padding: const EdgeInsets.all(16),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 280,
+        childAspectRatio: 1.8,
+        mainAxisSpacing: 14,
+        crossAxisSpacing: 14,
+      ),
+      itemCount: groups.length,
+      itemBuilder: (context, index) {
+        final group = groups[index];
+        return Card(
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => _openGroup(group),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  Icon(group.icon, size: 42),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          group.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        Text(
+                          group.subtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _workTable(
+    List<LibraryWorkSummary> works, {
+    required bool detailAsDialog,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.all(16),
+        child: SizedBox(
+          width: constraints.maxWidth > 882 ? constraints.maxWidth - 32 : 850,
+          child: SingleChildScrollView(
+            child: DataTable(
+              showCheckboxColumn: false,
+              columns: const [
+                DataColumn(label: Text('Cover')),
+                DataColumn(label: Text('Titel')),
+                DataColumn(label: Text('Autor')),
+                DataColumn(label: Text('Serie')),
+                DataColumn(label: Text('Band')),
+                DataColumn(label: Text('Sprache')),
+              ],
+              rows: [
+                for (var index = 0; index < works.length; index++)
+                  DataRow(
+                    selected: !detailAsDialog && index == _selectedIndex,
+                    onSelectChanged: (_) =>
+                        _selectWork(works[index], index, detailAsDialog),
+                    cells: [
+                      DataCell(
+                        SizedBox.square(
+                          dimension: 40,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: _WorkCover(work: works[index], iconSize: 20),
+                          ),
+                        ),
+                      ),
+                      DataCell(Text(works[index].title)),
+                      DataCell(Text(works[index].author)),
+                      DataCell(Text(works[index].series ?? '—')),
+                      DataCell(
+                        Text(
+                          works[index].seriesSequence == null
+                              ? '—'
+                              : _formatSequence(works[index].seriesSequence!),
+                        ),
+                      ),
+                      DataCell(Text(_displayLanguage(works[index].language))),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _selectWork(LibraryWorkSummary work, int index, bool detailAsDialog) {
+    setState(() => _selectedIndex = index);
+    if (!detailAsDialog) return;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => FractionallySizedBox(
+        heightFactor: .82,
+        child: _DetailPanel(
+          work: work,
+          library: widget.library,
+          player: widget.player,
+          onPlay: widget.onPlay,
+        ),
+      ),
+    );
+  }
+
+  void _openGroup(_LibraryGroup group) => setState(() {
+    _selectedIndex = 0;
+    if (_grouping == _LibraryGrouping.authors && _selectedAuthor == null) {
+      _selectedAuthor = group.author;
+    } else {
+      _selectedAuthor = group.author;
+      _selectedSeries = group.series;
+    }
+  });
+
+  void _navigateUp() => setState(() {
+    _selectedIndex = 0;
+    if (_grouping == _LibraryGrouping.authors && _selectedSeries != null) {
+      _selectedSeries = null;
+    } else {
+      _selectedAuthor = null;
+      _selectedSeries = null;
+    }
+  });
+
+  void _setGrouping(_LibraryGrouping value) => setState(() {
+    _grouping = value;
+    _selectedAuthor = null;
+    _selectedSeries = null;
+    _selectedIndex = 0;
+  });
 
   void _setSearch(String value) => setState(() {
     _selectedIndex = 0;
@@ -600,6 +982,26 @@ class _LibraryShellState extends State<LibraryShell> {
     LibraryWorkSort.author => 'Autor A–Z',
     LibraryWorkSort.series => 'Serie & Reihenfolge',
   };
+}
+
+enum _LibraryLayout { grid, table }
+
+enum _LibraryGrouping { books, authors, series }
+
+final class _LibraryGroup {
+  const _LibraryGroup({
+    required this.title,
+    required this.subtitle,
+    required this.author,
+    required this.series,
+    required this.icon,
+  });
+
+  final String title;
+  final String subtitle;
+  final String author;
+  final String? series;
+  final IconData icon;
 }
 
 class _TopBar extends StatelessWidget {
@@ -853,7 +1255,7 @@ class _DetailPanel extends StatefulWidget {
   final LibraryWorkSummary? work;
   final FundusLibrary? library;
   final FundusPlayerController? player;
-  final ValueChanged<LibraryWorkSummary>? onPlay;
+  final WorkPlaybackCallback? onPlay;
 
   @override
   State<_DetailPanel> createState() => _DetailPanelState();
@@ -967,12 +1369,14 @@ class _DetailPanelState extends State<_DetailPanel> {
           runSpacing: 6,
           children: [
             Chip(label: Text('Autor: ${selectedWork.author}')),
+            if (selectedWork.language case final language?)
+              Chip(label: Text('Sprache: ${_displayLanguage(language)}')),
             if (selectedWork.series case final series?)
               Chip(
                 label: Text(
                   selectedWork.seriesSequence == null
                       ? 'Serie: $series'
-                      : 'Serie: $series · Band ${_sequence(selectedWork.seriesSequence!)}',
+                      : 'Serie: $series · Band ${_formatSequence(selectedWork.seriesSequence!)}',
                 ),
               ),
           ],
@@ -1032,6 +1436,7 @@ class _DetailPanelState extends State<_DetailPanel> {
             ListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
+              onTap: _saving ? null : () => _jumpToBookmark(bookmark),
               leading: Text(_time(bookmark.position)),
               title: Text(bookmark.label ?? 'Lesezeichen'),
               subtitle: bookmark.note == null ? null : Text(bookmark.note!),
@@ -1073,16 +1478,42 @@ class _DetailPanelState extends State<_DetailPanel> {
   }
 
   Future<void> _addTag() async {
-    final controller = TextEditingController();
+    final existing = widget.library?.listTags() ?? const <String>[];
+    TextEditingController? fieldController;
     final value = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Tag hinzufügen'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: 'z. B. Fantasy'),
-          onSubmitted: (value) => Navigator.pop(context, value),
+        content: SizedBox(
+          width: 380,
+          child: Autocomplete<String>(
+            optionsBuilder: (value) {
+              final assigned = _annotations.tags
+                  .map((tag) => tag.toLowerCase())
+                  .toSet();
+              return existing.where(
+                (tag) =>
+                    !assigned.contains(tag.toLowerCase()) &&
+                    LibraryFuzzySearch.matches(tag, value.text),
+              );
+            },
+            onSelected: (value) => Navigator.pop(context, value),
+            fieldViewBuilder:
+                (context, controller, focusNode, onFieldSubmitted) {
+                  fieldController = controller;
+                  return TextField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Tag suchen oder neu anlegen',
+                      hintText: 'z. B. Fantasy',
+                      prefixIcon: Icon(Icons.search),
+                    ),
+                    onSubmitted: (value) => Navigator.pop(context, value),
+                  );
+                },
+          ),
         ),
         actions: [
           TextButton(
@@ -1090,13 +1521,12 @@ class _DetailPanelState extends State<_DetailPanel> {
             child: const Text('Abbrechen'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text),
+            onPressed: () => Navigator.pop(context, fieldController?.text),
             child: const Text('Hinzufügen'),
           ),
         ],
       ),
     );
-    controller.dispose();
     if (value == null || value.trim().isEmpty) return;
     await _updateTags({..._annotations.tags, value.trim()});
   }
@@ -1175,6 +1605,86 @@ class _DetailPanelState extends State<_DetailPanel> {
     await _runSave(() => library.deleteBookmark(work.id, bookmarkId));
   }
 
+  Future<void> _jumpToBookmark(LibraryBookmark bookmark) async {
+    final library = widget.library;
+    final selectedWork = widget.work;
+    final onPlay = widget.onPlay;
+    if (library == null || selectedWork == null || onPlay == null) return;
+
+    final player = widget.player;
+    final currentWork = player?.work;
+    final currentTrack = player?.track;
+    final hasReturnPosition =
+        currentWork != null &&
+        currentTrack != null &&
+        player!.position > Duration.zero;
+    var action = _BookmarkJumpAction.jumpDirectly;
+    if (hasReturnPosition) {
+      final selected = await showDialog<_BookmarkJumpAction>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(
+            'Zu „${bookmark.label ?? _time(bookmark.position)}“ springen?',
+          ),
+          content: Text(
+            'Die aktuelle Position bei ${_time(player.position)} kann vorher als Rücksprung-Lesezeichen gespeichert werden.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen'),
+            ),
+            TextButton(
+              onPressed: () =>
+                  Navigator.pop(context, _BookmarkJumpAction.jumpDirectly),
+              child: const Text('Direkt springen'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(context, _BookmarkJumpAction.rememberAndJump),
+              child: const Text('Position merken & springen'),
+            ),
+          ],
+        ),
+      );
+      if (selected == null) return;
+      action = selected;
+    }
+
+    setState(() => _saving = true);
+    try {
+      if (action == _BookmarkJumpAction.rememberAndJump &&
+          currentWork != null &&
+          currentTrack != null &&
+          player != null) {
+        await library.addBookmark(
+          workId: currentWork.id,
+          fileId: currentTrack.fileId,
+          position: player.position,
+          label: 'Rücksprung vor ${bookmark.label ?? _time(bookmark.position)}',
+        );
+      }
+      if (player?.work?.id == selectedWork.id) {
+        await player!.jumpToBookmark(bookmark);
+      } else {
+        await onPlay(
+          selectedWork,
+          startFileId: bookmark.fileId,
+          startPosition: bookmark.position,
+        );
+      }
+      if (!mounted) return;
+      setState(_load);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Sprung fehlgeschlagen: $error')));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _runSave(
     Future<WorkAnnotations> Function() action, {
     String? successMessage,
@@ -1202,10 +1712,6 @@ class _DetailPanelState extends State<_DetailPanel> {
     }
   }
 
-  static String _sequence(double value) => value == value.roundToDouble()
-      ? value.toInt().toString()
-      : value.toString().replaceAll('.', ',');
-
   static String _time(Duration value) {
     final hours = value.inHours.toString().padLeft(2, '0');
     final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
@@ -1213,6 +1719,8 @@ class _DetailPanelState extends State<_DetailPanel> {
     return '$hours:$minutes:$seconds';
   }
 }
+
+enum _BookmarkJumpAction { jumpDirectly, rememberAndJump }
 
 class _WorkCover extends StatelessWidget {
   const _WorkCover({required this.work, required this.iconSize});

@@ -21,6 +21,7 @@ final class LibraryWorkSummary {
     this.series,
     this.seriesSequence,
     this.coverPath,
+    this.language,
   });
 
   final String id;
@@ -32,6 +33,7 @@ final class LibraryWorkSummary {
   final String? series;
   final double? seriesSequence;
   final String? coverPath;
+  final String? language;
 }
 
 final class FundusDatabase {
@@ -231,6 +233,7 @@ final class FundusDatabase {
               row['added_at'] as int,
             ),
             coverPath: row['cover_path'] as String?,
+            language: metadata['language'] as String?,
           );
         })
         .toList(growable: false);
@@ -375,6 +378,44 @@ final class FundusDatabase {
     );
     return rows.isEmpty ? null : rows.first['source_path'] as String;
   }
+
+  String? workLanguage(String workId) {
+    final rows = _database.select(
+      'SELECT metadata_json FROM works WHERE id = ?',
+      [workId],
+    );
+    if (rows.isEmpty) return null;
+    final metadata =
+        jsonDecode(rows.first['metadata_json'] as String)
+            as Map<String, dynamic>;
+    return metadata['language'] as String?;
+  }
+
+  void setWorkLanguage(String workId, String? language) {
+    final rows = _database.select(
+      'SELECT metadata_json FROM works WHERE id = ?',
+      [workId],
+    );
+    if (rows.isEmpty) return;
+    final metadata =
+        jsonDecode(rows.first['metadata_json'] as String)
+            as Map<String, dynamic>;
+    final normalized = language?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      metadata.remove('language');
+    } else {
+      metadata['language'] = normalized;
+    }
+    _database.execute('UPDATE works SET metadata_json = ? WHERE id = ?', [
+      jsonEncode(metadata),
+      workId,
+    ]);
+  }
+
+  List<String> listTags() => _database
+      .select('SELECT name FROM tags ORDER BY name COLLATE NOCASE')
+      .map((row) => row['name'] as String)
+      .toList(growable: false);
 
   WorkAnnotations loadAnnotations(String workId) {
     final tagRows = _database.select(

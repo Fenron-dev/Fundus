@@ -22,9 +22,12 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - Import der ABS-Struktur `Autor/Serie/01 - Titel`
 - persistierte Serien-, Cover- und Track-Zuordnung
 - durchgehende Desktop-Audiowiedergabe mit Tracknavigation und Geschwindigkeit
-- persistenter Resume-Punkt über Dateigrenzen mit Revisionshistorie
+- werkbezogener Resume-Punkt über Datei- und Hörbuchwechsel mit Revisionshistorie
 - Sleep-Timer mit festen Laufzeiten, Countdown und Stopp am Trackende
-- bearbeitbare Tags und Markdown-Notizen sowie Zeit-Lesezeichen
+- anspringbare Zeit-Lesezeichen mit optionalem Rücksprung-Lesezeichen
+- bearbeitbare Tags mit fuzzy gefilterten Vorschlägen und Markdown-Notizen
+- Kachel-/Tabellenansicht und Navigation nach Autor, Serie und Buch
+- Sprachimport aus Sidecars sowie M4B/M4A- und MP3-Metadaten
 - portabler Sidecar-Spiegel unter `_fundus/`, der einen Index-Neuaufbau überlebt
 - responsive Flutter-Oberfläche für Desktop, Tablet und Mobile
 - Grundgerüst für den token-geschützten lokalen HTTP-Server

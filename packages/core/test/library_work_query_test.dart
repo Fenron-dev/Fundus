@@ -49,4 +49,10 @@ void main() {
 
     expect(result.map((work) => work.id), ['2', '1']);
   });
+
+  test('matches existing tags despite small typing mistakes', () {
+    expect(LibraryFuzzySearch.matches('Abenteuer', 'Abentuer'), isTrue);
+    expect(LibraryFuzzySearch.matches('Science Fiction', 'Scince'), isTrue);
+    expect(LibraryFuzzySearch.matches('Romantik', 'Krimi'), isFalse);
+  });
 }

@@ -74,9 +74,11 @@ void main() {
     addTearDown(library.close);
     await library.index().drain<void>();
 
-    final coverPath = library.listWorks().single.coverPath;
+    final importedWork = library.listWorks().single;
+    final coverPath = importedWork.coverPath;
     expect(coverPath, isNotNull);
     expect(coverPath, endsWith('.jpg'));
+    expect(importedWork.language, 'de-DE');
     final coverBytes = await File(coverPath!).readAsBytes();
     expect(coverBytes.sublist(0, 3), [0xff, 0xd8, 0xff]);
   });
@@ -163,6 +165,9 @@ List<int> _m4bWithJpegCover() => _atom('moov', [
             0xff,
             0xd9,
           ]),
+        ]),
+        ..._atom('©lan', [
+          ..._atom('data', [0, 0, 0, 1, 0, 0, 0, 0, ...'de-DE'.codeUnits]),
         ]),
       ]),
     ]),
