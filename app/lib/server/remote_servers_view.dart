@@ -7,6 +7,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../diagnostics/fundus_diagnostics.dart';
 import '../playback/playback_sleep_timer.dart';
+import '../playback/playback_conflict_settings.dart';
 import 'fundus_remote_client.dart';
 import 'fundus_peer_server_controller.dart';
 import 'fundus_remote_player_controller.dart';
@@ -1171,6 +1172,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         FundusRemotePlayerController(
           deviceId: await _store.deviceId(),
           offlineStore: _offlineStore,
+          onConflict: (conflict) => resolvePlaybackConflict(context, conflict),
         );
     if (_remotePlayer == null && mounted) {
       setState(() => _remotePlayer = player);
@@ -1712,6 +1714,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         FundusRemotePlayerController(
           deviceId: await _store.deviceId(),
           offlineStore: _offlineStore,
+          onConflict: (conflict) => resolvePlaybackConflict(context, conflict),
         );
     if (_remotePlayer == null && mounted) {
       setState(() => _remotePlayer = player);

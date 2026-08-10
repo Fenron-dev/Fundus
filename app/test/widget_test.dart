@@ -137,6 +137,7 @@ void main() {
     expect(find.text('Freigegebene Bibliotheken'), findsOneWidget);
     expect(find.textContaining('Ohne LAN-Freigabe'), findsOneWidget);
     expect(find.text('Im lokalen Netzwerk freigeben'), findsOneWidget);
+    expect(find.text('Bei abweichendem Hörstand nachfragen'), findsOneWidget);
   });
 
   testWidgets('desktop search tolerates a misspelled title', (tester) async {

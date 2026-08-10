@@ -13,6 +13,7 @@ import 'library/android_storage_access.dart';
 import 'library/recent_library_store.dart';
 import 'library/security_scoped_bookmarks.dart';
 import 'playback/fundus_player_controller.dart';
+import 'playback/playback_conflict_settings.dart';
 import 'playback/playback_sleep_timer.dart';
 import 'server/fundus_peer_server_controller.dart';
 import 'server/fundus_peer_discovery.dart';
@@ -580,7 +581,16 @@ class _FundusAppState extends State<FundusApp> {
   }) async {
     final library = _library;
     if (library == null) return;
-    final player = _player ?? FundusPlayerController();
+    final player =
+        _player ??
+        FundusPlayerController(
+          onConflict: (conflict) {
+            final context = _navigatorKey.currentContext;
+            return context == null
+                ? Future.value(PlaybackConflictChoice.keepCurrent)
+                : resolvePlaybackConflict(context, conflict);
+          },
+        );
     if (_player == null) setState(() => _player = player);
     await player.open(
       library,

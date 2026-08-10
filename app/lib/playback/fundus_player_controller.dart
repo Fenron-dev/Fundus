@@ -5,6 +5,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:media_kit/media_kit.dart';
 
 import '../diagnostics/fundus_diagnostics.dart';
+import 'playback_conflict_settings.dart';
 import 'playback_sleep_timer.dart';
 import 'playback_resume_policy.dart';
 
@@ -25,7 +26,7 @@ final class PlayerWorkProgress {
 final class FundusPlayerController extends ChangeNotifier {
   static const progressPersistInterval = Duration(seconds: 5);
 
-  FundusPlayerController() : _player = Player() {
+  FundusPlayerController({this.onConflict}) : _player = Player() {
     _sleepTimer = PlaybackSleepTimer(onElapsed: _pauseForSleepTimer);
     _sleepTimer.addListener(notifyListeners);
     _subscriptions.addAll([
@@ -63,6 +64,7 @@ final class FundusPlayerController extends ChangeNotifier {
   }
 
   final Player _player;
+  final PlaybackConflictResolver? onConflict;
   late final PlaybackSleepTimer _sleepTimer;
   final List<StreamSubscription<Object?>> _subscriptions = [];
 
@@ -229,12 +231,34 @@ final class FundusPlayerController extends ChangeNotifier {
     final targetIndex = latest.fileId == null
         ? -1
         : _tracks.indexWhere((track) => track.fileId == latest.fileId);
+    final incomingPosition = PlaybackResumePolicy.resumePosition(latest);
+    final differs =
+        targetIndex >= 0 && targetIndex != _currentIndex ||
+        (incomingPosition != null &&
+            (incomingPosition - _position).abs() > const Duration(seconds: 10));
+    if (differs && onConflict != null) {
+      final choice = await onConflict!(
+        PlaybackResumeConflict(
+          currentPosition: _position,
+          incomingPosition: incomingPosition ?? Duration.zero,
+          currentTrack: track?.title ?? 'Aktuelle Datei',
+          incomingTrack: targetIndex >= 0
+              ? _tracks[targetIndex].title
+              : 'Gespeicherte Datei',
+          incomingSource: 'Server / anderes Gerät',
+        ),
+      );
+      if (choice == PlaybackConflictChoice.keepCurrent) {
+        _progressRevision = latest.revision;
+        return;
+      }
+    }
     if (targetIndex >= 0 && targetIndex != _currentIndex) {
       _skipNextTrackTransition = true;
       await _player.jump(targetIndex);
       _currentIndex = targetIndex;
     }
-    final target = PlaybackResumePolicy.resumePosition(latest);
+    final target = incomingPosition;
     if (target != null && target > Duration.zero) {
       _position = await _seekAndVerify(target);
     }

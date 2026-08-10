@@ -7,6 +7,7 @@ import 'package:media_kit/media_kit.dart';
 
 import '../diagnostics/fundus_diagnostics.dart';
 import '../playback/playback_sleep_timer.dart';
+import '../playback/playback_conflict_settings.dart';
 import 'fundus_remote_client.dart';
 import 'fundus_remote_stream_proxy.dart';
 import 'fundus_offline_store.dart';
@@ -16,6 +17,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     required this.deviceId,
     FundusRemoteClient client = const FundusRemoteClient(),
     FundusOfflineStore? offlineStore,
+    this.onConflict,
   }) : _client = client,
        _offlineStore = offlineStore ?? FundusOfflineStore(),
        _player = Player() {
@@ -68,6 +70,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   final String deviceId;
   final FundusRemoteClient _client;
   final FundusOfflineStore _offlineStore;
+  final PlaybackConflictResolver? onConflict;
   final Player _player;
   late final PlaybackSleepTimer _sleepTimer;
   final List<StreamSubscription<Object?>> _subscriptions = [];
@@ -139,26 +142,59 @@ final class FundusRemotePlayerController extends ChangeNotifier {
                   duration: track.duration,
                 ),
             ];
-      FundusRemoteProgress? progress;
+      FundusRemoteProgress? localProgress;
       if (offlineWork != null) {
-        progress = await _offlineStore.loadProgress(
+        localProgress = await _offlineStore.loadProgress(
           serverId: server.id,
           libraryId: library.id,
           workId: work.id,
         );
       }
-      if (progress == null) {
-        try {
-          progress = await _client.progress(server, library.id, work.id);
-        } catch (_) {
-          progress = null;
-        }
+      FundusRemoteProgress? serverProgress;
+      try {
+        serverProgress = await _client.progress(server, library.id, work.id);
+      } catch (_) {
+        serverProgress = null;
       }
-      _progressRevision = progress?.revision ?? 0;
       if (tracks.isEmpty) {
         throw StateError('Dieses Werk enthält keine abspielbaren Dateien.');
       }
       _tracks = tracks;
+      var progress = serverProgress ?? localProgress;
+      if (localProgress != null && serverProgress != null) {
+        final localIndex = localProgress.fileId == null
+            ? -1
+            : tracks.indexWhere((track) => track.id == localProgress!.fileId);
+        final serverIndex = serverProgress.fileId == null
+            ? -1
+            : tracks.indexWhere((track) => track.id == serverProgress!.fileId);
+        final differs =
+            localIndex != serverIndex ||
+            (localProgress.position - serverProgress.position).abs() >
+                const Duration(seconds: 10);
+        if (differs && onConflict != null) {
+          final choice = await onConflict!(
+            PlaybackResumeConflict(
+              currentPosition: localProgress.position,
+              incomingPosition: serverProgress.position,
+              currentTrack: localIndex >= 0
+                  ? tracks[localIndex].title
+                  : 'Lokale Datei',
+              incomingTrack: serverIndex >= 0
+                  ? tracks[serverIndex].title
+                  : 'Gespeicherte Datei',
+              incomingSource: 'Server / anderes Gerät',
+            ),
+          );
+          if (choice == PlaybackConflictChoice.keepCurrent) {
+            progress = localProgress;
+          }
+        }
+      }
+      _progressRevision = max(
+        localProgress?.revision ?? 0,
+        serverProgress?.revision ?? 0,
+      );
       final resumeIndex = progress?.fileId == null
           ? -1
           : _tracks.indexWhere((item) => item.id == progress!.fileId);
@@ -231,6 +267,26 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     final targetIndex = latest.fileId == null
         ? -1
         : _tracks.indexWhere((track) => track.id == latest!.fileId);
+    final differs =
+        targetIndex >= 0 && targetIndex != _currentIndex ||
+        (latest.position - _position).abs() > const Duration(seconds: 10);
+    if (differs && onConflict != null) {
+      final choice = await onConflict!(
+        PlaybackResumeConflict(
+          currentPosition: _position,
+          incomingPosition: latest.position,
+          currentTrack: track?.title ?? 'Aktuelle Datei',
+          incomingTrack: targetIndex >= 0
+              ? _tracks[targetIndex].title
+              : 'Gespeicherte Datei',
+          incomingSource: 'Server / anderes Gerät',
+        ),
+      );
+      if (choice == PlaybackConflictChoice.keepCurrent) {
+        _progressRevision = latest.revision;
+        return;
+      }
+    }
     if (targetIndex >= 0 && targetIndex != _currentIndex) {
       await _player.jump(targetIndex);
       _currentIndex = targetIndex;
