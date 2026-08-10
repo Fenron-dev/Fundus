@@ -102,7 +102,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(FundusApp(initialWorks: testWorks));
+    await tester.pumpWidget(const FundusApp());
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Server & Freigaben').first);

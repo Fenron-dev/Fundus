@@ -78,6 +78,7 @@ class FundusApp extends StatefulWidget {
 }
 
 class _FundusAppState extends State<FundusApp> {
+  final _navigatorKey = GlobalKey<NavigatorState>();
   ThemeMode _themeMode = ThemeMode.dark;
   FundusLibrary? _library;
   List<LibraryWorkSummary>? _works;
@@ -131,6 +132,7 @@ class _FundusAppState extends State<FundusApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       title: 'Fundus',
       debugShowCheckedModeBanner: false,
       themeMode: _themeMode,
@@ -227,9 +229,14 @@ class _FundusAppState extends State<FundusApp> {
       return true;
     }
     if (!mounted) return false;
+    final dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null || !dialogContext.mounted) {
+      setState(() => _error = 'Die Bibliotheksauswahl ist noch nicht bereit.');
+      return false;
+    }
     final openSettings =
         await showDialog<bool>(
-          context: context,
+          context: dialogContext,
           builder: (context) => AlertDialog(
             title: const Text('Bibliothekszugriff erlauben'),
             content: const Text(
@@ -459,8 +466,10 @@ class _FundusAppState extends State<FundusApp> {
   }
 
   Future<void> _openRemoteLibrary(_RemoteLibraryChoice choice) async {
+    final dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null) return;
     await showFundusRemoteServers(
-      context,
+      dialogContext,
       initialServerId: choice.server.id,
       initialLibraryId: choice.library.libraryId,
       peerServer: _peerServer,
@@ -469,12 +478,16 @@ class _FundusAppState extends State<FundusApp> {
   }
 
   Future<void> _openOfflineMedia() async {
-    await showFundusRemoteServers(context, peerServer: _peerServer);
+    final dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null) return;
+    await showFundusRemoteServers(dialogContext, peerServer: _peerServer);
     await _loadRemoteLibraries();
   }
 
   Future<void> _openServerSettings() async {
-    await showFundusServerSettings(context, _peerServer);
+    final dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null) return;
+    await showFundusServerSettings(dialogContext, _peerServer);
     await _loadRemoteLibraries();
   }
 
