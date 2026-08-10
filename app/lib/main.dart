@@ -9,6 +9,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'diagnostics/fundus_diagnostics.dart';
+import 'library/android_storage_access.dart';
 import 'library/recent_library_store.dart';
 import 'library/security_scoped_bookmarks.dart';
 import 'playback/fundus_player_controller.dart';
@@ -176,6 +177,7 @@ class _FundusAppState extends State<FundusApp> {
   });
 
   Future<void> _chooseLibrary({required bool create}) async {
+    if (!await _ensureAndroidLibraryAccess()) return;
     final path = await FilePicker.getDirectoryPath(
       dialogTitle: create
           ? 'Ordner für die Fundus-Bibliothek wählen'
@@ -187,6 +189,7 @@ class _FundusAppState extends State<FundusApp> {
   }
 
   Future<void> _openRecentLibrary(RecentLibraryEntry entry) async {
+    if (!await _ensureAndroidLibraryAccess()) return;
     var bookmark = entry.securityBookmark;
     String? resolvedPath;
     try {
@@ -217,6 +220,49 @@ class _FundusAppState extends State<FundusApp> {
     );
     if (selected == null || !mounted) return;
     await _openLibraryPath(selected, create: false);
+  }
+
+  Future<bool> _ensureAndroidLibraryAccess() async {
+    if (!Platform.isAndroid || await AndroidStorageAccess.isGranted()) {
+      return true;
+    }
+    if (!mounted) return false;
+    final openSettings =
+        await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Bibliothekszugriff erlauben'),
+            content: const Text(
+              'Fundus verwaltet portable Bibliotheken mit Mediendateien, '
+              'Covern, Metadaten und einer Datenbank direkt im gewählten '
+              'Ordner. Android benötigt dafür die Systemfreigabe „Zugriff '
+              'auf alle Dateien“. Fundus verwendet sie ausschließlich für '
+              'die Bibliotheken, die du selbst öffnest.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Abbrechen'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Einstellungen öffnen'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!openSettings) return false;
+    final granted = await AndroidStorageAccess.request();
+    if (!granted && mounted) {
+      setState(() {
+        _error =
+            'Der Bibliothekszugriff wurde nicht freigegeben. Bitte '
+            'aktiviere in den Android-Einstellungen „Zugriff auf alle '
+            'Dateien“ für Fundus.';
+      });
+    }
+    return granted;
   }
 
   Future<bool> _openLibraryPath(
