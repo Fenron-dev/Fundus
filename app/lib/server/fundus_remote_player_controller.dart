@@ -93,6 +93,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   FundusRemoteTrack? get track =>
       _tracks.isEmpty ? null : _tracks[_currentIndex];
   List<FundusRemoteTrack> get tracks => List.unmodifiable(_tracks);
+  String? get offlineCoverPath => _offlineWork?.coverPath;
   int get currentIndex => _currentIndex;
   Duration get position => _position;
   Duration get duration => _duration;
@@ -247,6 +248,12 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       await persist();
       await _player.previous();
     }
+  }
+
+  Future<void> jumpToTrack(int index) async {
+    if (!_ready || index < 0 || index >= _tracks.length) return;
+    await persist();
+    await _player.jump(index);
   }
 
   Future<void> persist({bool finished = false}) async {

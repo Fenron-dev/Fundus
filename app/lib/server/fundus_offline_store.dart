@@ -62,6 +62,8 @@ final class FundusOfflineWork {
   final int? publishedYear;
   final String? coverPath;
 
+  String get directoryPath => p.dirname(tracks.first.path);
+
   Duration get totalDuration => tracks.fold(
     Duration.zero,
     (total, track) => total + (track.duration ?? Duration.zero),
@@ -99,6 +101,13 @@ typedef OfflineDownloadTransferProgress =
 
 final class FundusOfflineStore {
   FundusOfflineStore({Directory? root}) : _configuredRoot = root;
+
+  factory FundusOfflineStore.forLibrary(Directory libraryRoot) =>
+      FundusOfflineStore(
+        root: Directory(
+          p.join(libraryRoot.absolute.path, '_fundus', 'offline-media'),
+        ),
+      );
 
   final Directory? _configuredRoot;
 
@@ -428,11 +437,19 @@ final class FundusOfflineStore {
         // Der Download bleibt auch ohne erreichbaren Fortschritts-Endpunkt
         // vollständig offline nutzbar.
       }
-      return (await lookup(
+      final result = (await lookup(
         serverId: server.id,
         libraryId: library.id,
         workId: work.id,
       ))!;
+      await _appendLedger('downloaded', {
+        'server_id': server.id,
+        'library_id': library.id,
+        'work_id': work.id,
+        'title': work.title,
+        'file_count': result.tracks.length,
+      });
+      return result;
     } catch (_) {
       for (final entity in directory.listSync().whereType<File>()) {
         if (entity.path.endsWith('.part')) await entity.delete();
@@ -448,6 +465,11 @@ final class FundusOfflineStore {
   }) async {
     final directory = await _workDirectory(serverId, libraryId, workId);
     if (await directory.exists()) await directory.delete(recursive: true);
+    await _appendLedger('removed', {
+      'server_id': serverId,
+      'library_id': libraryId,
+      'work_id': workId,
+    });
   }
 
   Future<FundusRemoteProgress?> loadProgress({
@@ -640,5 +662,20 @@ final class FundusOfflineStore {
     return RegExp(r'^\.[a-z0-9]{1,5}$').hasMatch(extension)
         ? extension
         : '.bin';
+  }
+
+  Future<void> _appendLedger(String event, Map<String, Object?> details) async {
+    try {
+      final root = await _root();
+      await root.create(recursive: true);
+      final file = File(p.join(root.path, 'downloads.log'));
+      await file.writeAsString(
+        '${jsonEncode({'timestamp': DateTime.now().toUtc().toIso8601String(), 'event': event, ...details})}\n',
+        mode: FileMode.append,
+        flush: true,
+      );
+    } on FileSystemException {
+      // Ein optionales Verwaltungsprotokoll darf Downloads nicht blockieren.
+    }
   }
 }

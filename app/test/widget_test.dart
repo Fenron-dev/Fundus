@@ -95,6 +95,30 @@ void main() {
     expect(find.text('Bibliothek öffnen'), findsOneWidget);
   });
 
+  testWidgets('mobile shell can return to the library selection', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 850);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var closed = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LibraryShell(
+          works: testWorks,
+          onToggleTheme: () {},
+          onClose: () => closed = true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Bibliothek oder Server wechseln'));
+
+    expect(closed, isTrue);
+  });
+
   testWidgets('server settings explain the safe local sharing mode', (
     tester,
   ) async {

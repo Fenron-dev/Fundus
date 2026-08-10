@@ -14,17 +14,25 @@ import 'fundus_offline_store.dart';
 import 'fundus_peer_discovery.dart';
 import 'peer_server_identity_store.dart';
 
+enum _RemoteLayout { grid, list }
+
+enum _RemoteSort { title, author, series }
+
+enum _RemoteGrouping { books, authors, series, narrators }
+
 Future<void> showFundusRemoteServers(
   BuildContext context, {
   String? initialServerId,
   String? initialLibraryId,
   FundusPeerServerController? peerServer,
+  FundusOfflineStore? offlineStore,
 }) => Navigator.of(context).push(
   MaterialPageRoute<void>(
     builder: (_) => FundusRemoteServersView(
       initialServerId: initialServerId,
       initialLibraryId: initialLibraryId,
       peerServer: peerServer,
+      offlineStore: offlineStore,
     ),
   ),
 );
@@ -35,11 +43,13 @@ class FundusRemoteServersView extends StatefulWidget {
     this.initialServerId,
     this.initialLibraryId,
     this.peerServer,
+    this.offlineStore,
   });
 
   final String? initialServerId;
   final String? initialLibraryId;
   final FundusPeerServerController? peerServer;
+  final FundusOfflineStore? offlineStore;
 
   @override
   State<FundusRemoteServersView> createState() =>
@@ -49,7 +59,7 @@ class FundusRemoteServersView extends StatefulWidget {
 class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   final _store = FundusRemoteServerStore();
   final _client = const FundusRemoteClient();
-  final _offlineStore = FundusOfflineStore();
+  late final FundusOfflineStore _offlineStore;
   final _peerDiscovery = FundusPeerDiscovery();
   List<FundusRemoteServer> _servers = const [];
   FundusRemoteServer? _selectedServer;
@@ -58,6 +68,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   String? _offlineLibraryFilter;
   List<FundusRemoteWork> _works = const [];
   String? _selectedKind;
+  String _search = '';
+  _RemoteLayout _layout = _RemoteLayout.grid;
+  _RemoteSort _sort = _RemoteSort.title;
+  _RemoteGrouping _grouping = _RemoteGrouping.books;
+  String? _selectedGroup;
   bool _busy = true;
   String? _error;
   FundusRemotePlayerController? _remotePlayer;
@@ -76,6 +91,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   @override
   void initState() {
     super.initState();
+    _offlineStore = widget.offlineStore ?? FundusOfflineStore();
     _lifecycleListener = AppLifecycleListener(
       onInactive: () => unawaited(_remotePlayer?.persist()),
       onHide: () => unawaited(_remotePlayer?.persist()),
@@ -428,6 +444,12 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       title: const Text('Fundus-Server'),
       actions: [
         IconButton(
+          onPressed: () =>
+              Navigator.of(context).popUntil((route) => route.isFirst),
+          tooltip: 'Zur Bibliotheksauswahl',
+          icon: const Icon(Icons.home_outlined),
+        ),
+        IconButton(
           onPressed: _renameOwnDevice,
           tooltip: 'Dieses Gerät benennen',
           icon: const Icon(Icons.badge_outlined),
@@ -476,8 +498,21 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         : null,
     bottomNavigationBar: _remotePlayer == null
         ? null
-        : _RemotePlayerBar(controller: _remotePlayer!),
+        : _RemotePlayerBar(
+            controller: _remotePlayer!,
+            onExpand: _openExpandedPlayer,
+          ),
   );
+
+  void _openExpandedPlayer() {
+    final player = _remotePlayer;
+    if (player == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _RemoteExpandedPlayer(controller: player),
+      ),
+    );
+  }
 
   Future<void> _manualPairingCodeThenConnect() async {
     final source = await _manualPairingCode();
@@ -657,18 +692,115 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   Widget _worksGrid(FundusRemoteLibrary library) {
     final server = _selectedServer!;
     final kinds = _works.map((work) => work.kind).toSet().toList()..sort();
-    final works = _selectedKind == null
+    var works = _selectedKind == null
         ? _works
         : _works.where((work) => work.kind == _selectedKind).toList();
+    if (_search.trim().isNotEmpty) {
+      works = works.where((work) => _remoteMatches(work, _search)).toList();
+    }
+    if (_selectedGroup case final group?) {
+      works = works
+          .where((work) => _remoteGroupValues(work).contains(group))
+          .toList();
+    }
+    works = [...works]..sort(_compareRemoteWorks);
+    final groups = _remoteGroups(works);
     return CustomScrollView(
       slivers: [
         SliverToBoxAdapter(
           child: ListTile(
             leading: BackButton(
-              onPressed: () => setState(() => _selectedLibrary = null),
+              onPressed: () => setState(() {
+                if (_selectedGroup != null) {
+                  _selectedGroup = null;
+                } else {
+                  _selectedLibrary = null;
+                }
+              }),
             ),
-            title: Text(library.name),
+            title: Text(_selectedGroup ?? library.name),
             subtitle: Text('${works.length} Medien'),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: SearchBar(
+              leading: const Icon(Icons.search),
+              hintText: 'Titel, Person oder Serie …',
+              onChanged: (value) => setState(() => _search = value),
+            ),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                SegmentedButton<_RemoteLayout>(
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(
+                      value: _RemoteLayout.grid,
+                      icon: Icon(Icons.grid_view),
+                    ),
+                    ButtonSegment(
+                      value: _RemoteLayout.list,
+                      icon: Icon(Icons.view_list),
+                    ),
+                  ],
+                  selected: {_layout},
+                  onSelectionChanged: (value) =>
+                      setState(() => _layout = value.first),
+                ),
+                const SizedBox(width: 8),
+                DropdownButton<_RemoteGrouping>(
+                  value: _grouping,
+                  onChanged: (value) => setState(() {
+                    _grouping = value!;
+                    _selectedGroup = null;
+                  }),
+                  items: const [
+                    DropdownMenuItem(
+                      value: _RemoteGrouping.books,
+                      child: Text('Bücher'),
+                    ),
+                    DropdownMenuItem(
+                      value: _RemoteGrouping.authors,
+                      child: Text('Autoren'),
+                    ),
+                    DropdownMenuItem(
+                      value: _RemoteGrouping.series,
+                      child: Text('Serien'),
+                    ),
+                    DropdownMenuItem(
+                      value: _RemoteGrouping.narrators,
+                      child: Text('Sprecher'),
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 8),
+                DropdownButton<_RemoteSort>(
+                  value: _sort,
+                  onChanged: (value) => setState(() => _sort = value!),
+                  items: const [
+                    DropdownMenuItem(
+                      value: _RemoteSort.title,
+                      child: Text('Titel A–Z'),
+                    ),
+                    DropdownMenuItem(
+                      value: _RemoteSort.author,
+                      child: Text('Autor A–Z'),
+                    ),
+                    DropdownMenuItem(
+                      value: _RemoteSort.series,
+                      child: Text('Serie'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
         if (kinds.length > 1)
@@ -696,74 +828,186 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
               ),
             ),
           ),
-        SliverPadding(
-          padding: const EdgeInsets.all(16),
-          sliver: SliverGrid.builder(
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 220,
-              mainAxisExtent: 310,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-            ),
-            itemCount: works.length,
-            itemBuilder: (context, index) {
-              final work = works[index];
-              return Card(
-                clipBehavior: Clip.antiAlias,
-                child: InkWell(
-                  onTap: () => _showWork(server, library, work),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(
-                        child: work.hasCover
-                            ? _remoteCover(server, library, work)
-                            : Icon(_kindIcon(work.kind), size: 72),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.all(10),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              work.title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            Text(
-                              work.authors.join(', '),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            Text(
-                              _kindLabel(work.kind),
-                              style: Theme.of(context).textTheme.labelSmall,
-                            ),
-                            if (_offlineKeys.contains(
-                              _offlineKey(server, library, work),
-                            ))
-                              const Row(
-                                children: [
-                                  Icon(Icons.download_done, size: 15),
-                                  SizedBox(width: 4),
-                                  Text('Offline'),
-                                ],
-                              ),
-                          ],
-                        ),
-                      ),
-                    ],
+        if (_grouping != _RemoteGrouping.books && _selectedGroup == null)
+          SliverPadding(
+            padding: const EdgeInsets.all(16),
+            sliver: SliverList.builder(
+              itemCount: groups.length,
+              itemBuilder: (context, index) {
+                final group = groups[index];
+                return Card(
+                  child: ListTile(
+                    leading: Icon(
+                      _grouping == _RemoteGrouping.series
+                          ? Icons.account_tree_outlined
+                          : Icons.person_outline,
+                    ),
+                    title: Text(group.$1),
+                    subtitle: Text('${group.$2} Medium/Medien'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => setState(() => _selectedGroup = group.$1),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
+          )
+        else if (_layout == _RemoteLayout.grid)
+          SliverPadding(
+            padding: const EdgeInsets.all(16),
+            sliver: SliverGrid.builder(
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 220,
+                mainAxisExtent: 310,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+              ),
+              itemCount: works.length,
+              itemBuilder: (context, index) {
+                final work = works[index];
+                return Card(
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: () => _showWork(server, library, work),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          child: work.hasCover
+                              ? _remoteCover(server, library, work)
+                              : Icon(_kindIcon(work.kind), size: 72),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                work.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                work.authors.join(', '),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Text(
+                                _kindLabel(work.kind),
+                                style: Theme.of(context).textTheme.labelSmall,
+                              ),
+                              if (_offlineKeys.contains(
+                                _offlineKey(server, library, work),
+                              ))
+                                const Row(
+                                  children: [
+                                    Icon(Icons.download_done, size: 15),
+                                    SizedBox(width: 4),
+                                    Text('Offline'),
+                                  ],
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          )
+        else
+          SliverPadding(
+            padding: const EdgeInsets.all(16),
+            sliver: SliverList.builder(
+              itemCount: works.length,
+              itemBuilder: (context, index) {
+                final work = works[index];
+                return Card(
+                  child: ListTile(
+                    leading: SizedBox(
+                      width: 48,
+                      height: 58,
+                      child: work.hasCover
+                          ? _remoteCover(server, library, work)
+                          : Icon(_kindIcon(work.kind)),
+                    ),
+                    title: Text(work.title),
+                    subtitle: Text(
+                      [
+                        ...work.authors,
+                        if (work.series != null) work.series!,
+                      ].join(' · '),
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => _showWork(server, library, work),
+                  ),
+                );
+              },
+            ),
           ),
-        ),
       ],
     );
+  }
+
+  bool _remoteMatches(FundusRemoteWork work, String query) {
+    final needle = _normalized(query);
+    final haystack = _normalized(
+      [
+        work.title,
+        ...work.authors,
+        ...work.narrators,
+        if (work.series != null) work.series!,
+      ].join(' '),
+    );
+    if (haystack.contains(needle)) return true;
+    var index = 0;
+    for (final unit in haystack.codeUnits) {
+      if (index < needle.length && unit == needle.codeUnitAt(index)) index++;
+    }
+    return index == needle.length;
+  }
+
+  static String _normalized(String value) =>
+      value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9äöüß]+'), ' ').trim();
+
+  int _compareRemoteWorks(FundusRemoteWork left, FundusRemoteWork right) {
+    String value(FundusRemoteWork work) => switch (_sort) {
+      _RemoteSort.title => work.title,
+      _RemoteSort.author => work.authors.firstOrNull ?? work.title,
+      _RemoteSort.series => work.series ?? work.title,
+    };
+    final compared = value(
+      left,
+    ).toLowerCase().compareTo(value(right).toLowerCase());
+    if (compared != 0) return compared;
+    final sequence = (left.seriesSequence ?? double.infinity).compareTo(
+      right.seriesSequence ?? double.infinity,
+    );
+    return sequence != 0 ? sequence : left.title.compareTo(right.title);
+  }
+
+  List<String> _remoteGroupValues(FundusRemoteWork work) => switch (_grouping) {
+    _RemoteGrouping.books => const [],
+    _RemoteGrouping.authors => work.authors,
+    _RemoteGrouping.series => [if (work.series != null) work.series!],
+    _RemoteGrouping.narrators => work.narrators,
+  };
+
+  List<(String, int)> _remoteGroups(List<FundusRemoteWork> works) {
+    final counts = <String, int>{};
+    for (final work in works) {
+      for (final value in _remoteGroupValues(work)) {
+        counts.update(value, (count) => count + 1, ifAbsent: () => 1);
+      }
+    }
+    return counts.entries.map((entry) => (entry.key, entry.value)).toList()
+      ..sort(
+        (left, right) =>
+            left.$1.toLowerCase().compareTo(right.$1.toLowerCase()),
+      );
   }
 
   Future<void> _showWork(
@@ -1353,6 +1597,13 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 const SizedBox(height: 8),
                 SelectableText(description),
               ],
+              const SizedBox(height: 20),
+              Text(
+                'Speicherort',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 6),
+              SelectableText(offline.directoryPath),
               const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,
@@ -1366,12 +1617,63 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                   ),
                 ),
               ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => Navigator.pop(context, 'delete'),
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('Download löschen'),
+                ),
+              ),
             ],
           ),
         ),
       ),
     );
-    if (action == 'play') await _playOffline(offline);
+    if (action == 'play') {
+      await _playOffline(offline);
+    } else if (action == 'delete' && mounted) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Offline-Download löschen?'),
+          content: Text(
+            '„${offline.title}“ wird nur von diesem Gerät entfernt.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Löschen'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      await _offlineStore.remove(
+        serverId: offline.serverId,
+        libraryId: offline.libraryId,
+        workId: offline.workId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _offlineWorks = _offlineWorks
+            .where(
+              (item) =>
+                  item.serverId != offline.serverId ||
+                  item.libraryId != offline.libraryId ||
+                  item.workId != offline.workId,
+            )
+            .toList();
+        _offlineKeys.remove(
+          '${offline.serverId}/${offline.libraryId}/${offline.workId}',
+        );
+      });
+    }
   }
 
   Future<void> _playOffline(FundusOfflineWork offline) async {
@@ -1418,10 +1720,111 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   }
 }
 
-class _RemotePlayerBar extends StatelessWidget {
-  const _RemotePlayerBar({required this.controller});
+class _RemoteExpandedPlayer extends StatelessWidget {
+  const _RemoteExpandedPlayer({required this.controller});
 
   final FundusRemotePlayerController controller;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: controller,
+    builder: (context, child) => Scaffold(
+      appBar: AppBar(
+        title: Text(controller.work?.title ?? 'Player'),
+        actions: [
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            tooltip: 'Player verkleinern',
+            icon: const Icon(Icons.close_fullscreen),
+          ),
+        ],
+      ),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final coverPath = controller.offlineCoverPath;
+          final cover = AspectRatio(
+            aspectRatio: 1,
+            child: coverPath == null
+                ? const Card(child: Icon(Icons.audiotrack, size: 100))
+                : ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Image.file(File(coverPath), fit: BoxFit.cover),
+                  ),
+          );
+          final details = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                controller.work?.title ?? 'Remote-Wiedergabe',
+                style: Theme.of(context).textTheme.headlineMedium,
+              ),
+              if (controller.work?.authors case final authors?)
+                if (authors.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(authors.join(', ')),
+                ],
+              if (controller.work?.series case final series?) ...[
+                const SizedBox(height: 8),
+                Text(series),
+              ],
+              if (controller.work?.description case final description?) ...[
+                const SizedBox(height: 20),
+                Text(
+                  'Beschreibung',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Text(description, maxLines: 8, overflow: TextOverflow.ellipsis),
+              ],
+            ],
+          );
+          return ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              if (constraints.maxWidth >= 700)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(width: 300, child: cover),
+                    const SizedBox(width: 28),
+                    Expanded(child: details),
+                  ],
+                )
+              else ...[
+                Center(child: SizedBox(width: 280, child: cover)),
+                const SizedBox(height: 20),
+                details,
+              ],
+              const SizedBox(height: 24),
+              Text(
+                'Dateien / Kapitel',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              for (var index = 0; index < controller.tracks.length; index++)
+                ListTile(
+                  selected: index == controller.currentIndex,
+                  leading: Text('${index + 1}'),
+                  title: Text(controller.tracks[index].title),
+                  trailing: index == controller.currentIndex
+                      ? const Icon(Icons.graphic_eq)
+                      : null,
+                  onTap: () => controller.jumpToTrack(index),
+                ),
+              const SizedBox(height: 160),
+            ],
+          );
+        },
+      ),
+      bottomNavigationBar: _RemotePlayerBar(controller: controller),
+    ),
+  );
+}
+
+class _RemotePlayerBar extends StatelessWidget {
+  const _RemotePlayerBar({required this.controller, this.onExpand});
+
+  final FundusRemotePlayerController controller;
+  final VoidCallback? onExpand;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -1490,6 +1893,12 @@ class _RemotePlayerBar extends StatelessWidget {
                       onPressed: controller.next,
                       icon: const Icon(Icons.skip_next),
                     ),
+                    if (onExpand != null)
+                      IconButton(
+                        onPressed: onExpand,
+                        tooltip: 'Player maximieren',
+                        icon: const Icon(Icons.open_in_full),
+                      ),
                   ],
                 ),
                 Row(

@@ -115,9 +115,8 @@ void main() {
     expect(loaded?.fileId, detail.tracks.single.id);
     expect(loaded?.position, const Duration(seconds: 2));
 
-    final offlineStore = FundusOfflineStore(
-      root: Directory('${temporary.path}/offline'),
-    );
+    final portableLibrary = Directory('${temporary.path}/portable-library');
+    final offlineStore = FundusOfflineStore.forLibrary(portableLibrary);
     final transferredBytes = <int>[];
     final offline = await offlineStore.download(
       client,
@@ -162,7 +161,7 @@ void main() {
     expect(refreshed?.publisher, 'Testverlag');
     expect(refreshed?.publishedYear, 2026);
     expect(
-      Directory('${temporary.path}/offline')
+      Directory('${portableLibrary.path}/_fundus/offline-media')
           .listSync(recursive: true)
           .whereType<File>()
           .any((file) => file.path.endsWith('.part')),
@@ -202,6 +201,13 @@ void main() {
       ),
       isNull,
     );
+    final ledger = File(
+      '${portableLibrary.path}/_fundus/offline-media/downloads.log',
+    );
+    expect(await ledger.exists(), isTrue);
+    final ledgerText = await ledger.readAsString();
+    expect(ledgerText, contains('"event":"downloaded"'));
+    expect(ledgerText, contains('"event":"removed"'));
 
     await server.close(force: true);
     final relocatedServer = await shelf_io.serve(

@@ -89,7 +89,7 @@ class _FundusAppState extends State<FundusApp> {
   final _recentStore = RecentLibraryStore.platformDefault();
   final _remoteStore = FundusRemoteServerStore();
   final _remoteClient = const FundusRemoteClient();
-  final _offlineStore = FundusOfflineStore();
+  FundusOfflineStore _offlineStore = FundusOfflineStore();
   final _peerDiscovery = FundusPeerDiscovery();
   late final FundusPeerServerController _peerServer;
   List<RecentLibraryEntry> _recentLibraries = const [];
@@ -168,6 +168,9 @@ class _FundusAppState extends State<FundusApp> {
               onExportDiagnostics: _library == null ? null : _exportDiagnostics,
               onToggleTheme: _toggleTheme,
               peerServer: _peerServer,
+              offlineStore: _offlineStore,
+              offlineWorks: _offlineWorks,
+              onOpenDownloads: _openOfflineMedia,
             ),
     );
   }
@@ -289,6 +292,8 @@ class _FundusAppState extends State<FundusApp> {
       await _stopPlayer();
       _library?.close();
       _library = library;
+      _offlineStore = FundusOfflineStore.forLibrary(library.root);
+      _offlineWorks = await _offlineStore.listAll();
       await FundusDiagnostics.instance.configure(library.root);
       await FundusDiagnostics.instance.record('library.opened', {
         'library_id': library.manifest.libraryId,
@@ -473,6 +478,7 @@ class _FundusAppState extends State<FundusApp> {
       initialServerId: choice.server.id,
       initialLibraryId: choice.library.libraryId,
       peerServer: _peerServer,
+      offlineStore: _offlineStore,
     );
     await _loadRemoteLibraries();
   }
@@ -480,14 +486,22 @@ class _FundusAppState extends State<FundusApp> {
   Future<void> _openOfflineMedia() async {
     final dialogContext = _navigatorKey.currentContext;
     if (dialogContext == null) return;
-    await showFundusRemoteServers(dialogContext, peerServer: _peerServer);
+    await showFundusRemoteServers(
+      dialogContext,
+      peerServer: _peerServer,
+      offlineStore: _offlineStore,
+    );
     await _loadRemoteLibraries();
   }
 
   Future<void> _openServerSettings() async {
     final dialogContext = _navigatorKey.currentContext;
     if (dialogContext == null) return;
-    await showFundusServerSettings(dialogContext, _peerServer);
+    await showFundusServerSettings(
+      dialogContext,
+      _peerServer,
+      offlineStore: _offlineStore,
+    );
     await _loadRemoteLibraries();
   }
 
@@ -887,6 +901,9 @@ class LibraryShell extends StatefulWidget {
     this.onPlay,
     this.onExportDiagnostics,
     this.peerServer,
+    this.offlineStore,
+    this.offlineWorks = const [],
+    this.onOpenDownloads,
   });
 
   final List<LibraryWorkSummary> works;
@@ -900,6 +917,9 @@ class LibraryShell extends StatefulWidget {
   final WorkPlaybackCallback? onPlay;
   final VoidCallback? onExportDiagnostics;
   final FundusPeerServerController? peerServer;
+  final FundusOfflineStore? offlineStore;
+  final List<FundusOfflineWork> offlineWorks;
+  final VoidCallback? onOpenDownloads;
 
   @override
   State<LibraryShell> createState() => _LibraryShellState();
@@ -1140,7 +1160,33 @@ class _LibraryShellState extends State<LibraryShell> {
     final pages = [
       _library(context, detailAsDialog: true),
       _library(context, detailAsDialog: true, showSearch: true),
-      const Center(child: Text('Downloads')),
+      widget.offlineWorks.isEmpty
+          ? const Center(child: Text('Noch keine Offline-Downloads.'))
+          : ListView(
+              padding: const EdgeInsets.all(12),
+              children: [
+                for (final offline in widget.offlineWorks)
+                  Card(
+                    child: ListTile(
+                      leading: offline.coverPath == null
+                          ? const Icon(Icons.download_done)
+                          : ClipRRect(
+                              borderRadius: BorderRadius.circular(4),
+                              child: Image.file(
+                                File(offline.coverPath!),
+                                width: 42,
+                                height: 52,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                      title: Text(offline.title),
+                      subtitle: const Text('Offline verfügbar'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: widget.onOpenDownloads,
+                    ),
+                  ),
+              ],
+            ),
       Center(
         child: FilledButton.icon(
           onPressed: widget.peerServer == null
@@ -1155,6 +1201,12 @@ class _LibraryShellState extends State<LibraryShell> {
       appBar: AppBar(
         title: const Text('Hörbücher & Hörspiele'),
         actions: [
+          if (widget.onClose != null)
+            IconButton(
+              onPressed: widget.onClose,
+              tooltip: 'Bibliothek oder Server wechseln',
+              icon: const Icon(Icons.home_outlined),
+            ),
           IconButton(
             onPressed: widget.onToggleTheme,
             tooltip: 'Theme wechseln',
@@ -1162,12 +1214,24 @@ class _LibraryShellState extends State<LibraryShell> {
           ),
         ],
       ),
-      body: pages[_mobileDestination],
+      body: _playerExpanded && widget.player != null
+          ? _ExpandedPlayer(
+              controller: widget.player!,
+              onCollapse: () => setState(() => _playerExpanded = false),
+              onPlay: widget.onPlay,
+              onSelectAuthor: _showAuthor,
+              onSelectNarrator: _showNarrator,
+            )
+          : pages[_mobileDestination],
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (widget.player != null)
-            _PlayerBar(controller: widget.player!, compact: true),
+          if (widget.player != null && !_playerExpanded)
+            _PlayerBar(
+              controller: widget.player!,
+              compact: true,
+              onExpand: () => setState(() => _playerExpanded = true),
+            ),
           NavigationBar(
             selectedIndex: _mobileDestination,
             onDestinationSelected: (value) =>
@@ -1280,7 +1344,11 @@ class _LibraryShellState extends State<LibraryShell> {
   Future<void> _openServerSettings(BuildContext context) async {
     final controller = widget.peerServer;
     if (controller == null) return;
-    await showFundusServerSettings(context, controller);
+    await showFundusServerSettings(
+      context,
+      controller,
+      offlineStore: widget.offlineStore,
+    );
   }
 
   Widget _libraryTitle(BuildContext context) => Row(

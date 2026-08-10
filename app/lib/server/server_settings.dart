@@ -2,25 +2,31 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'fundus_peer_server_controller.dart';
+import 'fundus_offline_store.dart';
 import 'remote_servers_view.dart';
 
 Future<void> showFundusServerSettings(
   BuildContext context,
-  FundusPeerServerController controller,
-) => showDialog<void>(
+  FundusPeerServerController controller, {
+  FundusOfflineStore? offlineStore,
+}) => showDialog<void>(
   context: context,
   builder: (context) => Dialog(
     child: ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 680, maxHeight: 760),
-      child: _ServerSettings(controller: controller),
+      child: _ServerSettings(
+        controller: controller,
+        offlineStore: offlineStore,
+      ),
     ),
   ),
 );
 
 class _ServerSettings extends StatelessWidget {
-  const _ServerSettings({required this.controller});
+  const _ServerSettings({required this.controller, this.offlineStore});
 
   final FundusPeerServerController controller;
+  final FundusOfflineStore? offlineStore;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -31,8 +37,11 @@ class _ServerSettings extends StatelessWidget {
         automaticallyImplyLeading: false,
         actions: [
           IconButton(
-            onPressed: () =>
-                showFundusRemoteServers(context, peerServer: controller),
+            onPressed: () => showFundusRemoteServers(
+              context,
+              peerServer: controller,
+              offlineStore: offlineStore,
+            ),
             tooltip: 'Mit Server verbinden',
             icon: const Icon(Icons.devices),
           ),
