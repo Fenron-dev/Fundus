@@ -26,4 +26,15 @@ abstract final class AndroidStorageAccess {
       return false;
     }
   }
+
+  static Future<String?> storageRoot() async {
+    if (!Platform.isAndroid) return null;
+    try {
+      return await _channel.invokeMethod<String>('storageRoot');
+    } on PlatformException {
+      return null;
+    } on MissingPluginException {
+      return null;
+    }
+  }
 }

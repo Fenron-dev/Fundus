@@ -37,10 +37,14 @@ final class RecentLibraryEntry {
 final class RecentLibraryStore {
   RecentLibraryStore(this.file);
 
-  factory RecentLibraryStore.platformDefault() {
+  factory RecentLibraryStore.platformDefault({String? androidStorageRoot}) {
     final environment = Platform.environment;
     late final String base;
-    if (Platform.isMacOS) {
+    if (Platform.isAndroid && androidStorageRoot != null) {
+      base =
+          '$androidStorageRoot${Platform.pathSeparator}Fundus'
+          '${Platform.pathSeparator}.fundus';
+    } else if (Platform.isMacOS) {
       base =
           '${environment['HOME'] ?? Directory.current.path}'
           '${Platform.pathSeparator}Library${Platform.pathSeparator}'
@@ -53,11 +57,11 @@ final class RecentLibraryStore {
           '${environment['HOME'] ?? Directory.current.path}'
               '${Platform.pathSeparator}.config';
     }
+    final directory = Platform.isAndroid && androidStorageRoot != null
+        ? base
+        : '$base${Platform.pathSeparator}Fundus';
     return RecentLibraryStore(
-      File(
-        '$base${Platform.pathSeparator}Fundus'
-        '${Platform.pathSeparator}recent_libraries.json',
-      ),
+      File('$directory${Platform.pathSeparator}recent_libraries.json'),
     );
   }
 

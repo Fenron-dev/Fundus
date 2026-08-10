@@ -23,6 +23,9 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "isGranted" -> result.success(hasDirectStorageAccess())
                 "request" -> requestDirectStorageAccess(result)
+                "storageRoot" -> result.success(
+                    Environment.getExternalStorageDirectory().absolutePath,
+                )
                 else -> result.notImplemented()
             }
         }

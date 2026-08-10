@@ -86,7 +86,8 @@ class _FundusAppState extends State<FundusApp> {
   FundusPlayerController? _player;
   String? _error;
   bool _busy = false;
-  final _recentStore = RecentLibraryStore.platformDefault();
+  late RecentLibraryStore _recentStore;
+  late final Future<void> _recentStoreReady;
   final _remoteStore = FundusRemoteServerStore();
   final _remoteClient = const FundusRemoteClient();
   FundusOfflineStore _offlineStore = FundusOfflineStore();
@@ -102,10 +103,10 @@ class _FundusAppState extends State<FundusApp> {
   void initState() {
     super.initState();
     _peerServer = FundusPeerServerController();
+    _recentStoreReady = _initializeRecentStore();
     _works = widget.initialWorks;
     if (widget.initialWorks == null) {
       unawaited(_peerServer.initialize());
-      unawaited(_loadRecentLibraries());
       unawaited(_loadRemoteLibraries());
     }
     _lifecycleListener = AppLifecycleListener(
@@ -118,6 +119,14 @@ class _FundusAppState extends State<FundusApp> {
         return AppExitResponse.exit;
       },
     );
+  }
+
+  Future<void> _initializeRecentStore() async {
+    final androidRoot = await AndroidStorageAccess.storageRoot();
+    _recentStore = RecentLibraryStore.platformDefault(
+      androidStorageRoot: androidRoot,
+    );
+    if (widget.initialWorks == null) await _loadRecentLibraries();
   }
 
   @override
@@ -264,7 +273,10 @@ class _FundusAppState extends State<FundusApp> {
         false;
     if (!openSettings) return false;
     final granted = await AndroidStorageAccess.request();
-    if (!granted && mounted) {
+    if (granted) {
+      await _recentStoreReady;
+      await _loadRecentLibraries();
+    } else if (mounted) {
       setState(() {
         _error =
             'Der Bibliothekszugriff wurde nicht freigegeben. Bitte '
@@ -300,6 +312,7 @@ class _FundusAppState extends State<FundusApp> {
         'create': create,
       });
       _works = library.listWorks();
+      await _recentStoreReady;
       _recentLibraries = await _recentStore.remember(
         path,
         _recentLibraries,

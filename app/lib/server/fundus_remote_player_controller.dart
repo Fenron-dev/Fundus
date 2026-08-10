@@ -86,6 +86,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   bool _closed = false;
   double _rate = 1;
   DateTime? _lastPersistedAt;
+  int _progressRevision = 0;
   String? _error;
   FundusOfflineWork? _offlineWork;
 
@@ -153,6 +154,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
           progress = null;
         }
       }
+      _progressRevision = progress?.revision ?? 0;
       if (tracks.isEmpty) {
         throw StateError('Dieses Werk enthält keine abspielbaren Dateien.');
       }
@@ -209,8 +211,35 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       await _player.pause();
       await persist();
     } else {
+      await _refreshProgressBeforeResume();
       await _player.play();
     }
+  }
+
+  Future<void> _refreshProgressBeforeResume() async {
+    final server = _server;
+    final library = _library;
+    final work = _work;
+    if (!_ready || server == null || library == null || work == null) return;
+    FundusRemoteProgress? latest;
+    try {
+      latest = await _client.progress(server, library.id, work.id);
+    } catch (_) {
+      return;
+    }
+    if (latest == null || latest.revision <= _progressRevision) return;
+    final targetIndex = latest.fileId == null
+        ? -1
+        : _tracks.indexWhere((track) => track.id == latest!.fileId);
+    if (targetIndex >= 0 && targetIndex != _currentIndex) {
+      await _player.jump(targetIndex);
+      _currentIndex = targetIndex;
+    }
+    if (!latest.finished && latest.position > Duration.zero) {
+      _position = await _seekAndVerify(latest.position);
+    }
+    _progressRevision = latest.revision;
+    notifyListeners();
   }
 
   Future<void> seek(Duration value) => _player.seek(value);
@@ -281,6 +310,14 @@ final class FundusRemotePlayerController extends ChangeNotifier {
           measuredDuration != null && measuredDuration < _position
           ? _position
           : measuredDuration;
+      if (!_playing) {
+        try {
+          final latest = await _client.progress(server, library.id, work.id);
+          if (latest != null && latest.revision > _progressRevision) return;
+        } catch (_) {
+          // Offline-Wiedergabe bleibt über die lokale Queue speicherbar.
+        }
+      }
       FundusOfflinePendingProgress? offlinePending;
       if (_offlineWork != null) {
         offlinePending = await _offlineStore.saveProgress(
@@ -293,7 +330,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         );
       }
       try {
-        await _client.saveProgress(
+        final saved = await _client.saveProgress(
           server,
           libraryId: library.id,
           workId: work.id,
@@ -304,6 +341,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
           deviceId: deviceId,
           operationId: _operationId(),
         );
+        _progressRevision = saved.revision;
         if (offlinePending != null) {
           await _offlineStore.markProgressSynced(offlinePending);
         }

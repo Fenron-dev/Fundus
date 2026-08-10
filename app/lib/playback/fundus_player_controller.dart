@@ -74,6 +74,7 @@ final class FundusPlayerController extends ChangeNotifier {
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   DateTime? _lastPersistedAt;
+  int _progressRevision = 0;
   bool _playing = false;
   bool _loading = false;
   bool _ready = false;
@@ -143,6 +144,7 @@ final class FundusPlayerController extends ChangeNotifier {
     }
 
     final progress = library.loadProgress(work.id);
+    _progressRevision = progress?.revision ?? 0;
     unawaited(
       FundusDiagnostics.instance.record('playback.open', {
         'work_id': work.id,
@@ -213,8 +215,38 @@ final class FundusPlayerController extends ChangeNotifier {
     if (_player.state.playing) {
       await _pauseAndPersist();
     } else {
+      await _refreshProgressBeforeResume();
       await _player.play();
     }
+  }
+
+  Future<void> _refreshProgressBeforeResume() async {
+    final library = _library;
+    final work = _work;
+    if (!_ready || library == null || work == null) return;
+    final latest = library.loadProgress(work.id);
+    if (latest == null || latest.revision <= _progressRevision) return;
+    final targetIndex = latest.fileId == null
+        ? -1
+        : _tracks.indexWhere((track) => track.fileId == latest.fileId);
+    if (targetIndex >= 0 && targetIndex != _currentIndex) {
+      _skipNextTrackTransition = true;
+      await _player.jump(targetIndex);
+      _currentIndex = targetIndex;
+    }
+    final target = PlaybackResumePolicy.resumePosition(latest);
+    if (target != null && target > Duration.zero) {
+      _position = await _seekAndVerify(target);
+    }
+    _progressRevision = latest.revision;
+    notifyListeners();
+    unawaited(
+      FundusDiagnostics.instance.record('playback.progress_refreshed', {
+        'work_id': work.id,
+        'revision': latest.revision,
+        'position_ms': target?.inMilliseconds,
+      }),
+    );
   }
 
   Future<void> next() async {
@@ -322,13 +354,27 @@ final class FundusPlayerController extends ChangeNotifier {
     }
     _persisting = true;
     try {
-      library.saveProgress(
+      final latest = library.loadProgress(work.id);
+      if (!_player.state.playing &&
+          latest != null &&
+          latest.revision > _progressRevision) {
+        unawaited(
+          FundusDiagnostics.instance.record('playback.stale_write_skipped', {
+            'work_id': work.id,
+            'local_revision': _progressRevision,
+            'current_revision': latest.revision,
+          }),
+        );
+        return;
+      }
+      final saved = library.saveProgress(
         workId: work.id,
         fileId: currentTrack.fileId,
         position: _position,
         duration: _duration > Duration.zero ? _duration : currentTrack.duration,
         finished: finished,
       );
+      _progressRevision = saved.revision;
       _sessionProgress[work.id] = PlayerWorkProgress(
         position: _position,
         duration: _duration > Duration.zero ? _duration : currentTrack.duration,
