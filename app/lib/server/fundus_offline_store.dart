@@ -33,8 +33,14 @@ final class FundusOfflineWork {
     required this.tracks,
     this.kind = 'audiobook',
     this.authors = const [],
+    this.subtitle,
     this.series,
+    this.seriesSequence,
+    this.narrators = const [],
+    this.language,
     this.description,
+    this.publisher,
+    this.publishedYear,
     this.coverPath,
   });
 
@@ -46,9 +52,20 @@ final class FundusOfflineWork {
   final List<FundusOfflineTrack> tracks;
   final String kind;
   final List<String> authors;
+  final String? subtitle;
   final String? series;
+  final num? seriesSequence;
+  final List<String> narrators;
+  final String? language;
   final String? description;
+  final String? publisher;
+  final int? publishedYear;
   final String? coverPath;
+
+  Duration get totalDuration => tracks.fold(
+    Duration.zero,
+    (total, track) => total + (track.duration ?? Duration.zero),
+  );
 }
 
 final class FundusOfflinePendingProgress {
@@ -145,9 +162,27 @@ final class FundusOfflineStore {
         authors: (value['authors'] as List? ?? const [])
             .whereType<String>()
             .toList(growable: false),
+        subtitle: value['subtitle'] is String
+            ? value['subtitle'] as String
+            : null,
         series: value['series'] is String ? value['series'] as String : null,
+        seriesSequence: value['series_sequence'] is num
+            ? value['series_sequence'] as num
+            : null,
+        narrators: (value['narrators'] as List? ?? const [])
+            .whereType<String>()
+            .toList(growable: false),
+        language: value['language'] is String
+            ? value['language'] as String
+            : null,
         description: value['description'] is String
             ? value['description'] as String
+            : null,
+        publisher: value['publisher'] is String
+            ? value['publisher'] as String
+            : null,
+        publishedYear: value['published_year'] is int
+            ? value['published_year'] as int
             : null,
         downloadedAt:
             DateTime.tryParse('${value['downloaded_at'] ?? ''}') ??
@@ -197,6 +232,69 @@ final class FundusOfflineStore {
     }
     result.sort((a, b) => b.downloadedAt.compareTo(a.downloadedAt));
     return result;
+  }
+
+  Future<FundusOfflineWork?> refreshMetadata({
+    required String serverId,
+    required String libraryId,
+    required FundusRemoteWork work,
+  }) async {
+    final directory = await _workDirectory(serverId, libraryId, work.id);
+    final manifest = File(p.join(directory.path, 'manifest.json'));
+    if (!await manifest.exists()) return null;
+    try {
+      final decoded = jsonDecode(await manifest.readAsString());
+      if (decoded is! Map) return null;
+      final value = Map<String, Object?>.from(decoded);
+      value
+        ..['title'] = work.title
+        ..['kind'] = work.kind
+        ..['authors'] = work.authors
+        ..['subtitle'] = work.subtitle
+        ..['series'] = work.series
+        ..['series_sequence'] = work.seriesSequence
+        ..['narrators'] = work.narrators
+        ..['language'] = work.language
+        ..['description'] = work.description
+        ..['publisher'] = work.publisher
+        ..['published_year'] = work.publishedYear;
+      final partial = File('${manifest.path}.part');
+      await partial.writeAsString(
+        const JsonEncoder.withIndent('  ').convert(value),
+        flush: true,
+      );
+      await manifest.delete();
+      await partial.rename(manifest.path);
+      final refreshed = await lookup(
+        serverId: serverId,
+        libraryId: libraryId,
+        workId: work.id,
+      );
+      final trackIndex = work.progressTrackIndex;
+      final position = work.progressPosition;
+      if (refreshed != null &&
+          trackIndex != null &&
+          trackIndex >= 0 &&
+          trackIndex < refreshed.tracks.length &&
+          position != null) {
+        await cacheProgress(
+          serverId: serverId,
+          libraryId: libraryId,
+          workId: work.id,
+          progress: FundusRemoteProgress(
+            fileId: refreshed.tracks[trackIndex].id,
+            position: position,
+            finished: work.progressFinished,
+            revision: 0,
+          ),
+        );
+      }
+      return refreshed;
+    } on FileSystemException {
+      return null;
+    } on FormatException {
+      return null;
+    }
   }
 
   Future<FundusOfflineWork> download(
@@ -289,8 +387,15 @@ final class FundusOfflineStore {
           'title': work.title,
           'kind': work.kind,
           'authors': work.authors,
+          if (work.subtitle != null) 'subtitle': work.subtitle,
           if (work.series != null) 'series': work.series,
+          if (work.seriesSequence != null)
+            'series_sequence': work.seriesSequence,
+          'narrators': work.narrators,
+          if (work.language != null) 'language': work.language,
           if (work.description != null) 'description': work.description,
+          if (work.publisher != null) 'publisher': work.publisher,
+          if (work.publishedYear != null) 'published_year': work.publishedYear,
           'downloaded_at': downloadedAt.toIso8601String(),
           if (coverPath != null) 'cover_path': p.basename(coverPath),
           'tracks': [
@@ -309,6 +414,20 @@ final class FundusOfflineStore {
       );
       if (await manifest.exists()) await manifest.delete();
       await partialManifest.rename(manifest.path);
+      try {
+        final progress = await client.progress(server, library.id, work.id);
+        if (progress != null) {
+          await cacheProgress(
+            serverId: server.id,
+            libraryId: library.id,
+            workId: work.id,
+            progress: progress,
+          );
+        }
+      } catch (_) {
+        // Der Download bleibt auch ohne erreichbaren Fortschritts-Endpunkt
+        // vollständig offline nutzbar.
+      }
       return (await lookup(
         serverId: server.id,
         libraryId: library.id,
@@ -357,6 +476,39 @@ final class FundusOfflineStore {
     } on FormatException {
       return null;
     }
+  }
+
+  Future<void> cacheProgress({
+    required String serverId,
+    required String libraryId,
+    required String workId,
+    required FundusRemoteProgress progress,
+  }) async {
+    final directory = await _workDirectory(serverId, libraryId, workId);
+    await directory.create(recursive: true);
+    final destination = File(p.join(directory.path, 'progress.json'));
+    if (await destination.exists()) {
+      try {
+        final current = jsonDecode(await destination.readAsString());
+        if (current is Map && current['pending_sync'] == true) return;
+      } on FormatException {
+        // Eine defekte Cache-Datei wird unten atomar ersetzt.
+      }
+    }
+    final partial = File('${destination.path}.part');
+    await partial.writeAsString(
+      jsonEncode({
+        'file_id': progress.fileId,
+        'position_ms': progress.position.inMilliseconds,
+        'finished': progress.finished,
+        'revision': progress.revision,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+        'pending_sync': false,
+      }),
+      flush: true,
+    );
+    if (await destination.exists()) await destination.delete();
+    await partial.rename(destination.path);
   }
 
   Future<FundusOfflinePendingProgress> saveProgress({

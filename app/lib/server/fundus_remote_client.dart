@@ -185,9 +185,19 @@ final class FundusRemoteWork {
     required this.authors,
     required this.hasCover,
     this.kind = 'audiobook',
+    this.subtitle,
     this.series,
     this.seriesSequence,
+    this.narrators = const [],
+    this.language,
     this.description,
+    this.publisher,
+    this.publishedYear,
+    this.fileCount = 0,
+    this.progressPosition,
+    this.progressDuration,
+    this.progressTrackIndex,
+    this.progressFinished = false,
   });
 
   final String id;
@@ -195,9 +205,19 @@ final class FundusRemoteWork {
   final List<String> authors;
   final bool hasCover;
   final String kind;
+  final String? subtitle;
   final String? series;
   final num? seriesSequence;
+  final List<String> narrators;
+  final String? language;
   final String? description;
+  final String? publisher;
+  final int? publishedYear;
+  final int fileCount;
+  final Duration? progressPosition;
+  final Duration? progressDuration;
+  final int? progressTrackIndex;
+  final bool progressFinished;
 }
 
 final class FundusRemoteTrack {
@@ -455,16 +475,48 @@ final class FundusRemoteClient {
                 .toList(growable: false),
             hasCover: item['has_cover'] == true,
             kind: item['kind'] is String ? item['kind'] as String : 'unknown',
+            subtitle: item['subtitle'] is String
+                ? item['subtitle'] as String
+                : null,
             series: item['series'] is String ? item['series'] as String : null,
             seriesSequence: item['series_sequence'] is num
                 ? item['series_sequence'] as num
                 : null,
+            narrators: (item['narrators'] as List? ?? const [])
+                .whereType<String>()
+                .toList(growable: false),
+            language: item['language'] is String
+                ? item['language'] as String
+                : null,
             description: item['description'] is String
                 ? item['description'] as String
                 : null,
+            publisher: item['publisher'] is String
+                ? item['publisher'] as String
+                : null,
+            publishedYear: item['published_year'] is int
+                ? item['published_year'] as int
+                : null,
+            fileCount: item['file_count'] is int
+                ? item['file_count'] as int
+                : 0,
+            progressPosition: _durationFromSeconds(
+              (item['progress'] as Map?)?['position_seconds'],
+            ),
+            progressDuration: _durationFromSeconds(
+              (item['progress'] as Map?)?['duration_seconds'],
+            ),
+            progressTrackIndex:
+                (item['progress'] as Map?)?['track_index'] is int
+                ? (item['progress'] as Map)['track_index'] as int
+                : null,
+            progressFinished: (item['progress'] as Map?)?['finished'] == true,
           ),
     ];
   }
+
+  static Duration? _durationFromSeconds(Object? value) =>
+      value is num ? Duration(milliseconds: (value * 1000).round()) : null;
 
   Future<Uint8List> cover(
     FundusRemoteServer server,

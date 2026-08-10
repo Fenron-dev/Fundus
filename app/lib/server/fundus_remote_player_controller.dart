@@ -5,6 +5,8 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
 
+import '../diagnostics/fundus_diagnostics.dart';
+import '../playback/playback_sleep_timer.dart';
 import 'fundus_remote_client.dart';
 import 'fundus_remote_stream_proxy.dart';
 import 'fundus_offline_store.dart';
@@ -17,6 +19,8 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   }) : _client = client,
        _offlineStore = offlineStore ?? FundusOfflineStore(),
        _player = Player() {
+    _sleepTimer = PlaybackSleepTimer(onElapsed: _pauseForSleepTimer);
+    _sleepTimer.addListener(notifyListeners);
     _subscriptions.addAll([
       _player.stream.playing.listen((value) {
         _playing = value;
@@ -44,11 +48,14 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         notifyListeners();
       }),
       _player.stream.completed.listen((completed) {
-        if (completed && _currentIndex == _tracks.length - 1) {
+        if (!completed) return;
+        if (_currentIndex == _tracks.length - 1) {
           final finished =
               _duration > Duration.zero &&
               _position + const Duration(seconds: 10) >= _duration;
           unawaited(persist(finished: finished));
+        } else {
+          unawaited(_sleepTimer.trackEnded());
         }
       }),
       _player.stream.error.listen((value) {
@@ -62,6 +69,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   final FundusRemoteClient _client;
   final FundusOfflineStore _offlineStore;
   final Player _player;
+  late final PlaybackSleepTimer _sleepTimer;
   final List<StreamSubscription<Object?>> _subscriptions = [];
   FundusRemoteStreamProxy? _proxy;
   FundusRemoteServer? _server;
@@ -76,6 +84,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   bool _ready = false;
   bool _persisting = false;
   bool _closed = false;
+  double _rate = 1;
   DateTime? _lastPersistedAt;
   String? _error;
   FundusOfflineWork? _offlineWork;
@@ -89,7 +98,9 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   Duration get duration => _duration;
   bool get playing => _playing;
   bool get loading => _loading;
+  double get rate => _rate;
   String? get error => _error;
+  PlaybackSleepTimer get sleepTimer => _sleepTimer;
 
   Future<void> open(
     FundusRemoteServer server,
@@ -100,6 +111,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     if (_closed) return;
     await persist();
     await _player.pause();
+    _sleepTimer.cancel();
     await _proxy?.close();
     _proxy = null;
     _ready = false;
@@ -170,9 +182,17 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       if (progress != null &&
           !progress.finished &&
           progress.position > Duration.zero) {
-        await _player.seek(progress.position);
-        _position = progress.position;
+        _position = await _seekAndVerify(progress.position);
         notifyListeners();
+        unawaited(
+          FundusDiagnostics.instance.record('remote.resume_applied', {
+            'work_id': work.id,
+            'file_id': track?.id,
+            'position_ms': progress.position.inMilliseconds,
+            'player_position_ms': _position.inMilliseconds,
+            'offline': offlineWork != null,
+          }),
+        );
       }
     } catch (error) {
       _loading = false;
@@ -193,6 +213,25 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   }
 
   Future<void> seek(Duration value) => _player.seek(value);
+
+  Future<void> seekRelative(Duration delta) async {
+    final target = _position + delta;
+    final maximum = _duration;
+    await _player.seek(
+      target < Duration.zero
+          ? Duration.zero
+          : maximum > Duration.zero && target > maximum
+          ? maximum
+          : target,
+    );
+    await persist();
+  }
+
+  Future<void> setRate(double value) async {
+    _rate = value;
+    notifyListeners();
+    await _player.setRate(value);
+  }
 
   Future<void> next() async {
     if (!_ready || _currentIndex >= _tracks.length - 1) return;
@@ -280,6 +319,8 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     for (final subscription in _subscriptions) {
       await subscription.cancel();
     }
+    _sleepTimer.removeListener(notifyListeners);
+    _sleepTimer.dispose();
     await _player.dispose();
     await _proxy?.close();
     _proxy = null;
@@ -289,6 +330,23 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     final random = Random.secure();
     final bytes = List<int>.generate(18, (_) => random.nextInt(256));
     return 'remote-${base64UrlEncode(bytes).replaceAll('=', '')}';
+  }
+
+  Future<Duration> _seekAndVerify(Duration target) async {
+    var actual = _player.state.position;
+    for (var attempt = 1; attempt <= 6; attempt++) {
+      await _player.seek(target);
+      await Future<void>.delayed(Duration(milliseconds: 100 * attempt));
+      actual = _player.state.position;
+      if ((actual - target).abs() <= const Duration(seconds: 2)) return actual;
+    }
+    throw StateError('Fortsetzungsposition konnte nicht gesetzt werden.');
+  }
+
+  Future<void> _pauseForSleepTimer() async {
+    if (_closed) return;
+    await _player.pause();
+    await persist();
   }
 
   @override

@@ -130,6 +130,38 @@ void main() {
     expect(offline.kind, 'audiobook');
     expect(transferredBytes, containsAllInOrder([0, 3]));
     expect(
+      (await offlineStore.loadProgress(
+        serverId: profile.id,
+        libraryId: libraries.single.id,
+        workId: works.single.id,
+      ))?.position,
+      const Duration(seconds: 2),
+    );
+    final refreshed = await offlineStore.refreshMetadata(
+      serverId: profile.id,
+      libraryId: libraries.single.id,
+      work: FundusRemoteWork(
+        id: works.single.id,
+        title: works.single.title,
+        authors: const ['Autorin'],
+        hasCover: false,
+        subtitle: 'Untertitel',
+        series: 'Testserie',
+        seriesSequence: 2,
+        narrators: const ['Sprecher'],
+        language: 'de',
+        description: 'Beschreibung',
+        publisher: 'Testverlag',
+        publishedYear: 2026,
+        fileCount: 1,
+      ),
+    );
+    expect(refreshed?.subtitle, 'Untertitel');
+    expect(refreshed?.narrators, ['Sprecher']);
+    expect(refreshed?.language, 'de');
+    expect(refreshed?.publisher, 'Testverlag');
+    expect(refreshed?.publishedYear, 2026);
+    expect(
       Directory('${temporary.path}/offline')
           .listSync(recursive: true)
           .whereType<File>()

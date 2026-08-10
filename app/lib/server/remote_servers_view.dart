@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../diagnostics/fundus_diagnostics.dart';
+import '../playback/playback_sleep_timer.dart';
 import 'fundus_remote_client.dart';
 import 'fundus_peer_server_controller.dart';
 import 'fundus_remote_player_controller.dart';
@@ -298,10 +299,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       final works = result.value;
       final offline = await Future.wait([
         for (final work in works)
-          _offlineStore.lookup(
+          _offlineStore.refreshMetadata(
             serverId: activeServer.id,
             libraryId: library.id,
-            workId: work.id,
+            work: work,
           ),
       ]);
       if (!mounted) return;
@@ -317,6 +318,19 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
               if (offline[index] != null)
                 _offlineKey(activeServer, library, works[index]),
           ]);
+        _offlineWorks = [
+          for (final current in _offlineWorks)
+            offline
+                    .whereType<FundusOfflineWork>()
+                    .where(
+                      (item) =>
+                          item.serverId == current.serverId &&
+                          item.libraryId == current.libraryId &&
+                          item.workId == current.workId,
+                    )
+                    .firstOrNull ??
+                current,
+        ];
         _busy = false;
       });
     } catch (_) {
@@ -542,9 +556,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                       ),
                     ),
               title: Text(offline.title),
-              subtitle: Text(_kindLabel(offline.kind)),
-              trailing: const Icon(Icons.play_arrow),
-              onTap: () => _playOffline(offline),
+              subtitle: Text(_offlineSubtitle(offline)),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _showOfflineWork(offline),
             ),
           ),
       ],
@@ -605,9 +619,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                       ),
                     ),
               title: Text(offline.title),
-              subtitle: const Text('Auf diesem Gerät'),
-              trailing: const Icon(Icons.play_arrow),
-              onTap: () => _playOffline(offline),
+              subtitle: Text(_offlineSubtitle(offline)),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _showOfflineWork(offline),
             ),
           ),
       ],
@@ -795,19 +809,59 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                         ),
                         const SizedBox(height: 6),
                         Text(work.authors.join(', ')),
+                        if (work.subtitle case final subtitle?) ...[
+                          const SizedBox(height: 4),
+                          Text(subtitle),
+                        ],
                         if (work.series case final series?) ...[
                           const SizedBox(height: 6),
                           Text(
                             work.seriesSequence == null
                                 ? series
-                                : '$series · Band ${work.seriesSequence}',
+                                : '$series · Band '
+                                      '${_formatRemoteSequence(work.seriesSequence!)}',
                           ),
                         ],
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            for (final narrator in work.narrators)
+                              Chip(
+                                avatar: const Icon(Icons.mic_none, size: 16),
+                                label: Text(narrator),
+                              ),
+                            if (work.language case final language?)
+                              Chip(label: Text(_remoteLanguage(language))),
+                            if (work.publisher case final publisher?)
+                              Chip(
+                                label: Text(
+                                  work.publishedYear == null
+                                      ? publisher
+                                      : '$publisher · ${work.publishedYear}',
+                                ),
+                              )
+                            else if (work.publishedYear case final year?)
+                              Chip(label: Text('$year')),
+                            Chip(label: Text('${work.fileCount} Datei(en)')),
+                          ],
+                        ),
                       ],
                     ),
                   ),
                 ],
               ),
+              if (work.progressPosition case final position?) ...[
+                const SizedBox(height: 16),
+                Text(
+                  work.progressDuration == null
+                      ? 'Fortsetzen bei ${_formatRemoteDuration(position)}'
+                      : '${_formatRemoteDuration(position)} / '
+                            '${_formatRemoteDuration(work.progressDuration!)}',
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+              ],
               if (work.description case final description?) ...[
                 const SizedBox(height: 20),
                 Text(description),
@@ -1161,6 +1215,165 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     _ => Icons.audiotrack,
   };
 
+  static String _offlineSubtitle(FundusOfflineWork work) {
+    final values = <String>[
+      if (work.authors.isNotEmpty) work.authors.join(', '),
+      if (work.series != null) work.series!,
+      'Offline',
+    ];
+    return values.join(' · ');
+  }
+
+  static String _formatRemoteSequence(num value) =>
+      value == value.roundToDouble()
+      ? value.toInt().toString()
+      : value.toString().replaceAll('.', ',');
+
+  static String _remoteLanguage(String value) {
+    final normalized = value.toLowerCase().replaceAll('_', '-');
+    return switch (normalized.split('-').first) {
+      'de' || 'deu' || 'ger' => 'Deutsch',
+      'en' || 'eng' => 'Englisch',
+      'fr' || 'fra' || 'fre' => 'Französisch',
+      'es' || 'spa' => 'Spanisch',
+      'it' || 'ita' => 'Italienisch',
+      'ja' || 'jpn' => 'Japanisch',
+      _ => value,
+    };
+  }
+
+  Future<void> _showOfflineWork(FundusOfflineWork offline) async {
+    final progress = await _offlineStore.loadProgress(
+      serverId: offline.serverId,
+      libraryId: offline.libraryId,
+      workId: offline.workId,
+    );
+    if (!mounted) return;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 120,
+                    height: 170,
+                    child: offline.coverPath == null
+                        ? const Icon(Icons.audiotrack, size: 72)
+                        : ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: Image.file(
+                              File(offline.coverPath!),
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                  ),
+                  const SizedBox(width: 18),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          offline.title,
+                          style: Theme.of(context).textTheme.headlineSmall,
+                        ),
+                        if (offline.subtitle case final subtitle?) ...[
+                          const SizedBox(height: 4),
+                          Text(subtitle),
+                        ],
+                        if (offline.authors.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Text(offline.authors.join(', ')),
+                        ],
+                        if (offline.series case final series?) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            offline.seriesSequence == null
+                                ? series
+                                : '$series · Band '
+                                      '${_formatRemoteSequence(offline.seriesSequence!)}',
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final narrator in offline.narrators)
+                    Chip(
+                      avatar: const Icon(Icons.mic_none, size: 16),
+                      label: Text(narrator),
+                    ),
+                  if (offline.language case final language?)
+                    Chip(label: Text(_remoteLanguage(language))),
+                  if (offline.publisher case final publisher?)
+                    Chip(
+                      label: Text(
+                        offline.publishedYear == null
+                            ? publisher
+                            : '$publisher · ${offline.publishedYear}',
+                      ),
+                    )
+                  else if (offline.publishedYear case final year?)
+                    Chip(label: Text('$year')),
+                  Chip(label: Text('${offline.tracks.length} Datei(en)')),
+                  const Chip(
+                    avatar: Icon(Icons.download_done, size: 16),
+                    label: Text('Offline'),
+                  ),
+                ],
+              ),
+              if (progress != null &&
+                  !progress.finished &&
+                  progress.position > Duration.zero) ...[
+                const SizedBox(height: 14),
+                Text(
+                  'Fortsetzen bei ${_formatRemoteDuration(progress.position)}',
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+              ],
+              if (offline.description case final description?) ...[
+                const SizedBox(height: 20),
+                Text(
+                  'Beschreibung',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                SelectableText(description),
+              ],
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () => Navigator.pop(context, 'play'),
+                  icon: const Icon(Icons.play_arrow),
+                  label: Text(
+                    progress != null && progress.position > Duration.zero
+                        ? 'Weiterhören'
+                        : 'Abspielen',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (action == 'play') await _playOffline(offline);
+  }
+
   Future<void> _playOffline(FundusOfflineWork offline) async {
     final server =
         _servers.where((item) => item.id == offline.serverId).firstOrNull ??
@@ -1182,8 +1395,15 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       authors: offline.authors,
       hasCover: offline.coverPath != null,
       kind: offline.kind,
+      subtitle: offline.subtitle,
       series: offline.series,
+      seriesSequence: offline.seriesSequence,
+      narrators: offline.narrators,
+      language: offline.language,
       description: offline.description,
+      publisher: offline.publisher,
+      publishedYear: offline.publishedYear,
+      fileCount: offline.tracks.length,
     );
     final player =
         _remotePlayer ??
@@ -1246,6 +1466,12 @@ class _RemotePlayerBar extends StatelessWidget {
                       onPressed: controller.previous,
                       icon: const Icon(Icons.skip_previous),
                     ),
+                    IconButton(
+                      onPressed: () =>
+                          controller.seekRelative(const Duration(seconds: -15)),
+                      tooltip: '15 Sekunden zurück',
+                      icon: const Icon(Icons.replay_10),
+                    ),
                     IconButton.filled(
                       onPressed: controller.loading
                           ? null
@@ -1253,6 +1479,12 @@ class _RemotePlayerBar extends StatelessWidget {
                       icon: Icon(
                         controller.playing ? Icons.pause : Icons.play_arrow,
                       ),
+                    ),
+                    IconButton(
+                      onPressed: () =>
+                          controller.seekRelative(const Duration(seconds: 30)),
+                      tooltip: '30 Sekunden vor',
+                      icon: const Icon(Icons.forward_30),
                     ),
                     IconButton(
                       onPressed: controller.next,
@@ -1277,6 +1509,26 @@ class _RemotePlayerBar extends StatelessWidget {
                     Text(_formatRemoteDuration(controller.duration)),
                   ],
                 ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Wrap(
+                    spacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      _RemoteSleepTimerButton(controller: controller),
+                      PopupMenuButton<double>(
+                        tooltip: 'Geschwindigkeit',
+                        initialValue: controller.rate,
+                        onSelected: controller.setRate,
+                        itemBuilder: (context) => [
+                          for (final rate in const [.75, 1.0, 1.25, 1.5, 2.0])
+                            PopupMenuItem(value: rate, child: Text('$rate×')),
+                        ],
+                        child: Chip(label: Text('${controller.rate}×')),
+                      ),
+                    ],
+                  ),
+                ),
                 if (controller.error case final error?)
                   Text(
                     error,
@@ -1291,6 +1543,97 @@ class _RemotePlayerBar extends StatelessWidget {
       );
     },
   );
+}
+
+enum _RemoteSleepTimerChoice {
+  off,
+  minutes15,
+  minutes30,
+  minutes45,
+  minutes60,
+  trackEnd,
+}
+
+class _RemoteSleepTimerButton extends StatelessWidget {
+  const _RemoteSleepTimerButton({required this.controller});
+
+  final FundusRemotePlayerController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final timer = controller.sleepTimer;
+    final label = switch (timer.mode) {
+      PlaybackSleepTimerMode.off => 'Sleep-Timer',
+      PlaybackSleepTimerMode.endOfTrack => 'Am Trackende',
+      PlaybackSleepTimerMode.duration => _remaining(timer.remaining),
+    };
+    return PopupMenuButton<_RemoteSleepTimerChoice>(
+      tooltip: label,
+      onSelected: (choice) => _select(timer, choice),
+      itemBuilder: (context) => [
+        CheckedPopupMenuItem(
+          value: _RemoteSleepTimerChoice.off,
+          checked: timer.mode == PlaybackSleepTimerMode.off,
+          child: const Text('Aus'),
+        ),
+        for (final option in const [
+          (_RemoteSleepTimerChoice.minutes15, 15),
+          (_RemoteSleepTimerChoice.minutes30, 30),
+          (_RemoteSleepTimerChoice.minutes45, 45),
+          (_RemoteSleepTimerChoice.minutes60, 60),
+        ])
+          CheckedPopupMenuItem(
+            value: option.$1,
+            checked:
+                timer.mode == PlaybackSleepTimerMode.duration &&
+                timer.configuredDuration == Duration(minutes: option.$2),
+            child: Text('${option.$2} Minuten'),
+          ),
+        CheckedPopupMenuItem(
+          value: _RemoteSleepTimerChoice.trackEnd,
+          checked: timer.mode == PlaybackSleepTimerMode.endOfTrack,
+          child: const Text('Am Trackende'),
+        ),
+      ],
+      child: Chip(
+        avatar: Icon(
+          timer.active ? Icons.bedtime : Icons.bedtime_outlined,
+          size: 18,
+        ),
+        label: Text(label),
+      ),
+    );
+  }
+
+  static void _select(
+    PlaybackSleepTimer timer,
+    _RemoteSleepTimerChoice choice,
+  ) {
+    switch (choice) {
+      case _RemoteSleepTimerChoice.off:
+        timer.cancel();
+      case _RemoteSleepTimerChoice.minutes15:
+        timer.schedule(const Duration(minutes: 15));
+      case _RemoteSleepTimerChoice.minutes30:
+        timer.schedule(const Duration(minutes: 30));
+      case _RemoteSleepTimerChoice.minutes45:
+        timer.schedule(const Duration(minutes: 45));
+      case _RemoteSleepTimerChoice.minutes60:
+        timer.schedule(const Duration(minutes: 60));
+      case _RemoteSleepTimerChoice.trackEnd:
+        timer.scheduleEndOfTrack();
+    }
+  }
+
+  static String _remaining(Duration? value) {
+    if (value == null) return 'Sleep-Timer';
+    final totalMinutes = value.inMinutes;
+    final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
+    if (totalMinutes < 60) return '$totalMinutes:$seconds';
+    final hours = value.inHours;
+    final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
+    return '$hours:$minutes:$seconds';
+  }
 }
 
 String _formatRemoteDuration(Duration value) {
