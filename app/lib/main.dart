@@ -92,6 +92,7 @@ class _FundusAppState extends State<FundusApp> {
   late final FundusPeerServerController _peerServer;
   List<RecentLibraryEntry> _recentLibraries = const [];
   List<_RemoteLibraryChoice> _remoteLibraries = const [];
+  List<FundusOfflineWork> _offlineWorks = const [];
   bool _loadingRemoteLibraries = false;
   late final AppLifecycleListener _lifecycleListener;
 
@@ -144,6 +145,8 @@ class _FundusAppState extends State<FundusApp> {
               onOpenRecent: _openRecentLibrary,
               remoteLibraries: _remoteLibraries,
               onOpenRemote: _openRemoteLibrary,
+              offlineWorks: _offlineWorks,
+              onOpenOffline: _openOfflineMedia,
               onToggleTheme: _toggleTheme,
               peerServer: _peerServer,
               onOpenServerSettings: _openServerSettings,
@@ -308,6 +311,7 @@ class _FundusAppState extends State<FundusApp> {
       final reachable = <String>{};
       if (mounted) {
         setState(() {
+          _offlineWorks = offline;
           _remoteLibraries = _remoteChoices(
             servers,
             references,
@@ -334,6 +338,7 @@ class _FundusAppState extends State<FundusApp> {
       references = await _remoteStore.loadLibraryReferences();
       if (!mounted) return;
       setState(() {
+        _offlineWorks = offline;
         _remoteLibraries = _remoteChoices(
           servers,
           references,
@@ -414,6 +419,11 @@ class _FundusAppState extends State<FundusApp> {
       initialLibraryId: choice.library.libraryId,
       peerServer: _peerServer,
     );
+    await _loadRemoteLibraries();
+  }
+
+  Future<void> _openOfflineMedia() async {
+    await showFundusRemoteServers(context, peerServer: _peerServer);
     await _loadRemoteLibraries();
   }
 
@@ -549,6 +559,8 @@ class _LibraryWelcome extends StatelessWidget {
     required this.onOpenRecent,
     required this.remoteLibraries,
     required this.onOpenRemote,
+    required this.offlineWorks,
+    required this.onOpenOffline,
     required this.onToggleTheme,
     required this.peerServer,
     required this.onOpenServerSettings,
@@ -562,6 +574,8 @@ class _LibraryWelcome extends StatelessWidget {
   final ValueChanged<RecentLibraryEntry> onOpenRecent;
   final List<_RemoteLibraryChoice> remoteLibraries;
   final ValueChanged<_RemoteLibraryChoice> onOpenRemote;
+  final List<FundusOfflineWork> offlineWorks;
+  final VoidCallback onOpenOffline;
   final VoidCallback onToggleTheme;
   final FundusPeerServerController peerServer;
   final VoidCallback onOpenServerSettings;
@@ -680,16 +694,30 @@ class _LibraryWelcome extends StatelessWidget {
                           ) ...[
                             _RemoteLibraryTile(
                               choice: remoteLibraries[index],
-                              onTap:
-                                  remoteLibraries[index].reachable ||
-                                      remoteLibraries[index].offlineCount > 0
-                                  ? () => onOpenRemote(remoteLibraries[index])
-                                  : null,
+                              onTap: busy
+                                  ? null
+                                  : () => onOpenRemote(remoteLibraries[index]),
                             ),
                             if (index < remoteLibraries.length - 1)
                               const Divider(height: 1),
                           ],
                         ],
+                      ),
+                    ),
+                  ],
+                  if (offlineWorks.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Card(
+                      clipBehavior: Clip.antiAlias,
+                      child: ListTile(
+                        enabled: !busy,
+                        onTap: busy ? null : onOpenOffline,
+                        leading: const Icon(Icons.download_done),
+                        title: const Text('Offline auf diesem Gerät'),
+                        subtitle: Text(
+                          '${offlineWorks.length} heruntergeladene Medien',
+                        ),
+                        trailing: const Icon(Icons.chevron_right),
                       ),
                     ),
                   ],

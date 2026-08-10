@@ -93,8 +93,6 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   Future<void> _load() async {
     try {
       var servers = await _store.load();
-      servers = await _peerDiscovery.relocate(servers);
-      await _store.save(servers);
       final offlineWorks = await _offlineStore.listAll();
       if (!mounted) return;
       setState(() {
@@ -107,6 +105,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         );
         _busy = false;
       });
+      servers = await _peerDiscovery.relocate(servers);
+      await _store.save(servers);
+      if (!mounted) return;
+      setState(() => _servers = servers);
       final initialServer = servers
           .where((server) => server.id == widget.initialServerId)
           .firstOrNull;
