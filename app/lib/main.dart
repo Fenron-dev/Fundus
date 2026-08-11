@@ -589,6 +589,9 @@ class _FundusAppState extends State<FundusApp> {
     final player =
         _player ??
         FundusPlayerController(
+          deviceId: _peerServer.serverId,
+          deviceName: _peerServer.deviceName,
+          deviceNameForId: _peerServer.displayNameForDevice,
           onConflict: (conflict) {
             final context = _navigatorKey.currentContext;
             return context == null
@@ -617,6 +620,9 @@ class _FundusAppState extends State<FundusApp> {
     final player =
         _player ??
         FundusPlayerController(
+          deviceId: _peerServer.serverId,
+          deviceName: _peerServer.deviceName,
+          deviceNameForId: _peerServer.displayNameForDevice,
           onConflict: (conflict) {
             final context = _navigatorKey.currentContext;
             return context == null

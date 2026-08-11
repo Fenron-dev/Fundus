@@ -48,6 +48,7 @@ FundusRemoteChapterTarget? resolveRemoteChapterTarget(
 final class FundusRemotePlayerController extends ChangeNotifier {
   FundusRemotePlayerController({
     required this.deviceId,
+    required this.deviceName,
     FundusRemoteClient client = const FundusRemoteClient(),
     FundusOfflineStore? offlineStore,
     this.onConflict,
@@ -124,6 +125,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   }
 
   final String deviceId;
+  final String deviceName;
   final FundusRemoteClient _client;
   final FundusOfflineStore _offlineStore;
   final PlaybackConflictResolver? onConflict;
@@ -364,21 +366,76 @@ final class FundusRemotePlayerController extends ChangeNotifier {
             (localProgress.position - serverProgress.position).abs() >
                 const Duration(seconds: 10);
         if (differs && onConflict != null) {
+          var restoredFromHistory = false;
           final choice = await onConflict!(
             PlaybackResumeConflict(
               currentPosition: localProgress.position,
               incomingPosition: serverProgress.position,
+              currentDuration: localProgress.duration,
+              incomingDuration: serverProgress.duration,
               currentTrack: localIndex >= 0
                   ? tracks[localIndex].title
                   : 'Lokale Datei',
               incomingTrack: serverIndex >= 0
                   ? tracks[serverIndex].title
                   : 'Gespeicherte Datei',
-              incomingSource: 'Server / anderes Gerät',
+              currentChapter: _chapterTitle(localIndex, localProgress.position),
+              incomingChapter: _chapterTitle(
+                serverIndex,
+                serverProgress.position,
+              ),
+              currentDevice: deviceName,
+              incomingDevice: serverProgress.deviceName ?? server.name,
+              incomingSource: server.name,
+              loadHistory: () async {
+                final revisions = await _withReconnect(
+                  (active) =>
+                      _client.progressRevisions(active, library.id, work.id),
+                );
+                return revisions.map(_revisionView).toList(growable: false);
+              },
+              restoreRevision: (revision) async {
+                restoredFromHistory = true;
+                final operationId = _operationId();
+                serverProgress = await _withReconnect(
+                  (active) => _client.restoreProgressRevision(
+                    active,
+                    libraryId: library.id,
+                    workId: work.id,
+                    revision: revision.revision,
+                    deviceId: deviceId,
+                    operationId: operationId,
+                  ),
+                );
+              },
             ),
           );
           if (choice == PlaybackConflictChoice.keepCurrent) {
-            progress = localProgress;
+            serverProgress =
+                await _saveProgressChoice(
+                  library: library,
+                  work: work,
+                  fileId: localProgress.fileId,
+                  position: localProgress.position,
+                  duration: localProgress.duration,
+                  finished: localProgress.finished,
+                ) ??
+                serverProgress;
+            progress = serverProgress ?? localProgress;
+          } else {
+            if (!restoredFromHistory) {
+              serverProgress =
+                  await _saveProgressChoice(
+                    library: library,
+                    work: work,
+                    fileId: serverProgress?.fileId,
+                    position: serverProgress?.position ?? Duration.zero,
+                    duration: serverProgress?.duration,
+                    finished: serverProgress?.finished ?? false,
+                  ) ??
+                  serverProgress;
+            }
+            progress = serverProgress;
           }
         }
       }
@@ -466,38 +523,157 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       return;
     }
     if (latest == null || latest.revision <= _progressRevision) return;
-    final targetIndex = latest.fileId == null
+    final initialLatest = latest;
+    var targetIndex = initialLatest.fileId == null
         ? -1
-        : _tracks.indexWhere((track) => track.id == latest!.fileId);
+        : _tracks.indexWhere((track) => track.id == initialLatest.fileId);
     final differs =
         targetIndex >= 0 && targetIndex != _currentIndex ||
-        (latest.position - _position).abs() > const Duration(seconds: 10);
+        (initialLatest.position - _position).abs() >
+            const Duration(seconds: 10);
     if (differs && onConflict != null) {
+      var restoredFromHistory = false;
       final choice = await onConflict!(
         PlaybackResumeConflict(
           currentPosition: _position,
-          incomingPosition: latest.position,
+          incomingPosition: initialLatest.position,
+          currentDuration: _effectiveTrackDuration(_currentIndex),
+          incomingDuration: initialLatest.duration,
           currentTrack: track?.title ?? 'Aktuelle Datei',
           incomingTrack: targetIndex >= 0
               ? _tracks[targetIndex].title
               : 'Gespeicherte Datei',
-          incomingSource: 'Server / anderes Gerät',
+          currentChapter: _chapterTitle(_currentIndex, _position),
+          incomingChapter: _chapterTitle(targetIndex, initialLatest.position),
+          currentDevice: deviceName,
+          incomingDevice: initialLatest.deviceName ?? _server!.name,
+          incomingSource: _server!.name,
+          loadHistory: () async {
+            final revisions = await _withReconnect(
+              (active) =>
+                  _client.progressRevisions(active, library.id, work.id),
+            );
+            return revisions.map(_revisionView).toList(growable: false);
+          },
+          restoreRevision: (revision) async {
+            restoredFromHistory = true;
+            latest = await _withReconnect(
+              (active) => _client.restoreProgressRevision(
+                active,
+                libraryId: library.id,
+                workId: work.id,
+                revision: revision.revision,
+                deviceId: deviceId,
+                operationId: _operationId(),
+              ),
+            );
+          },
         ),
       );
       if (choice == PlaybackConflictChoice.keepCurrent) {
-        _progressRevision = latest.revision;
+        latest =
+            await _saveProgressChoice(
+              library: library,
+              work: work,
+              fileId: track?.id,
+              position: _position,
+              duration: _effectiveTrackDuration(_currentIndex),
+              finished: false,
+            ) ??
+            latest;
+        _progressRevision = latest?.revision ?? initialLatest.revision;
         return;
       }
+      if (!restoredFromHistory) {
+        latest =
+            await _saveProgressChoice(
+              library: library,
+              work: work,
+              fileId: latest!.fileId,
+              position: latest!.position,
+              duration: latest!.duration,
+              finished: latest!.finished,
+            ) ??
+            latest;
+      }
+      targetIndex = latest!.fileId == null
+          ? -1
+          : _tracks.indexWhere((track) => track.id == latest!.fileId);
     }
+    final selected = latest!;
     if (targetIndex >= 0 && targetIndex != _currentIndex) {
       await _player.jump(targetIndex);
       _currentIndex = targetIndex;
     }
-    if (!latest.finished && latest.position > Duration.zero) {
-      _position = await _seekAndVerify(latest.position);
+    if (!selected.finished && selected.position > Duration.zero) {
+      _position = await _seekAndVerify(selected.position);
     }
-    _progressRevision = latest.revision;
+    _progressRevision = selected.revision;
     notifyListeners();
+  }
+
+  PlaybackProgressRevisionView _revisionView(
+    FundusRemoteProgressRevision revision,
+  ) {
+    final trackIndex = revision.fileId == null
+        ? -1
+        : _tracks.indexWhere((track) => track.id == revision.fileId);
+    return PlaybackProgressRevisionView(
+      revision: revision.revision,
+      position: revision.position,
+      duration: revision.duration,
+      track: trackIndex >= 0 ? _tracks[trackIndex].title : 'Gespeicherte Datei',
+      chapter: _chapterTitle(trackIndex, revision.position),
+      deviceName: revision.deviceName,
+      createdAt: revision.createdAt,
+    );
+  }
+
+  Future<FundusRemoteProgress?> _saveProgressChoice({
+    required FundusRemoteLibrary library,
+    required FundusRemoteWork work,
+    required String? fileId,
+    required Duration position,
+    required Duration? duration,
+    required bool finished,
+  }) async {
+    if (fileId == null) return null;
+    final operationId = _operationId();
+    return _withReconnect(
+      (active) => _client.saveProgress(
+        active,
+        libraryId: library.id,
+        workId: work.id,
+        fileId: fileId,
+        position: position,
+        duration: duration,
+        finished: finished,
+        deviceId: deviceId,
+        operationId: operationId,
+      ),
+    );
+  }
+
+  Duration? _effectiveTrackDuration(int trackIndex) {
+    if (trackIndex == _currentIndex && _duration > Duration.zero) {
+      return _duration;
+    }
+    if (trackIndex < 0 || trackIndex >= _tracks.length) return null;
+    return _tracks[trackIndex].duration;
+  }
+
+  String? _chapterTitle(int trackIndex, Duration position) {
+    if (trackIndex < 0) return null;
+    FundusRemoteChapter? current;
+    for (final chapter in _chapters) {
+      if (chapter.trackIndex != trackIndex || chapter.position > position) {
+        continue;
+      }
+      if (current == null || chapter.position >= current.position) {
+        current = chapter;
+      }
+    }
+    return current?.title;
   }
 
   Future<void> seek(Duration value) async {

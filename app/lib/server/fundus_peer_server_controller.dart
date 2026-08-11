@@ -86,6 +86,15 @@ final class FundusPeerServerController extends ChangeNotifier {
   FundusPairingSession? get pairingSession => _pairingAuthority?.activeSession;
   List<FundusPairedDevice> get pairedDevices =>
       _pairingAuthority?.devices ?? const [];
+
+  String displayNameForDevice(String deviceId) {
+    if (deviceId == serverId || deviceId == 'desktop-local') return deviceName;
+    for (final device in pairedDevices) {
+      if (device.id == deviceId) return device.name;
+    }
+    return 'Anderes Gerät';
+  }
+
   String? get certificateFingerprint => _identity?.certificateFingerprint;
   String? get error => _error;
   List<PeerLibrarySource> get sources => List.unmodifiable(_sources);

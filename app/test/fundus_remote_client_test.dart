@@ -121,8 +121,10 @@ void main() {
       works.single.id,
     );
     expect(saved.position, const Duration(seconds: 2));
+    expect(saved.duration, const Duration(seconds: 3));
     expect(loaded?.fileId, detail.tracks.single.id);
     expect(loaded?.position, const Duration(seconds: 2));
+    expect(loaded?.duration, const Duration(seconds: 3));
     final history = await client.progressRevisions(
       profile,
       libraries.single.id,
@@ -130,6 +132,7 @@ void main() {
     );
     expect(history.single.revision, 1);
     expect(history.single.deviceName, 'Testgerät');
+    expect(history.single.duration, const Duration(seconds: 3));
     final restoredHistory = await client.restoreProgressRevision(
       profile,
       libraryId: libraries.single.id,
@@ -140,6 +143,7 @@ void main() {
     );
     expect(restoredHistory.revision, 2);
     expect(restoredHistory.position, const Duration(seconds: 2));
+    expect(restoredHistory.duration, const Duration(seconds: 3));
 
     final queueSession = await client.savePlaybackSession(
       profile,

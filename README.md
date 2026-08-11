@@ -33,6 +33,9 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
   Kapitelspuren; bei Mehrdatei-Hörbüchern dienen die sortierten Tracks als
   Kapitel
 - werkbezogener Resume-Punkt über Datei- und Hörbuchwechsel mit Revisionshistorie
+- Sync-Konfliktdialog mit Gerätenamen, Datei/Chapter, Zeit, Gesamtdauer und
+  Prozentwert; frühere Hörstände lassen sich einsehen und als neue Revision
+  wiederherstellen
 - Sleep-Timer mit festen und freien Laufzeiten, Ziel-Uhrzeit, Countdown sowie
   Stopp am Kapitel- oder Trackende
 - optionaler Android-Schüttelneustart für laufende Zeittimer mit einstellbarer

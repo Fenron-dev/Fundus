@@ -30,8 +30,13 @@ final class PlayerWorkProgress {
 final class FundusPlayerController extends ChangeNotifier {
   static const progressPersistInterval = Duration(seconds: 5);
 
-  FundusPlayerController({this.onConflict, this.onPlaylistConflict})
-    : _player = Player() {
+  FundusPlayerController({
+    this.onConflict,
+    this.onPlaylistConflict,
+    this.deviceId = 'desktop-local',
+    this.deviceName = 'Dieses Gerät',
+    this.deviceNameForId,
+  }) : _player = Player() {
     _sleepTimer = PlaybackSleepTimer(onElapsed: _pauseForSleepTimer);
     _sleepTimer.addListener(notifyListeners);
     _shakeRestart = PlaybackShakeRestartController(
@@ -88,6 +93,9 @@ final class FundusPlayerController extends ChangeNotifier {
   final Player _player;
   final PlaybackConflictResolver? onConflict;
   final PlaylistSessionConflictResolver? onPlaylistConflict;
+  final String deviceId;
+  final String deviceName;
+  final String Function(String deviceId)? deviceNameForId;
   late final PlaybackSleepTimer _sleepTimer;
   late final PlaybackShakeRestartController _shakeRestart;
   final List<StreamSubscription<Object?>> _subscriptions = [];
@@ -286,33 +294,84 @@ final class FundusPlayerController extends ChangeNotifier {
     final library = _library;
     final work = _work;
     if (!_ready || library == null || work == null) return;
-    final latest = library.loadProgress(work.id);
+    var latest = library.loadProgress(work.id);
     if (latest == null || latest.revision <= _progressRevision) return;
-    final targetIndex = latest.fileId == null
+    final initialLatest = latest;
+    var targetIndex = initialLatest.fileId == null
         ? -1
-        : _tracks.indexWhere((track) => track.fileId == latest.fileId);
-    final incomingPosition = PlaybackResumePolicy.resumePosition(latest);
+        : _tracks.indexWhere((track) => track.fileId == initialLatest.fileId);
+    var incomingPosition = PlaybackResumePolicy.resumePosition(initialLatest);
     final differs =
         targetIndex >= 0 && targetIndex != _currentIndex ||
         (incomingPosition != null &&
             (incomingPosition - _position).abs() > const Duration(seconds: 10));
     if (differs && onConflict != null) {
+      var restoredFromHistory = false;
       final choice = await onConflict!(
         PlaybackResumeConflict(
           currentPosition: _position,
           incomingPosition: incomingPosition ?? Duration.zero,
+          currentDuration: _effectiveTrackDuration(_currentIndex),
+          incomingDuration: _positionDuration(initialLatest.position),
           currentTrack: track?.title ?? 'Aktuelle Datei',
           incomingTrack: targetIndex >= 0
               ? _tracks[targetIndex].title
               : 'Gespeicherte Datei',
+          currentChapter: _chapterTitle(_currentIndex, _position),
+          incomingChapter: _chapterTitle(
+            targetIndex,
+            incomingPosition ?? Duration.zero,
+          ),
+          currentDevice: deviceName,
+          incomingDevice: _resolveDeviceName(initialLatest.deviceId),
           incomingSource: 'Server / anderes Gerät',
+          loadHistory: () async => library
+              .listProgressRevisions(work.id)
+              .map(_revisionView)
+              .toList(growable: false),
+          restoreRevision: (revision) async {
+            restoredFromHistory = true;
+            latest = library.restoreProgressRevision(
+              workId: work.id,
+              revision: revision.revision,
+              deviceId: deviceId,
+              operationId: FundusId.generate(),
+            );
+          },
         ),
       );
       if (choice == PlaybackConflictChoice.keepCurrent) {
-        _progressRevision = latest.revision;
+        final currentTrack = track;
+        if (currentTrack != null) {
+          latest = library.saveProgress(
+            workId: work.id,
+            fileId: currentTrack.fileId,
+            position: _position,
+            duration: _effectiveTrackDuration(_currentIndex),
+            deviceId: deviceId,
+            operationId: FundusId.generate(),
+          );
+        }
+        _progressRevision = latest!.revision;
         return;
       }
+      if (!restoredFromHistory && latest!.fileId != null) {
+        latest = library.saveProgress(
+          workId: work.id,
+          fileId: latest!.fileId!,
+          position: incomingPosition ?? Duration.zero,
+          duration: _positionDuration(latest!.position),
+          finished: latest!.finished,
+          deviceId: deviceId,
+          operationId: FundusId.generate(),
+        );
+      }
+      targetIndex = latest!.fileId == null
+          ? -1
+          : _tracks.indexWhere((track) => track.fileId == latest!.fileId);
+      incomingPosition = PlaybackResumePolicy.resumePosition(latest);
     }
+    final selected = latest!;
     if (targetIndex >= 0 && targetIndex != _currentIndex) {
       _skipNextTrackTransition = true;
       await _player.jump(targetIndex);
@@ -322,15 +381,67 @@ final class FundusPlayerController extends ChangeNotifier {
     if (target != null && target > Duration.zero) {
       _position = await _seekAndVerify(target);
     }
-    _progressRevision = latest.revision;
+    _progressRevision = selected.revision;
     notifyListeners();
     unawaited(
       FundusDiagnostics.instance.record('playback.progress_refreshed', {
         'work_id': work.id,
-        'revision': latest.revision,
+        'revision': selected.revision,
         'position_ms': target?.inMilliseconds,
       }),
     );
+  }
+
+  PlaybackProgressRevisionView _revisionView(LibraryPlaybackRevision revision) {
+    final trackIndex = revision.fileId == null
+        ? -1
+        : _tracks.indexWhere((track) => track.fileId == revision.fileId);
+    final position = Duration(
+      milliseconds: ((revision.position.numericValue ?? 0) * 1000).round(),
+    );
+    return PlaybackProgressRevisionView(
+      revision: revision.revision,
+      position: position,
+      duration: _positionDuration(revision.position),
+      track: trackIndex >= 0 ? _tracks[trackIndex].title : 'Gespeicherte Datei',
+      chapter: _chapterTitle(trackIndex, position),
+      deviceName: _resolveDeviceName(revision.deviceId),
+      createdAt: revision.createdAt,
+    );
+  }
+
+  Duration? _positionDuration(MediaPosition position) {
+    final total = position.total;
+    return total == null || total <= 0
+        ? null
+        : Duration(milliseconds: (total * 1000).round());
+  }
+
+  Duration? _effectiveTrackDuration(int trackIndex) {
+    if (trackIndex == _currentIndex && _duration > Duration.zero) {
+      return _duration;
+    }
+    if (trackIndex < 0 || trackIndex >= _tracks.length) return null;
+    return _tracks[trackIndex].duration;
+  }
+
+  String? _chapterTitle(int trackIndex, Duration position) {
+    if (trackIndex < 0) return null;
+    LibraryPlaybackChapter? current;
+    for (final chapter in _chapters) {
+      if (chapter.trackIndex != trackIndex || chapter.position > position) {
+        continue;
+      }
+      if (current == null || chapter.position >= current.position) {
+        current = chapter;
+      }
+    }
+    return current?.title;
+  }
+
+  String _resolveDeviceName(String value) {
+    if (value == deviceId || value == 'desktop-local') return deviceName;
+    return deviceNameForId?.call(value) ?? 'Anderes Gerät';
   }
 
   Future<void> next() async {
@@ -610,6 +721,7 @@ final class FundusPlayerController extends ChangeNotifier {
         position: _position,
         duration: _duration > Duration.zero ? _duration : currentTrack.duration,
         finished: finished,
+        deviceId: deviceId,
       );
       _progressRevision = saved.revision;
       _sessionProgress[work.id] = PlayerWorkProgress(

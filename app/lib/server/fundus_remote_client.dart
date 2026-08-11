@@ -307,12 +307,14 @@ final class FundusRemoteProgress {
     required this.position,
     required this.finished,
     required this.revision,
+    this.duration,
     this.deviceId,
     this.deviceName,
   });
 
   final String? fileId;
   final Duration position;
+  final Duration? duration;
   final bool finished;
   final int revision;
   final String? deviceId;
@@ -328,10 +330,12 @@ final class FundusRemoteProgressRevision {
     required this.createdAt,
     required this.deviceId,
     required this.deviceName,
+    this.duration,
   });
 
   final String? fileId;
   final Duration position;
+  final Duration? duration;
   final bool finished;
   final int revision;
   final DateTime createdAt;
@@ -929,6 +933,7 @@ final class FundusRemoteClient {
     final position = progress['position'];
     if (position is! Map) return null;
     final seconds = position['numeric_value'];
+    final total = position['total'];
     return FundusRemoteProgress(
       fileId: progress['file_id'] is String
           ? progress['file_id'] as String
@@ -938,6 +943,9 @@ final class FundusRemoteClient {
       position: Duration(
         milliseconds: seconds is num ? (seconds * 1000).round() : 0,
       ),
+      duration: total is num
+          ? Duration(milliseconds: (total * 1000).round())
+          : null,
       finished: progress['finished'] == true,
       revision: progress['revision'] is int ? progress['revision'] as int : 0,
       deviceId: progress['device_id'] is String
@@ -987,12 +995,17 @@ final class FundusRemoteClient {
     if (value is! Map || value['position'] is! Map) {
       throw const HttpException('Ungültige Fortschrittsrevision.');
     }
-    final seconds = (value['position'] as Map)['numeric_value'];
+    final position = value['position'] as Map;
+    final seconds = position['numeric_value'];
+    final total = position['total'];
     return FundusRemoteProgress(
       fileId: value['file_id'] is String ? value['file_id'] as String : null,
       position: Duration(
         milliseconds: seconds is num ? (seconds * 1000).round() : 0,
       ),
+      duration: total is num
+          ? Duration(milliseconds: (total * 1000).round())
+          : null,
       finished: value['finished'] == true,
       revision: value['revision'] is int ? value['revision'] as int : 0,
       deviceId: value['device_id'] is String
@@ -1016,12 +1029,17 @@ final class FundusRemoteClient {
     }
     final createdAt = DateTime.tryParse('${value['created_at'] ?? ''}');
     if (createdAt == null) return null;
-    final seconds = (value['position'] as Map)['numeric_value'];
+    final position = value['position'] as Map;
+    final seconds = position['numeric_value'];
+    final total = position['total'];
     return FundusRemoteProgressRevision(
       fileId: value['file_id'] is String ? value['file_id'] as String : null,
       position: Duration(
         milliseconds: seconds is num ? (seconds * 1000).round() : 0,
       ),
+      duration: total is num
+          ? Duration(milliseconds: (total * 1000).round())
+          : null,
       finished: value['finished'] == true,
       revision: value['revision'] as int,
       createdAt: createdAt,
@@ -1062,11 +1080,15 @@ final class FundusRemoteClient {
     }
     final positionValue = value['position'];
     final seconds = positionValue is Map ? positionValue['numeric_value'] : 0;
+    final total = positionValue is Map ? positionValue['total'] : null;
     return FundusRemoteProgress(
       fileId: value['file_id'] is String ? value['file_id'] as String : fileId,
       position: Duration(
         milliseconds: seconds is num ? (seconds * 1000).round() : 0,
       ),
+      duration: total is num
+          ? Duration(milliseconds: (total * 1000).round())
+          : duration,
       finished: value['finished'] == true,
       revision: value['revision'] is int ? value['revision'] as int : 0,
       deviceId: value['device_id'] is String

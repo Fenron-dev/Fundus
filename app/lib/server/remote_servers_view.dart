@@ -1065,6 +1065,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         _remotePlayer ??
         FundusRemotePlayerController(
           deviceId: await _store.deviceId(),
+          deviceName: await _store.deviceName(),
           offlineStore: _offlineStore,
           onConflict: (conflict) => resolvePlaybackConflict(context, conflict),
           serverResolver: _relocatePlayerServer,
@@ -1302,6 +1303,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         _remotePlayer ??
         FundusRemotePlayerController(
           deviceId: await _store.deviceId(),
+          deviceName: await _store.deviceName(),
           offlineStore: _offlineStore,
           onConflict: (conflict) => resolvePlaybackConflict(context, conflict),
           serverResolver: _relocatePlayerServer,
@@ -1853,6 +1855,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         _remotePlayer ??
         FundusRemotePlayerController(
           deviceId: await _store.deviceId(),
+          deviceName: await _store.deviceName(),
           offlineStore: _offlineStore,
           onConflict: (conflict) => resolvePlaybackConflict(context, conflict),
           serverResolver: _relocatePlayerServer,
