@@ -7,6 +7,7 @@ import 'package:media_kit/media_kit.dart';
 import '../diagnostics/fundus_diagnostics.dart';
 import 'playback_conflict_settings.dart';
 import 'playback_sleep_timer.dart';
+import 'playback_shake_restart.dart';
 import 'playback_resume_policy.dart';
 
 final class PlayerWorkProgress {
@@ -29,6 +30,7 @@ final class FundusPlayerController extends ChangeNotifier {
   FundusPlayerController({this.onConflict}) : _player = Player() {
     _sleepTimer = PlaybackSleepTimer(onElapsed: _pauseForSleepTimer);
     _sleepTimer.addListener(notifyListeners);
+    _shakeRestart = PlaybackShakeRestartController(timer: _sleepTimer);
     _subscriptions.addAll([
       _player.stream.playing.listen((value) {
         _playing = value;
@@ -66,6 +68,7 @@ final class FundusPlayerController extends ChangeNotifier {
   final Player _player;
   final PlaybackConflictResolver? onConflict;
   late final PlaybackSleepTimer _sleepTimer;
+  late final PlaybackShakeRestartController _shakeRestart;
   final List<StreamSubscription<Object?>> _subscriptions = [];
 
   FundusLibrary? _library;
@@ -438,6 +441,7 @@ final class FundusPlayerController extends ChangeNotifier {
       await subscription.cancel();
     }
     _sleepTimer.removeListener(notifyListeners);
+    await _shakeRestart.dispose();
     _sleepTimer.dispose();
     await _player.dispose();
   }

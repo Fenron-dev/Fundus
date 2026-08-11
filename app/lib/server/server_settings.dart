@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../playback/playback_conflict_settings.dart';
+import '../playback/playback_shake_restart.dart';
 import 'fundus_peer_server_controller.dart';
 import 'fundus_offline_store.dart';
 import 'remote_servers_view.dart';
@@ -84,6 +85,8 @@ class _ServerSettings extends StatelessWidget {
             onChanged: controller.isBusy ? null : controller.setLanEnabled,
           ),
           const PlaybackConflictSettingTile(),
+          const Divider(),
+          const PlaybackShakeSettingTile(),
           if (controller.lanEnabled && controller.isRunning) ...[
             const SizedBox(height: 12),
             _pairingCard(context),

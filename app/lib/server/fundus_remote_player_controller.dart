@@ -7,6 +7,7 @@ import 'package:media_kit/media_kit.dart';
 
 import '../diagnostics/fundus_diagnostics.dart';
 import '../playback/playback_sleep_timer.dart';
+import '../playback/playback_shake_restart.dart';
 import '../playback/playback_conflict_settings.dart';
 import 'fundus_remote_client.dart';
 import 'fundus_remote_stream_proxy.dart';
@@ -27,6 +28,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
        _player = Player() {
     _sleepTimer = PlaybackSleepTimer(onElapsed: _pauseForSleepTimer);
     _sleepTimer.addListener(notifyListeners);
+    _shakeRestart = PlaybackShakeRestartController(timer: _sleepTimer);
     _subscriptions.addAll([
       _player.stream.playing.listen((value) {
         _playing = value;
@@ -78,6 +80,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   final FundusRemoteServerResolver? serverResolver;
   final Player _player;
   late final PlaybackSleepTimer _sleepTimer;
+  late final PlaybackShakeRestartController _shakeRestart;
   final List<StreamSubscription<Object?>> _subscriptions = [];
   FundusRemoteStreamProxy? _proxy;
   FundusRemoteServer? _server;
@@ -436,6 +439,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       await subscription.cancel();
     }
     _sleepTimer.removeListener(notifyListeners);
+    await _shakeRestart.dispose();
     _sleepTimer.dispose();
     await _player.dispose();
     await _proxy?.close();
