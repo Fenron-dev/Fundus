@@ -29,7 +29,10 @@ final class FundusRemotePlayerController extends ChangeNotifier {
        _player = Player() {
     _sleepTimer = PlaybackSleepTimer(onElapsed: _pauseForSleepTimer);
     _sleepTimer.addListener(notifyListeners);
-    _shakeRestart = PlaybackShakeRestartController(timer: _sleepTimer);
+    _shakeRestart = PlaybackShakeRestartController(
+      timer: _sleepTimer,
+      resumePlayback: _resumeAfterSleepTimerShake,
+    );
     _subscriptions.addAll([
       _player.stream.playing.listen((value) {
         _playing = value;
@@ -568,6 +571,11 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     if (_closed) return;
     await _player.pause();
     await persist();
+  }
+
+  Future<void> _resumeAfterSleepTimerShake() async {
+    if (_closed || _playing) return;
+    await _player.play();
   }
 
   @override

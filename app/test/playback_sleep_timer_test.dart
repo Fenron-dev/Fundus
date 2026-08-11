@@ -92,4 +92,56 @@ void main() {
     expect(timer.shakeRestartCount, 1);
     timer.dispose();
   });
+
+  test('shake can restart a duration timer shortly after it elapsed', () async {
+    final elapsed = Completer<void>();
+    final timer = PlaybackSleepTimer(
+      onElapsed: () async => elapsed.complete(),
+      shakeRestartGracePeriod: const Duration(milliseconds: 200),
+    );
+    addTearDown(timer.dispose);
+
+    timer.schedule(const Duration(milliseconds: 20));
+    await elapsed.future.timeout(const Duration(seconds: 1));
+
+    expect(timer.active, isFalse);
+    expect(timer.shakeRestartAvailable, isTrue);
+    expect(timer.restart(), isFalse);
+    expect(timer.restart(fromShake: true), isTrue);
+    expect(timer.active, isTrue);
+    expect(timer.configuredDuration, const Duration(milliseconds: 20));
+  });
+
+  test('shake restart expires after the grace period', () async {
+    final elapsed = Completer<void>();
+    final timer = PlaybackSleepTimer(
+      onElapsed: () async => elapsed.complete(),
+      shakeRestartGracePeriod: const Duration(milliseconds: 30),
+    );
+    addTearDown(timer.dispose);
+
+    timer.schedule(const Duration(milliseconds: 10));
+    await elapsed.future.timeout(const Duration(seconds: 1));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(timer.shakeRestartAvailable, isFalse);
+    expect(timer.configuredDuration, isNull);
+    expect(timer.restart(fromShake: true), isFalse);
+  });
+
+  test('manual cancel clears the post-expiry shake window', () async {
+    final elapsed = Completer<void>();
+    final timer = PlaybackSleepTimer(
+      onElapsed: () async => elapsed.complete(),
+      shakeRestartGracePeriod: const Duration(seconds: 1),
+    );
+    addTearDown(timer.dispose);
+
+    timer.schedule(const Duration(milliseconds: 10));
+    await elapsed.future.timeout(const Duration(seconds: 1));
+    timer.cancel();
+
+    expect(timer.shakeRestartAvailable, isFalse);
+    expect(timer.restart(fromShake: true), isFalse);
+  });
 }

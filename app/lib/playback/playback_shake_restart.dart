@@ -95,10 +95,12 @@ final class PlaybackShakeRestartController {
     Stream<PlaybackAcceleration>? events,
     Future<PlaybackShakeConfiguration> Function()? loadConfiguration,
     Future<void> Function()? confirm,
+    Future<void> Function()? resumePlayback,
     bool? supported,
   }) : _providedEvents = events,
        _loadConfiguration = loadConfiguration ?? PlaybackShakeSettings.load,
        _confirm = confirm ?? HapticFeedback.mediumImpact,
+       _resumePlayback = resumePlayback ?? _noOp,
        _supported =
            supported ??
            (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
@@ -110,6 +112,7 @@ final class PlaybackShakeRestartController {
   final Stream<PlaybackAcceleration>? _providedEvents;
   final Future<PlaybackShakeConfiguration> Function() _loadConfiguration;
   final Future<void> Function() _confirm;
+  final Future<void> Function() _resumePlayback;
   final bool _supported;
 
   StreamSubscription<PlaybackAcceleration>? _subscription;
@@ -158,11 +161,16 @@ final class PlaybackShakeRestartController {
     final now = DateTime.now();
     final last = _lastRestart;
     if (last != null && now.difference(last) < _configuration.cooldown) return;
+    final resumesExpiredTimer =
+        timer.mode == PlaybackSleepTimerMode.off && timer.shakeRestartAvailable;
     if (!timer.restart(fromShake: true)) return;
     _lastRestart = now;
     _restartCount++;
+    if (resumesExpiredTimer) unawaited(_resumePlayback());
     if (_configuration.hapticFeedback) unawaited(_confirm());
   }
+
+  static Future<void> _noOp() async {}
 
   Future<void> dispose() async {
     if (_disposed) return;
@@ -207,7 +215,7 @@ class _PlaybackShakeSettingTileState extends State<PlaybackShakeSettingTile> {
           secondary: const Icon(Icons.vibration),
           title: const Text('Sleep-Timer durch Schütteln neu starten'),
           subtitle: const Text(
-            'Nur auf Android und nur bei einem laufenden Zeittimer.',
+            'Bei laufendem Timer sowie bis zu 2 Minuten nach seinem Ablauf.',
           ),
           value: value.enabled,
           onChanged: _value == null

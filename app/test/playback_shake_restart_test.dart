@@ -58,4 +58,36 @@ void main() {
     timer.dispose();
     await events.close();
   });
+
+  test('shake after expiry restarts timer and resumes playback', () async {
+    final events = StreamController<PlaybackAcceleration>.broadcast();
+    final elapsed = Completer<void>();
+    final timer = PlaybackSleepTimer(
+      onElapsed: () async => elapsed.complete(),
+      shakeRestartGracePeriod: const Duration(seconds: 1),
+    );
+    timer.schedule(const Duration(milliseconds: 20));
+    var resumed = 0;
+    final controller = PlaybackShakeRestartController(
+      timer: timer,
+      events: events.stream,
+      supported: true,
+      loadConfiguration: () async =>
+          const PlaybackShakeConfiguration(enabled: true, threshold: 10),
+      confirm: () async {},
+      resumePlayback: () async => resumed++,
+    );
+    await Future<void>.delayed(Duration.zero);
+    await elapsed.future.timeout(const Duration(seconds: 1));
+
+    events.add(const PlaybackAcceleration(12, 0, 0));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.restartCount, 1);
+    expect(timer.active, isTrue);
+    expect(resumed, 1);
+    await controller.dispose();
+    timer.dispose();
+    await events.close();
+  });
 }

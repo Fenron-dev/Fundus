@@ -36,7 +36,8 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - Sleep-Timer mit festen und freien Laufzeiten, Ziel-Uhrzeit, Countdown sowie
   Stopp am Kapitel- oder Trackende
 - optionaler Android-Schüttelneustart für laufende Zeittimer mit einstellbarer
-  Empfindlichkeit, Cooldown und haptischer Bestätigung
+  Empfindlichkeit, Cooldown und haptischer Bestätigung; nach Ablauf bleiben
+  zwei Minuten zum Schütteln, erneuten Starten und Weiterhören
 - Android-Hintergrundwiedergabe mit nativer Medienbenachrichtigung,
   Lockscreen-, Headset- und Bluetooth-Steuerung für lokale, gestreamte und
   offline heruntergeladene Hörbücher

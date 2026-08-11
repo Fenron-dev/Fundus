@@ -31,7 +31,10 @@ final class FundusPlayerController extends ChangeNotifier {
   FundusPlayerController({this.onConflict}) : _player = Player() {
     _sleepTimer = PlaybackSleepTimer(onElapsed: _pauseForSleepTimer);
     _sleepTimer.addListener(notifyListeners);
-    _shakeRestart = PlaybackShakeRestartController(timer: _sleepTimer);
+    _shakeRestart = PlaybackShakeRestartController(
+      timer: _sleepTimer,
+      resumePlayback: _resumeAfterSleepTimerShake,
+    );
     _subscriptions.addAll([
       _player.stream.playing.listen((value) {
         _playing = value;
@@ -493,6 +496,11 @@ final class FundusPlayerController extends ChangeNotifier {
   Future<void> _pauseForSleepTimer() async {
     if (_closed) return;
     await _pauseAndPersist();
+  }
+
+  Future<void> _resumeAfterSleepTimerShake() async {
+    if (_closed || _playing) return;
+    await _player.play();
   }
 
   void _activateSystemMediaSession() {
