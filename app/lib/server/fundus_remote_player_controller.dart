@@ -12,12 +12,16 @@ import 'fundus_remote_client.dart';
 import 'fundus_remote_stream_proxy.dart';
 import 'fundus_offline_store.dart';
 
+typedef FundusRemoteServerResolver =
+    Future<FundusRemoteServer> Function(FundusRemoteServer server);
+
 final class FundusRemotePlayerController extends ChangeNotifier {
   FundusRemotePlayerController({
     required this.deviceId,
     FundusRemoteClient client = const FundusRemoteClient(),
     FundusOfflineStore? offlineStore,
     this.onConflict,
+    this.serverResolver,
   }) : _client = client,
        _offlineStore = offlineStore ?? FundusOfflineStore(),
        _player = Player() {
@@ -71,6 +75,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   final FundusRemoteClient _client;
   final FundusOfflineStore _offlineStore;
   final PlaybackConflictResolver? onConflict;
+  final FundusRemoteServerResolver? serverResolver;
   final Player _player;
   late final PlaybackSleepTimer _sleepTimer;
   final List<StreamSubscription<Object?>> _subscriptions = [];
@@ -132,7 +137,9 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     notifyListeners();
     try {
       final tracks = offlineWork == null
-          ? (await _client.work(server, library.id, work)).tracks
+          ? (await _withReconnect(
+              (active) => _client.work(active, library.id, work),
+            )).tracks
           : [
               for (final track in offlineWork.tracks)
                 FundusRemoteTrack(
@@ -152,7 +159,9 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       }
       FundusRemoteProgress? serverProgress;
       try {
-        serverProgress = await _client.progress(server, library.id, work.id);
+        serverProgress = await _withReconnect(
+          (active) => _client.progress(active, library.id, work.id),
+        );
       } catch (_) {
         serverProgress = null;
       }
@@ -202,7 +211,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       final List<Media> media;
       if (offlineWork == null) {
         final proxy = await FundusRemoteStreamProxy.start(
-          server: server,
+          server: _server ?? server,
           libraryId: library.id,
           tracks: _tracks,
           client: _client,
@@ -253,13 +262,14 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   }
 
   Future<void> _refreshProgressBeforeResume() async {
-    final server = _server;
     final library = _library;
     final work = _work;
-    if (!_ready || server == null || library == null || work == null) return;
+    if (!_ready || _server == null || library == null || work == null) return;
     FundusRemoteProgress? latest;
     try {
-      latest = await _client.progress(server, library.id, work.id);
+      latest = await _withReconnect(
+        (active) => _client.progress(active, library.id, work.id),
+      );
     } catch (_) {
       return;
     }
@@ -368,7 +378,9 @@ final class FundusRemotePlayerController extends ChangeNotifier {
           : measuredDuration;
       if (!_playing) {
         try {
-          final latest = await _client.progress(server, library.id, work.id);
+          final latest = await _withReconnect(
+            (active) => _client.progress(active, library.id, work.id),
+          );
           if (latest != null && latest.revision > _progressRevision) return;
         } catch (_) {
           // Offline-Wiedergabe bleibt über die lokale Queue speicherbar.
@@ -386,16 +398,19 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         );
       }
       try {
-        final saved = await _client.saveProgress(
-          server,
-          libraryId: library.id,
-          workId: work.id,
-          fileId: currentTrack.id,
-          position: _position,
-          duration: effectiveDuration,
-          finished: finished,
-          deviceId: deviceId,
-          operationId: _operationId(),
+        final operationId = _operationId();
+        final saved = await _withReconnect(
+          (active) => _client.saveProgress(
+            active,
+            libraryId: library.id,
+            workId: work.id,
+            fileId: currentTrack.id,
+            position: _position,
+            duration: effectiveDuration,
+            finished: finished,
+            deviceId: deviceId,
+            operationId: operationId,
+          ),
         );
         _progressRevision = saved.revision;
         if (offlinePending != null) {
@@ -425,6 +440,46 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     await _player.dispose();
     await _proxy?.close();
     _proxy = null;
+  }
+
+  Future<T> _withReconnect<T>(
+    Future<T> Function(FundusRemoteServer server) operation,
+  ) async {
+    final server = _server;
+    if (server == null) throw StateError('Kein Server ausgewählt.');
+    try {
+      return await operation(server);
+    } catch (firstError) {
+      final resolver = serverResolver;
+      if (resolver == null) rethrow;
+      unawaited(
+        FundusDiagnostics.instance.record('remote.player_reconnect_started', {
+          'server_id': server.id,
+          'reason': firstError.runtimeType.toString(),
+        }),
+      );
+      try {
+        final relocated = await resolver(server);
+        _server = relocated;
+        final result = await operation(relocated);
+        unawaited(
+          FundusDiagnostics.instance
+              .record('remote.player_reconnect_completed', {
+                'server_id': server.id,
+                'endpoint_changed': relocated.baseUri != server.baseUri,
+              }),
+        );
+        return result;
+      } catch (retryError) {
+        unawaited(
+          FundusDiagnostics.instance.record('remote.player_reconnect_failed', {
+            'server_id': server.id,
+            'reason': retryError.runtimeType.toString(),
+          }),
+        );
+        rethrow;
+      }
+    }
   }
 
   String _operationId() {

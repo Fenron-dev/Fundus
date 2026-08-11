@@ -1173,6 +1173,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           deviceId: await _store.deviceId(),
           offlineStore: _offlineStore,
           onConflict: (conflict) => resolvePlaybackConflict(context, conflict),
+          serverResolver: _relocatePlayerServer,
         );
     if (_remotePlayer == null && mounted) {
       setState(() => _remotePlayer = player);
@@ -1422,6 +1423,14 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       _servers = updated;
       if (_selectedServer?.id == server.id) _selectedServer = server;
     });
+  }
+
+  Future<FundusRemoteServer> _relocatePlayerServer(
+    FundusRemoteServer server,
+  ) async {
+    final relocated = await _resolveShared(server);
+    await _replaceServer(relocated);
+    return relocated;
   }
 
   static String _safeNetworkError(Object error) => switch (error) {
@@ -1715,6 +1724,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           deviceId: await _store.deviceId(),
           offlineStore: _offlineStore,
           onConflict: (conflict) => resolvePlaybackConflict(context, conflict),
+          serverResolver: _relocatePlayerServer,
         );
     if (_remotePlayer == null && mounted) {
       setState(() => _remotePlayer = player);
