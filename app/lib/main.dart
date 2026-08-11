@@ -1334,66 +1334,83 @@ class _LibraryShellState extends State<LibraryShell> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          _mobileDestination == 2 ? 'Playlists' : 'Hörbücher & Hörspiele',
+          _playerExpanded
+              ? widget.player?.work?.title ?? 'Player'
+              : _mobileDestination == 2
+              ? 'Playlists'
+              : 'Hörbücher & Hörspiele',
         ),
         actions: [
-          if (widget.onClose != null)
+          if (_playerExpanded)
+            IconButton(
+              onPressed: () => setState(() => _playerExpanded = false),
+              tooltip: 'Player verkleinern',
+              icon: const Icon(Icons.close_fullscreen),
+            )
+          else if (widget.onClose != null)
             IconButton(
               onPressed: widget.onClose,
               tooltip: 'Bibliothek oder Server wechseln',
               icon: const Icon(Icons.home_outlined),
             ),
-          IconButton(
-            onPressed: widget.onToggleTheme,
-            tooltip: 'Theme wechseln',
-            icon: const Icon(Icons.contrast),
-          ),
+          if (!_playerExpanded)
+            IconButton(
+              onPressed: widget.onToggleTheme,
+              tooltip: 'Theme wechseln',
+              icon: const Icon(Icons.contrast),
+            ),
         ],
       ),
       body: _playerExpanded && widget.player != null
           ? _ExpandedPlayer(
               controller: widget.player!,
+              library: widget.library,
               onCollapse: () => setState(() => _playerExpanded = false),
               onPlay: widget.onPlay,
               onSelectAuthor: _showAuthor,
               onSelectNarrator: _showNarrator,
             )
           : pages[_mobileDestination],
-      bottomNavigationBar: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (widget.player != null && !_playerExpanded)
-            _PlayerBar(
-              controller: widget.player!,
-              compact: true,
-              onExpand: () => setState(() => _playerExpanded = true),
+      bottomNavigationBar: _playerExpanded
+          ? null
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.player != null && !_playerExpanded)
+                  _PlayerBar(
+                    controller: widget.player!,
+                    compact: true,
+                    onExpand: () => setState(() => _playerExpanded = true),
+                  ),
+                NavigationBar(
+                  selectedIndex: _mobileDestination,
+                  onDestinationSelected: (value) =>
+                      setState(() => _mobileDestination = value),
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.library_books_outlined),
+                      label: 'Bibliothek',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.search),
+                      label: 'Suche',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.queue_music_outlined),
+                      label: 'Playlists',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.download_outlined),
+                      label: 'Downloads',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.more_horiz),
+                      label: 'Mehr',
+                    ),
+                  ],
+                ),
+              ],
             ),
-          NavigationBar(
-            selectedIndex: _mobileDestination,
-            onDestinationSelected: (value) =>
-                setState(() => _mobileDestination = value),
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.library_books_outlined),
-                label: 'Bibliothek',
-              ),
-              NavigationDestination(icon: Icon(Icons.search), label: 'Suche'),
-              NavigationDestination(
-                icon: Icon(Icons.queue_music_outlined),
-                label: 'Playlists',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.download_outlined),
-                label: 'Downloads',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.more_horiz),
-                label: 'Mehr',
-              ),
-            ],
-          ),
-        ],
-      ),
     );
   }
 
@@ -3918,79 +3935,223 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
       animation: widget.controller,
       builder: (context, child) {
         final work = widget.controller.work;
-        return Row(
-          children: [
-            Expanded(
-              child: Column(
-                children: [
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: IconButton(
-                      onPressed: widget.onCollapse,
-                      tooltip: 'Player verkleinern',
-                      icon: const Icon(Icons.close_fullscreen),
-                    ),
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth < 760) {
+              return _mobilePlayer(work);
+            }
+            return Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    children: [
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: IconButton(
+                          onPressed: widget.onCollapse,
+                          tooltip: 'Player verkleinern',
+                          icon: const Icon(Icons.close_fullscreen),
+                        ),
+                      ),
+                      Expanded(child: _mainPager(work)),
+                      LayoutBuilder(
+                        builder: (context, constraints) => _PlayerBar(
+                          controller: widget.controller,
+                          compact: constraints.maxWidth < 760,
+                        ),
+                      ),
+                    ],
                   ),
-                  Expanded(child: _mainPager(work)),
-                  LayoutBuilder(
-                    builder: (context, constraints) => _PlayerBar(
-                      controller: widget.controller,
-                      compact: constraints.maxWidth < 760,
-                    ),
+                ),
+                _ResizeHandle(
+                  onDrag: (delta) => setState(
+                    () =>
+                        _contextWidth = (_contextWidth - delta).clamp(300, 720),
                   ),
-                ],
-              ),
-            ),
-            _ResizeHandle(
-              onDrag: (delta) => setState(
-                () => _contextWidth = (_contextWidth - delta).clamp(300, 720),
-              ),
-              onReset: () => setState(() => _contextWidth = 340),
-            ),
-            SizedBox(
-              width: _contextWidth,
-              child: Column(
-                children: [
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.all(8),
-                    child: SegmentedButton<_PlayerContextTab>(
-                      segments: const [
-                        ButtonSegment(
-                          value: _PlayerContextTab.files,
-                          icon: Icon(Icons.audio_file_outlined),
-                          label: Text('Dateien'),
+                  onReset: () => setState(() => _contextWidth = 340),
+                ),
+                SizedBox(
+                  width: _contextWidth,
+                  child: Column(
+                    children: [
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.all(8),
+                        child: SegmentedButton<_PlayerContextTab>(
+                          segments: const [
+                            ButtonSegment(
+                              value: _PlayerContextTab.files,
+                              icon: Icon(Icons.audio_file_outlined),
+                              label: Text('Dateien'),
+                            ),
+                            ButtonSegment(
+                              value: _PlayerContextTab.chapters,
+                              icon: Icon(Icons.list_alt),
+                              label: Text('Chapters'),
+                            ),
+                            ButtonSegment(
+                              value: _PlayerContextTab.details,
+                              icon: Icon(Icons.info_outline),
+                              label: Text('Details'),
+                            ),
+                            ButtonSegment(
+                              value: _PlayerContextTab.playlist,
+                              icon: Icon(Icons.queue_music),
+                              label: Text('Playlist'),
+                            ),
+                          ],
+                          selected: {_tab},
+                          onSelectionChanged: (selection) =>
+                              setState(() => _tab = selection.first),
                         ),
-                        ButtonSegment(
-                          value: _PlayerContextTab.chapters,
-                          icon: Icon(Icons.list_alt),
-                          label: Text('Chapters'),
-                        ),
-                        ButtonSegment(
-                          value: _PlayerContextTab.details,
-                          icon: Icon(Icons.info_outline),
-                          label: Text('Details'),
-                        ),
-                        ButtonSegment(
-                          value: _PlayerContextTab.playlist,
-                          icon: Icon(Icons.queue_music),
-                          label: Text('Playlist'),
-                        ),
-                      ],
-                      selected: {_tab},
-                      onSelectionChanged: (selection) =>
-                          setState(() => _tab = selection.first),
-                    ),
+                      ),
+                      const Divider(height: 1),
+                      Expanded(child: _context(work)),
+                    ],
                   ),
-                  const Divider(height: 1),
-                  Expanded(child: _context(work)),
-                ],
-              ),
-            ),
-          ],
+                ),
+              ],
+            );
+          },
         );
       },
     );
+  }
+
+  Widget _mobilePlayer(LibraryWorkSummary? work) {
+    final tracks = widget.controller.tracks;
+    final chapters = widget.controller.chapters;
+    final authors = work == null
+        ? const <String>[]
+        : work.authors.isEmpty
+        ? [work.author]
+        : work.authors;
+    final cover = AspectRatio(
+      aspectRatio: 1,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: work == null
+            ? const Card(child: Icon(Icons.audiotrack, size: 100))
+            : _WorkCover(work: work, iconSize: 100, player: widget.controller),
+      ),
+    );
+    return Column(
+      children: [
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              Center(child: SizedBox(width: 280, child: cover)),
+              const SizedBox(height: 20),
+              Text(
+                work?.title ?? 'Wiedergabe',
+                style: Theme.of(context).textTheme.headlineMedium,
+              ),
+              if (work?.subtitle case final subtitle?) ...[
+                const SizedBox(height: 6),
+                Text(subtitle),
+              ],
+              if (authors.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(authors.join(', ')),
+              ],
+              if (work?.series case final series?) ...[
+                const SizedBox(height: 8),
+                Text(
+                  work?.seriesSequence == null
+                      ? series
+                      : '$series · Band '
+                            '${_formatSequence(work!.seriesSequence!)}',
+                ),
+              ],
+              if (work != null &&
+                  (work.narrators.isNotEmpty || work.language != null)) ...[
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 7,
+                  runSpacing: 7,
+                  children: [
+                    for (final narrator in work.narrators)
+                      Chip(
+                        avatar: const Icon(Icons.mic_none, size: 16),
+                        label: Text(narrator),
+                      ),
+                    if (work.language case final language?)
+                      Chip(label: Text(_displayLanguage(language))),
+                  ],
+                ),
+              ],
+              if (work?.description case final description?) ...[
+                const SizedBox(height: 20),
+                Text(
+                  'Beschreibung',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Text(description),
+              ],
+              const SizedBox(height: 24),
+              Text('Chapters', style: Theme.of(context).textTheme.titleMedium),
+              if (chapters.isEmpty)
+                const ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('Keine Chapters gefunden.'),
+                )
+              else
+                for (var index = 0; index < chapters.length; index++)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    selected: index == widget.controller.currentChapterIndex,
+                    leading: Text('${index + 1}'),
+                    title: Text(chapters[index].title),
+                    subtitle: Text(_chapterSubtitle(chapters[index])),
+                    trailing: index == widget.controller.currentChapterIndex
+                        ? const Icon(Icons.graphic_eq)
+                        : null,
+                    onTap: () =>
+                        widget.controller.jumpToChapter(chapters[index]),
+                  ),
+              const SizedBox(height: 24),
+              Text('Dateien', style: Theme.of(context).textTheme.titleMedium),
+              for (var index = 0; index < tracks.length; index++)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  selected: index == widget.controller.currentIndex,
+                  leading: Text('${index + 1}'),
+                  title: Text(tracks[index].title),
+                  subtitle: _mobileTrackSubtitle(tracks[index]),
+                  trailing: index == widget.controller.currentIndex
+                      ? const Icon(Icons.graphic_eq)
+                      : null,
+                  onTap: () => widget.controller.jumpToTrack(index),
+                ),
+              const SizedBox(height: 24),
+            ],
+          ),
+        ),
+        SafeArea(
+          top: false,
+          child: _PlayerBar(controller: widget.controller, compact: true),
+        ),
+      ],
+    );
+  }
+
+  Widget? _mobileTrackSubtitle(LibraryPlaybackTrack track) {
+    final metadata = track.audioMetadata;
+    final parts = <String>[
+      if (metadata != null) ...[
+        metadata.container,
+        metadata.codec,
+        ?metadata.profile,
+        if (metadata.channels case final channels?)
+          channels == 1 ? 'Mono' : '$channels Kanäle',
+        if (metadata.sampleRateHz case final sampleRate?)
+          '${(sampleRate / 1000).toStringAsFixed(sampleRate % 1000 == 0 ? 0 : 1)} kHz',
+      ],
+      if (track.duration case final duration?) _PlayerBar._time(duration),
+    ];
+    return parts.isEmpty ? null : Text(parts.join(' · '));
   }
 
   Widget _mainPager(LibraryWorkSummary? work) {
