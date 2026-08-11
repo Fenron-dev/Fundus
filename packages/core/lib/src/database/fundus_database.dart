@@ -39,6 +39,7 @@ final class LibraryWorkSummary {
     this.progressDuration,
     this.progressTrackIndex,
     this.progressFinished = false,
+    this.status = 'available',
   });
 
   final String id;
@@ -66,6 +67,9 @@ final class LibraryWorkSummary {
   final Duration? progressDuration;
   final int? progressTrackIndex;
   final bool progressFinished;
+  final String status;
+
+  bool get available => status == 'available';
 }
 
 final class FundusDatabase {
@@ -312,10 +316,10 @@ final class FundusDatabase {
     );
   }
 
-  List<LibraryWorkSummary> listWorks() {
+  List<LibraryWorkSummary> listWorks({bool includeMissing = false}) {
     final rows = _database.select('''
       SELECT w.id, w.kind, w.title, w.series_name, w.series_sequence, w.added_at,
-             w.metadata_json, COUNT(content.id) AS file_count,
+             w.metadata_json, w.status, COUNT(content.id) AS file_count,
              COALESCE(cover.path, w.generated_cover_path) AS cover_path,
              progress.numeric_value AS progress_position,
              progress.total AS progress_total,
@@ -332,7 +336,8 @@ final class FundusDatabase {
       LEFT JOIN work_files progress_file ON progress_file.work_id = w.id
         AND progress_file.file_id = progress.file_id
         AND progress_file.role = 'content'
-      WHERE w.kind != 'book_series' AND w.status = 'available'
+      WHERE w.kind != 'book_series'
+        ${includeMissing ? '' : "AND w.status = 'available'"}
       GROUP BY w.id
       ORDER BY COALESCE(w.series_name, w.title) COLLATE NOCASE,
                w.series_sequence, w.title COLLATE NOCASE
@@ -372,6 +377,7 @@ final class FundusDatabase {
             progressDuration: _seconds(row['progress_total']),
             progressTrackIndex: row['progress_track_index'] as int?,
             progressFinished: (row['progress_finished'] as int?) == 1,
+            status: row['status'] as String,
           );
         })
         .toList(growable: false);
@@ -1100,6 +1106,25 @@ final class FundusDatabase {
           AND f.status = 'available'
       )
     ''');
+  }
+
+  void deleteMissingWork(String workId) {
+    transaction(() {
+      final rows = _database.select('SELECT status FROM works WHERE id = ?', [
+        workId,
+      ]);
+      if (rows.isEmpty) return;
+      if (rows.single['status'] != 'missing') {
+        throw StateError('Nur fehlende Werke können bereinigt werden.');
+      }
+      _database.execute('DELETE FROM works WHERE id = ?', [workId]);
+      _database.execute('''
+        DELETE FROM files
+        WHERE status = 'missing' AND NOT EXISTS (
+          SELECT 1 FROM work_files WHERE work_files.file_id = files.id
+        )
+      ''');
+    });
   }
 
   static Map<String, int> _fileSignature(Iterable<ScannedFile> files) {

@@ -121,12 +121,19 @@ final class FundusLibrary {
     );
   }
 
-  List<LibraryWorkSummary> listWorks() =>
-      _database.listWorks().map(_withAbsoluteCoverPath).toList(growable: false);
+  List<LibraryWorkSummary> listWorks({bool includeMissing = false}) => _database
+      .listWorks(includeMissing: includeMissing)
+      .map(_withAbsoluteCoverPath)
+      .toList(growable: false);
 
   List<LibraryWorkSummary> searchWorks([
     LibraryWorkQuery query = const LibraryWorkQuery(),
   ]) => LibraryWorkSearch.apply(listWorks(), query);
+
+  void deleteMissingWork(String workId) {
+    _ensureWritable();
+    _database.deleteMissingWork(workId);
+  }
 
   List<LibraryPlaybackTrack> playbackTracks(String workId) {
     return _database
@@ -561,6 +568,7 @@ final class FundusLibrary {
       progressDuration: work.progressDuration,
       progressTrackIndex: work.progressTrackIndex,
       progressFinished: work.progressFinished,
+      status: work.status,
     );
   }
 

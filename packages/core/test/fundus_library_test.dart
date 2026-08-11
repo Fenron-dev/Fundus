@@ -622,6 +622,103 @@ void main() {
     },
   );
 
+  test(
+    'keeps a missing work and restores it with progress and annotations',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'fundus-missing-work-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final original = Directory('${root.path}/Autor/Serie/01 - Titel');
+      await original.create(recursive: true);
+      final audio = File('${original.path}/Kapitel.mp3');
+      await audio.writeAsBytes([1, 2, 3, 4]);
+
+      final library = await FundusLibrary.create(root);
+      addTearDown(library.close);
+      await library.index().drain<void>();
+      final work = library.listWorks().single;
+      final track = library.playbackTracks(work.id).single;
+      library.saveProgress(
+        workId: work.id,
+        fileId: track.fileId,
+        position: const Duration(minutes: 19, seconds: 8),
+        operationId: 'before-disappearance',
+      );
+      await library.replaceWorkTags(work.id, ['Nicht verlieren']);
+      await library.saveWorkNote(work.id, 'Bleibt auch ohne Datei erhalten.');
+      await library.addBookmark(
+        workId: work.id,
+        fileId: track.fileId,
+        position: const Duration(minutes: 7),
+        label: 'Merker',
+      );
+
+      await original.delete(recursive: true);
+      await library.index().drain<void>();
+
+      expect(library.listWorks(), isEmpty);
+      final missing = library.listWorks(includeMissing: true).single;
+      expect(missing.id, work.id);
+      expect(missing.available, isFalse);
+      expect(missing.status, 'missing');
+      expect(missing.fileCount, 0);
+      expect(
+        library.loadProgress(missing.id)!.position.displayValue,
+        '00:19:08',
+      );
+      final retained = library.loadAnnotations(missing.id);
+      expect(retained.tags, ['Nicht verlieren']);
+      expect(
+        retained.notes.single.markdown,
+        'Bleibt auch ohne Datei erhalten.',
+      );
+      expect(retained.bookmarks.single.label, 'Merker');
+
+      final restored = Directory('${root.path}/Wieder da');
+      await restored.create(recursive: true);
+      await File('${restored.path}/Kapitel.mp3').writeAsBytes([1, 2, 3, 4]);
+      await library.index().drain<void>();
+
+      final available = library.listWorks().single;
+      expect(available.id, work.id);
+      expect(available.available, isTrue);
+      expect(library.workDirectoryPath(available.id), restored.path);
+      expect(
+        library.loadProgress(available.id)!.position.displayValue,
+        '00:19:08',
+      );
+      expect(library.loadAnnotations(available.id).tags, ['Nicht verlieren']);
+    },
+  );
+
+  test('only explicitly deletes works that are already missing', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'fundus-delete-missing-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final book = Directory('${root.path}/Autor/Titel');
+    await book.create(recursive: true);
+    await File('${book.path}/Titel.mp3').writeAsBytes([9, 8, 7]);
+
+    final library = await FundusLibrary.create(root);
+    addTearDown(library.close);
+    await library.index().drain<void>();
+    final work = library.listWorks().single;
+    expect(() => library.deleteMissingWork(work.id), throwsStateError);
+    await library.replaceWorkTags(work.id, ['Temporär']);
+
+    await book.delete(recursive: true);
+    await library.index().drain<void>();
+    expect(library.listWorks(includeMissing: true).single.id, work.id);
+
+    library.deleteMissingWork(work.id);
+
+    expect(library.listWorks(includeMissing: true), isEmpty);
+    expect(library.loadProgress(work.id), isNull);
+    expect(library.loadAnnotations(work.id).tags, isEmpty);
+  });
+
   test('open rejects a directory without a manifest', () async {
     final root = await Directory.systemTemp.createTemp('fundus-empty-');
     addTearDown(() => root.delete(recursive: true));

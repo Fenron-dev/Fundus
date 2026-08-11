@@ -43,6 +43,35 @@ void main() {
     expect(find.text('Weiterhören'), findsOneWidget);
   });
 
+  testWidgets('missing media stays visible and cannot be played', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final missing = LibraryWorkSummary(
+      id: 'missing-work',
+      kind: 'audiobook',
+      title: 'Vorübergehend nicht erreichbar',
+      author: 'Testautor',
+      fileCount: 0,
+      addedAt: DateTime(2026),
+      status: 'missing',
+    );
+
+    await tester.pumpWidget(FundusApp(initialWorks: [missing]));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Fehlend'), findsOneWidget);
+    expect(find.text('Mediendateien nicht verfügbar'), findsOneWidget);
+    final resumeButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Weiterhören'),
+    );
+    expect(resumeButton.onPressed, isNull);
+    expect(find.textContaining('Fortschritt, Tags, Notizen'), findsOneWidget);
+  });
+
   testWidgets('medium shell keeps navigation and opens details inline', (
     tester,
   ) async {

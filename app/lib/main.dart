@@ -31,6 +31,8 @@ typedef WorkPlaybackCallback =
       Duration? startPosition,
     });
 typedef PlaylistPlaybackCallback = Future<void> Function(String playlistId);
+typedef MissingWorkDeleteCallback =
+    Future<void> Function(LibraryWorkSummary work);
 
 final class _RemoteLibraryChoice {
   const _RemoteLibraryChoice({
@@ -180,6 +182,7 @@ class _FundusAppState extends State<FundusApp> {
               player: _player,
               onPlay: _library == null ? null : _startPlayback,
               onPlayPlaylist: _library == null ? null : _startPlaylist,
+              onDeleteMissingWork: _library == null ? null : _deleteMissingWork,
               onExportDiagnostics: _library == null ? null : _exportDiagnostics,
               onToggleTheme: _toggleTheme,
               peerServer: _peerServer,
@@ -317,7 +320,7 @@ class _FundusAppState extends State<FundusApp> {
         'library_id': library.manifest.libraryId,
         'create': create,
       });
-      _works = library.listWorks();
+      _works = library.listWorks(includeMissing: true);
       await _recentStoreReady;
       _recentLibraries = await _recentStore.remember(
         path,
@@ -543,7 +546,9 @@ class _FundusAppState extends State<FundusApp> {
         if (!mounted) return;
         setState(() => _indexEvent = event);
       }
-      if (mounted) setState(() => _works = library.listWorks());
+      if (mounted) {
+        setState(() => _works = library.listWorks(includeMissing: true));
+      }
       await FundusDiagnostics.instance.record('library.scan_completed', {
         'work_count': library.listWorks().length,
         'file_count': _indexEvent?.fileCount,
@@ -646,6 +651,14 @@ class _FundusAppState extends State<FundusApp> {
     await player.close();
     player.dispose();
     _player = null;
+  }
+
+  Future<void> _deleteMissingWork(LibraryWorkSummary work) async {
+    final library = _library;
+    if (library == null || work.available) return;
+    library.deleteMissingWork(work.id);
+    if (!mounted) return;
+    setState(() => _works = library.listWorks(includeMissing: true));
   }
 
   Future<void> _closeLibrary() async {
@@ -963,6 +976,7 @@ class LibraryShell extends StatefulWidget {
     this.player,
     this.onPlay,
     this.onPlayPlaylist,
+    this.onDeleteMissingWork,
     this.onExportDiagnostics,
     this.peerServer,
     this.offlineStore,
@@ -980,6 +994,7 @@ class LibraryShell extends StatefulWidget {
   final FundusPlayerController? player;
   final WorkPlaybackCallback? onPlay;
   final PlaylistPlaybackCallback? onPlayPlaylist;
+  final MissingWorkDeleteCallback? onDeleteMissingWork;
   final VoidCallback? onExportDiagnostics;
   final FundusPeerServerController? peerServer;
   final FundusOfflineStore? offlineStore;
@@ -1153,6 +1168,7 @@ class _LibraryShellState extends State<LibraryShell> {
                         library: widget.library,
                         player: widget.player,
                         onPlay: widget.onPlay,
+                        onDeleteMissingWork: _deleteMissingWork,
                         onSelectAuthor: _showAuthor,
                         onSelectNarrator: _showNarrator,
                       ),
@@ -1446,6 +1462,7 @@ class _LibraryShellState extends State<LibraryShell> {
                     final available = playlist.workIds
                         .map((id) => worksById[id])
                         .whereType<LibraryWorkSummary>()
+                        .where((work) => work.available)
                         .toList(growable: false);
                     return Card(
                       child: ListTile(
@@ -2059,6 +2076,7 @@ class _LibraryShellState extends State<LibraryShell> {
               columns: const [
                 DataColumn(label: Text('Cover')),
                 DataColumn(label: Text('Titel')),
+                DataColumn(label: Text('Status')),
                 DataColumn(label: Text('Autor')),
                 DataColumn(label: Text('Serie')),
                 DataColumn(label: Text('Band')),
@@ -2082,6 +2100,18 @@ class _LibraryShellState extends State<LibraryShell> {
                         ),
                       ),
                       DataCell(Text(works[index].title)),
+                      DataCell(
+                        works[index].available
+                            ? const Text('Verfügbar')
+                            : const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.warning_amber_rounded, size: 18),
+                                  SizedBox(width: 5),
+                                  Text('Fehlend'),
+                                ],
+                              ),
+                      ),
                       DataCell(Text(works[index].author)),
                       DataCell(Text(works[index].series ?? '—')),
                       DataCell(
@@ -2130,6 +2160,7 @@ class _LibraryShellState extends State<LibraryShell> {
               library: widget.library,
               player: widget.player,
               onPlay: widget.onPlay,
+              onDeleteMissingWork: _deleteMissingWork,
               onSelectAuthor: _showAuthor,
               onSelectNarrator: _showNarrator,
             ),
@@ -2155,12 +2186,24 @@ class _LibraryShellState extends State<LibraryShell> {
           library: widget.library,
           player: widget.player,
           onPlay: widget.onPlay,
+          onDeleteMissingWork: _deleteMissingWork,
           onSelectAuthor: _showAuthor,
           onSelectNarrator: _showNarrator,
         ),
       ),
     ],
   );
+
+  Future<void> _deleteMissingWork(LibraryWorkSummary work) async {
+    final callback = widget.onDeleteMissingWork;
+    if (callback == null) return;
+    await callback(work);
+    if (!mounted) return;
+    setState(() {
+      if (_inlineDetailWork?.id == work.id) _inlineDetailWork = null;
+      _selectedIndex = 0;
+    });
+  }
 
   void _openGroup(_LibraryGroup group) => setState(() {
     _selectedIndex = 0;
@@ -2539,7 +2582,8 @@ class _WorkCard extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
-      label: '${work.title}, ${work.author}',
+      label:
+          '${work.title}, ${work.author}${work.available ? '' : ', Dateien fehlen'}',
       child: Card(
         color: selected
             ? scheme.secondaryContainer.withValues(alpha: .35)
@@ -2579,6 +2623,20 @@ class _WorkCard extends StatelessWidget {
                                 horizontal: 8,
                               ),
                               label: Text('Band ${_formatSequence(sequence)}'),
+                            ),
+                          ),
+                        if (!work.available)
+                          Positioned(
+                            right: 8,
+                            top: 8,
+                            child: Badge(
+                              backgroundColor: scheme.errorContainer,
+                              textColor: scheme.onErrorContainer,
+                              largeSize: 28,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
+                              label: const Text('Fehlend'),
                             ),
                           ),
                       ],
@@ -2734,7 +2792,14 @@ class _AudiobookHero extends StatelessWidget {
               )
             else if (work.publishedYear case final year?)
               Chip(label: Text('$year')),
-            Chip(label: Text('${work.fileCount} Datei(en)')),
+            if (!work.available)
+              Chip(
+                avatar: const Icon(Icons.warning_amber_rounded, size: 18),
+                label: const Text('Dateien fehlen'),
+                backgroundColor: Theme.of(context).colorScheme.errorContainer,
+              )
+            else
+              Chip(label: Text('${work.fileCount} Datei(en)')),
           ],
         ),
         const SizedBox(height: 18),
@@ -2787,6 +2852,7 @@ class _DetailPanel extends StatefulWidget {
     this.library,
     this.player,
     this.onPlay,
+    this.onDeleteMissingWork,
     this.onSelectAuthor,
     this.onSelectNarrator,
   });
@@ -2795,6 +2861,7 @@ class _DetailPanel extends StatefulWidget {
   final FundusLibrary? library;
   final FundusPlayerController? player;
   final WorkPlaybackCallback? onPlay;
+  final MissingWorkDeleteCallback? onDeleteMissingWork;
   final ValueChanged<String>? onSelectAuthor;
   final ValueChanged<String>? onSelectNarrator;
 
@@ -2906,17 +2973,61 @@ class _DetailPanelState extends State<_DetailPanel> {
           player: widget.player,
           directoryPath: directoryPath,
           playing: _workIsPlaying,
-          playbackEnabled: widget.onPlay != null || _workIsCurrent,
+          playbackEnabled:
+              selectedWork.available &&
+              (widget.onPlay != null || _workIsCurrent),
           onTogglePlayback: () => _togglePlayback(selectedWork),
           onSelectAuthor: widget.onSelectAuthor,
           onSelectNarrator: widget.onSelectNarrator,
         ),
+        if (!selectedWork.available) ...[
+          const SizedBox(height: 16),
+          Card(
+            color: Theme.of(context).colorScheme.errorContainer,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.warning_amber_rounded),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Mediendateien nicht verfügbar',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Fundus behält Metadaten, Fortschritt, Tags, Notizen und '
+                    'Lesezeichen. Stelle den Datenträger oder Ordner wieder '
+                    'bereit und scanne die Bibliothek erneut.',
+                  ),
+                  if (widget.onDeleteMissingWork != null) ...[
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _saving
+                          ? null
+                          : () => _confirmDeleteMissingWork(selectedWork),
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Fehlenden Eintrag bereinigen'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
         if (widget.library != null && widget.player != null) ...[
           const SizedBox(height: 12),
           Align(
             alignment: Alignment.centerLeft,
             child: OutlinedButton.icon(
-              onPressed: _workIsQueued
+              onPressed: !selectedWork.available || _workIsQueued
                   ? null
                   : () => widget.player!.addToQueue(
                       widget.library!,
@@ -3051,6 +3162,42 @@ class _DetailPanelState extends State<_DetailPanel> {
         ),
       ],
     );
+  }
+
+  Future<void> _confirmDeleteMissingWork(LibraryWorkSummary work) async {
+    final callback = widget.onDeleteMissingWork;
+    if (callback == null || work.available) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Fehlenden Eintrag bereinigen?'),
+        content: Text(
+          '„${work.title}“ wird aus dem Fundus-Index entfernt. Dabei werden '
+          'auch Fortschritt, Tags, Notizen und Lesezeichen dieses Eintrags '
+          'gelöscht. Mediendateien auf Datenträgern werden nicht verändert.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Endgültig bereinigen'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      await callback(work);
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _addTag() async {
