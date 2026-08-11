@@ -37,6 +37,9 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
   Stopp am Kapitel- oder Trackende
 - optionaler Android-Schüttelneustart für laufende Zeittimer mit einstellbarer
   Empfindlichkeit, Cooldown und haptischer Bestätigung
+- Android-Hintergrundwiedergabe mit nativer Medienbenachrichtigung,
+  Lockscreen-, Headset- und Bluetooth-Steuerung für lokale, gestreamte und
+  offline heruntergeladene Hörbücher
 - anspringbare Zeit-Lesezeichen mit optionalem Rücksprung-Lesezeichen
 - bearbeitbare Tags mit fuzzy gefilterten Vorschlägen und Markdown-Notizen
 - Kachel-/Tabellenansicht und Navigation nach Autor, Serie und Buch

@@ -20,6 +20,7 @@ void main() {
     final media = Directory('${temporary.path}/media/Audiobooks/Autor/Buch');
     await media.create(recursive: true);
     await File('${media.path}/Buch.mp3').writeAsBytes([1, 2, 3]);
+    await File('${media.path}/cover.jpg').writeAsBytes([4, 5, 6]);
     final library = await FundusLibrary.create(
       Directory('${temporary.path}/media'),
     );
@@ -84,6 +85,7 @@ void main() {
     final proxy = await FundusRemoteStreamProxy.start(
       server: profile,
       libraryId: libraries.single.id,
+      workId: works.single.id,
       tracks: detail.tracks,
     );
     addTearDown(proxy.close);
@@ -94,6 +96,10 @@ void main() {
     final streamed = await request.close();
     expect(streamed.statusCode, HttpStatus.partialContent);
     expect(await streamed.expand((chunk) => chunk).toList(), [2, 3]);
+    final coverRequest = await httpClient.getUrl(proxy.coverUrl);
+    final coverResponse = await coverRequest.close();
+    expect(coverResponse.statusCode, HttpStatus.ok);
+    expect(await coverResponse.expand((chunk) => chunk).toList(), [4, 5, 6]);
 
     final saved = await client.saveProgress(
       profile,

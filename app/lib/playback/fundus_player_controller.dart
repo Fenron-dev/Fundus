@@ -9,6 +9,7 @@ import 'playback_conflict_settings.dart';
 import 'playback_sleep_timer.dart';
 import 'playback_shake_restart.dart';
 import 'playback_resume_policy.dart';
+import 'fundus_system_media_session.dart';
 
 final class PlayerWorkProgress {
   const PlayerWorkProgress({
@@ -34,6 +35,7 @@ final class FundusPlayerController extends ChangeNotifier {
     _subscriptions.addAll([
       _player.stream.playing.listen((value) {
         _playing = value;
+        _syncSystemMediaSession();
         notifyListeners();
         if (_ready && !value) unawaited(persist());
       }),
@@ -57,6 +59,7 @@ final class FundusPlayerController extends ChangeNotifier {
       }),
       _player.stream.duration.listen((value) {
         _duration = value;
+        _syncSystemMediaSession();
         notifyListeners();
       }),
       _player.stream.playlist.listen(_onPlaylist),
@@ -152,6 +155,8 @@ final class FundusPlayerController extends ChangeNotifier {
     _currentIndex = 0;
     _position = Duration.zero;
     _lastChapterIndex = null;
+    _activateSystemMediaSession();
+    _syncSystemMediaSession();
     notifyListeners();
     if (_tracks.isEmpty) {
       _loading = false;
@@ -213,6 +218,7 @@ final class FundusPlayerController extends ChangeNotifier {
           }),
         );
       }
+      _syncSystemMediaSession();
       unawaited(_refreshNativeChapters());
     } catch (error) {
       _ready = false;
@@ -339,7 +345,12 @@ final class FundusPlayerController extends ChangeNotifier {
     await _player.previous();
   }
 
-  Future<void> seek(Duration value) => _player.seek(value);
+  Future<void> seek(Duration value) async {
+    await _player.seek(value);
+    _position = value;
+    _syncSystemMediaSession();
+    notifyListeners();
+  }
 
   Future<void> jumpToBookmark(LibraryBookmark bookmark) async {
     if (!_ready || bookmark.workId != _work?.id) {
@@ -373,11 +384,14 @@ final class FundusPlayerController extends ChangeNotifier {
           ? maximum
           : target,
     );
+    _position = _player.state.position;
+    _syncSystemMediaSession();
     await persist();
   }
 
   Future<void> setRate(double value) async {
     _rate = value;
+    _syncSystemMediaSession();
     notifyListeners();
     await _player.setRate(value);
   }
@@ -456,6 +470,7 @@ final class FundusPlayerController extends ChangeNotifier {
     _sleepTimer.removeListener(notifyListeners);
     await _shakeRestart.dispose();
     _sleepTimer.dispose();
+    FundusSystemMediaSession.instance.deactivate(this);
     await _player.dispose();
   }
 
@@ -470,6 +485,7 @@ final class FundusPlayerController extends ChangeNotifier {
     _currentIndex = playlist.index.clamp(0, _tracks.length - 1);
     _position = Duration.zero;
     _lastChapterIndex = null;
+    _syncSystemMediaSession();
     notifyListeners();
     if (_ready) unawaited(persist());
   }
@@ -477,6 +493,53 @@ final class FundusPlayerController extends ChangeNotifier {
   Future<void> _pauseForSleepTimer() async {
     if (_closed) return;
     await _pauseAndPersist();
+  }
+
+  void _activateSystemMediaSession() {
+    FundusSystemMediaSession.instance.activate(
+      this,
+      FundusSystemMediaControls(
+        play: () async {
+          if (!_playing) await playOrPause();
+        },
+        pause: () async {
+          if (_playing) await playOrPause();
+        },
+        seek: seek,
+        rewind: () => seekRelative(const Duration(seconds: -10)),
+        fastForward: () => seekRelative(const Duration(seconds: 30)),
+        previous: previous,
+        next: next,
+      ),
+    );
+  }
+
+  void _syncSystemMediaSession() {
+    final work = _work;
+    final track = this.track;
+    if (work == null || track == null) return;
+    final coverPath = work.coverPath;
+    final authors = work.authors.isNotEmpty
+        ? work.authors.join(', ')
+        : work.author;
+    FundusSystemMediaSession.instance.update(
+      owner: this,
+      id: '${work.id}:${track.fileId}',
+      title: track.title,
+      album: work.title,
+      artist: authors,
+      position: _position,
+      duration: _duration > Duration.zero
+          ? _duration
+          : (track.duration ?? Duration.zero),
+      playing: _playing,
+      loading: _loading,
+      speed: _rate,
+      queueIndex: _currentIndex,
+      artUri: coverPath == null || coverPath.isEmpty
+          ? null
+          : Uri.file(coverPath),
+    );
   }
 
   Future<void> _refreshNativeChapters() async {

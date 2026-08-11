@@ -11,6 +11,7 @@ final class FundusRemoteStreamProxy {
   FundusRemoteStreamProxy._({
     required this.server,
     required this.libraryId,
+    required this.workId,
     required this.tracks,
     required this.client,
     required HttpServer httpServer,
@@ -20,6 +21,7 @@ final class FundusRemoteStreamProxy {
 
   final FundusRemoteServer server;
   final String libraryId;
+  final String workId;
   final List<FundusRemoteTrack> tracks;
   final FundusRemoteClient client;
   final HttpServer _httpServer;
@@ -29,6 +31,7 @@ final class FundusRemoteStreamProxy {
   static Future<FundusRemoteStreamProxy> start({
     required FundusRemoteServer server,
     required String libraryId,
+    required String workId,
     required List<FundusRemoteTrack> tracks,
     FundusRemoteClient client = const FundusRemoteClient(),
   }) async {
@@ -36,6 +39,7 @@ final class FundusRemoteStreamProxy {
     final proxy = FundusRemoteStreamProxy._(
       server: server,
       libraryId: libraryId,
+      workId: workId,
       tracks: tracks,
       client: client,
       httpServer: httpServer,
@@ -55,6 +59,13 @@ final class FundusRemoteStreamProxy {
       ),
   ];
 
+  Uri get coverUrl => Uri(
+    scheme: 'http',
+    host: InternetAddress.loopbackIPv4.address,
+    port: _httpServer.port,
+    path: '/$_capability/cover',
+  );
+
   Future<void> close() async {
     await _subscription?.cancel();
     _subscription = null;
@@ -69,6 +80,10 @@ final class FundusRemoteStreamProxy {
         segments.first != _capability) {
       response.statusCode = HttpStatus.notFound;
       await response.close();
+      return;
+    }
+    if (segments.last == 'cover') {
+      await _handleCover(request);
       return;
     }
     final index = int.tryParse(segments.last.split('.').first);
@@ -119,6 +134,19 @@ final class FundusRemoteStreamProxy {
     } finally {
       remote?.close();
     }
+  }
+
+  Future<void> _handleCover(HttpRequest request) async {
+    final response = request.response;
+    try {
+      final bytes = await client.cover(server, libraryId, workId);
+      response.headers.contentType = ContentType('image', 'jpeg');
+      response.headers.contentLength = bytes.length;
+      if (request.method == 'GET') response.add(bytes);
+    } catch (_) {
+      response.statusCode = HttpStatus.badGateway;
+    }
+    await response.close();
   }
 
   static String _extension(String title) {

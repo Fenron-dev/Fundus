@@ -9,6 +9,7 @@ environment:
 resolution: workspace
 
 dependencies:
+  audio_service: ^0.18.19
   basic_utils: ^5.8.2
   bonsoir: ^7.1.4
   crypto: ^3.0.7

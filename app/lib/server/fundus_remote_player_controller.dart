@@ -9,6 +9,7 @@ import '../diagnostics/fundus_diagnostics.dart';
 import '../playback/playback_sleep_timer.dart';
 import '../playback/playback_shake_restart.dart';
 import '../playback/playback_conflict_settings.dart';
+import '../playback/fundus_system_media_session.dart';
 import 'fundus_remote_client.dart';
 import 'fundus_remote_stream_proxy.dart';
 import 'fundus_offline_store.dart';
@@ -32,6 +33,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     _subscriptions.addAll([
       _player.stream.playing.listen((value) {
         _playing = value;
+        _syncSystemMediaSession();
         notifyListeners();
         if (_ready && !value) unawaited(persist());
       }),
@@ -47,12 +49,14 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       }),
       _player.stream.duration.listen((value) {
         _duration = value;
+        _syncSystemMediaSession();
         notifyListeners();
       }),
       _player.stream.playlist.listen((playlist) {
         if (_tracks.isEmpty) return;
         _currentIndex = playlist.index.clamp(0, _tracks.length - 1);
         _position = Duration.zero;
+        _syncSystemMediaSession();
         notifyListeners();
       }),
       _player.stream.completed.listen((completed) {
@@ -137,6 +141,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     _tracks = const [];
     _currentIndex = 0;
     _position = Duration.zero;
+    _activateSystemMediaSession();
     notifyListeners();
     try {
       final tracks = offlineWork == null
@@ -172,6 +177,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         throw StateError('Dieses Werk enthält keine abspielbaren Dateien.');
       }
       _tracks = tracks;
+      _syncSystemMediaSession();
       var progress = serverProgress ?? localProgress;
       if (localProgress != null && serverProgress != null) {
         final localIndex = localProgress.fileId == null
@@ -216,6 +222,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         final proxy = await FundusRemoteStreamProxy.start(
           server: _server ?? server,
           libraryId: library.id,
+          workId: work.id,
           tracks: _tracks,
           client: _client,
         );
@@ -245,6 +252,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
           }),
         );
       }
+      _syncSystemMediaSession();
     } catch (error) {
       _loading = false;
       _ready = false;
@@ -311,7 +319,12 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> seek(Duration value) => _player.seek(value);
+  Future<void> seek(Duration value) async {
+    await _player.seek(value);
+    _position = value;
+    _syncSystemMediaSession();
+    notifyListeners();
+  }
 
   Future<void> seekRelative(Duration delta) async {
     final target = _position + delta;
@@ -323,11 +336,14 @@ final class FundusRemotePlayerController extends ChangeNotifier {
           ? maximum
           : target,
     );
+    _position = _player.state.position;
+    _syncSystemMediaSession();
     await persist();
   }
 
   Future<void> setRate(double value) async {
     _rate = value;
+    _syncSystemMediaSession();
     notifyListeners();
     await _player.setRate(value);
   }
@@ -441,6 +457,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     _sleepTimer.removeListener(notifyListeners);
     await _shakeRestart.dispose();
     _sleepTimer.dispose();
+    FundusSystemMediaSession.instance.deactivate(this);
     await _player.dispose();
     await _proxy?.close();
     _proxy = null;
@@ -484,6 +501,50 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         rethrow;
       }
     }
+  }
+
+  void _activateSystemMediaSession() {
+    FundusSystemMediaSession.instance.activate(
+      this,
+      FundusSystemMediaControls(
+        play: () async {
+          if (!_playing) await playOrPause();
+        },
+        pause: () async {
+          if (_playing) await playOrPause();
+        },
+        seek: seek,
+        rewind: () => seekRelative(const Duration(seconds: -10)),
+        fastForward: () => seekRelative(const Duration(seconds: 30)),
+        previous: previous,
+        next: next,
+      ),
+    );
+  }
+
+  void _syncSystemMediaSession() {
+    final work = _work;
+    final track = this.track;
+    if (work == null || track == null) return;
+    final coverPath = _offlineWork?.coverPath;
+    FundusSystemMediaSession.instance.update(
+      owner: this,
+      id: '${work.id}:${track.id}',
+      title: track.title,
+      album: work.title,
+      artist: work.authors.join(', '),
+      position: _position,
+      duration: _duration > Duration.zero
+          ? _duration
+          : (track.duration ?? Duration.zero),
+      playing: _playing,
+      loading: _loading,
+      speed: _rate,
+      queueIndex: _currentIndex,
+      artUri: coverPath != null && coverPath.isNotEmpty
+          ? Uri.file(coverPath)
+          : _proxy?.coverUrl,
+    );
   }
 
   String _operationId() {

@@ -15,6 +15,7 @@ import 'library/security_scoped_bookmarks.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/playback_conflict_settings.dart';
 import 'playback/playback_sleep_timer_button.dart';
+import 'playback/fundus_system_media_session.dart';
 import 'server/fundus_peer_server_controller.dart';
 import 'server/fundus_peer_discovery.dart';
 import 'server/fundus_offline_store.dart';
@@ -61,9 +62,10 @@ String _displayLanguage(String? language) {
   };
 }
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
+  await FundusSystemMediaSession.instance.initialize();
   runApp(const FundusApp());
 }
 
