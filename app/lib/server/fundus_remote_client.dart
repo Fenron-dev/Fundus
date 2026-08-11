@@ -234,6 +234,22 @@ final class FundusRemoteTrack {
   final Duration? duration;
 }
 
+final class FundusRemoteChapter {
+  const FundusRemoteChapter({
+    required this.title,
+    required this.fileId,
+    required this.trackIndex,
+    required this.position,
+    this.duration,
+  });
+
+  final String title;
+  final String fileId;
+  final int trackIndex;
+  final Duration position;
+  final Duration? duration;
+}
+
 final class FundusRemoteProgress {
   const FundusRemoteProgress({
     required this.fileId,
@@ -249,10 +265,15 @@ final class FundusRemoteProgress {
 }
 
 final class FundusRemoteWorkDetail {
-  const FundusRemoteWorkDetail({required this.work, required this.tracks});
+  const FundusRemoteWorkDetail({
+    required this.work,
+    required this.tracks,
+    required this.chapters,
+  });
 
   final FundusRemoteWork work;
   final List<FundusRemoteTrack> tracks;
+  final List<FundusRemoteChapter> chapters;
 }
 
 final class FundusRemoteStream {
@@ -538,6 +559,7 @@ final class FundusRemoteClient {
       '/v1/libraries/$libraryId/works/${summary.id}',
     );
     final files = value['files'];
+    final chapters = value['chapters'];
     return FundusRemoteWorkDetail(
       work: summary,
       tracks: [
@@ -555,6 +577,29 @@ final class FundusRemoteClient {
                   : null,
             ),
       ]..sort((a, b) => a.position.compareTo(b.position)),
+      chapters: [
+        for (final item
+            in (chapters is List ? chapters : const []).whereType<Map>())
+          if (item['title'] is String &&
+              item['file_id'] is String &&
+              item['track_index'] is int &&
+              item['position_seconds'] is num)
+            FundusRemoteChapter(
+              title: item['title'] as String,
+              fileId: item['file_id'] as String,
+              trackIndex: item['track_index'] as int,
+              position: Duration(
+                milliseconds: ((item['position_seconds'] as num) * 1000)
+                    .round(),
+              ),
+              duration: item['duration_seconds'] is num
+                  ? Duration(
+                      milliseconds: ((item['duration_seconds'] as num) * 1000)
+                          .round(),
+                    )
+                  : null,
+            ),
+      ],
     );
   }
 

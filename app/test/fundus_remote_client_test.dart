@@ -82,6 +82,9 @@ void main() {
       libraries.single.id,
       works.single,
     );
+    expect(detail.chapters, hasLength(1));
+    expect(detail.chapters.single.fileId, detail.tracks.single.id);
+    expect(detail.chapters.single.position, Duration.zero);
     final proxy = await FundusRemoteStreamProxy.start(
       server: profile,
       libraryId: libraries.single.id,
@@ -133,6 +136,8 @@ void main() {
     );
     expect(await File(offline.tracks.single.path).readAsBytes(), [1, 2, 3]);
     expect(offline.kind, 'audiobook');
+    expect(offline.chapters, hasLength(1));
+    expect(offline.chapters.single.fileId, offline.tracks.single.id);
     expect(transferredBytes, containsAllInOrder([0, 3]));
     expect(
       (await offlineStore.loadProgress(

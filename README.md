@@ -69,6 +69,8 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - erster Remote-Client mit QR-Scanner, sicherem System-Schlüsselspeicher sowie
   Server-, Bibliotheks-, Werk- und Coverübersicht
 - gepinnte Remote-Wiedergabe über eine nur auf Loopback gebundene Range-Brücke
+- pfadfreie Kapitelübertragung für Streaming und Offline-Downloads mit
+  Kapitelsprüngen und Sleep-Timer am Kapitelende
   sowie Fortschrittssynchronisation im Fünf-Sekunden-Takt und beim Pausieren
 - atomare Offline-Downloads mit lokalem Manifest, eigener Offline-Übersicht,
   lokaler Wiedergabe und lokalem Resume auch ohne erreichbaren Server

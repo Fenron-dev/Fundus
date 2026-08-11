@@ -31,6 +31,7 @@ final class FundusOfflineWork {
     required this.title,
     required this.downloadedAt,
     required this.tracks,
+    this.chapters = const [],
     this.kind = 'audiobook',
     this.authors = const [],
     this.subtitle,
@@ -50,6 +51,7 @@ final class FundusOfflineWork {
   final String title;
   final DateTime downloadedAt;
   final List<FundusOfflineTrack> tracks;
+  final List<FundusRemoteChapter> chapters;
   final String kind;
   final List<String> authors;
   final String? subtitle;
@@ -158,6 +160,35 @@ final class FundusOfflineStore {
       }
       if (tracks.isEmpty) return null;
       tracks.sort((a, b) => a.position.compareTo(b.position));
+      final chapters = <FundusRemoteChapter>[];
+      for (final item
+          in (value['chapters'] as List? ?? const []).whereType<Map>()) {
+        final fileId = item['file_id'];
+        final trackIndex = item['track_index'];
+        final positionMs = item['position_ms'];
+        if (item['title'] is! String ||
+            fileId is! String ||
+            trackIndex is! int ||
+            trackIndex < 0 ||
+            trackIndex >= tracks.length ||
+            tracks[trackIndex].id != fileId ||
+            positionMs is! int ||
+            positionMs < 0) {
+          continue;
+        }
+        final durationMs = item['duration_ms'];
+        chapters.add(
+          FundusRemoteChapter(
+            title: item['title'] as String,
+            fileId: fileId,
+            trackIndex: trackIndex,
+            position: Duration(milliseconds: positionMs),
+            duration: durationMs is int && durationMs >= 0
+                ? Duration(milliseconds: durationMs)
+                : null,
+          ),
+        );
+      }
       final coverValue = value['cover_path'];
       final coverPath = coverValue is String
           ? p.normalize(p.join(directory.path, coverValue))
@@ -197,6 +228,7 @@ final class FundusOfflineStore {
             DateTime.tryParse('${value['downloaded_at'] ?? ''}') ??
             DateTime.fromMillisecondsSinceEpoch(0),
         tracks: tracks,
+        chapters: chapters,
         coverPath:
             coverPath != null &&
                 p.isWithin(directory.path, coverPath) &&
@@ -416,6 +448,17 @@ final class FundusOfflineStore {
                 'position': track.position,
                 if (track.duration != null)
                   'duration_ms': track.duration!.inMilliseconds,
+              },
+          ],
+          'chapters': [
+            for (final chapter in detail.chapters)
+              {
+                'title': chapter.title,
+                'file_id': chapter.fileId,
+                'track_index': chapter.trackIndex,
+                'position_ms': chapter.position.inMilliseconds,
+                if (chapter.duration != null)
+                  'duration_ms': chapter.duration!.inMilliseconds,
               },
           ],
         }),

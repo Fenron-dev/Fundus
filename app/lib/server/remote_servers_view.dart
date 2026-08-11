@@ -1809,10 +1809,32 @@ class _RemoteExpandedPlayer extends StatelessWidget {
                 details,
               ],
               const SizedBox(height: 24),
-              Text(
-                'Dateien / Kapitel',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
+              Text('Chapters', style: Theme.of(context).textTheme.titleMedium),
+              if (controller.chapters.isEmpty)
+                const ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('Keine Chapters gefunden.'),
+                )
+              else
+                for (var index = 0; index < controller.chapters.length; index++)
+                  ListTile(
+                    selected: index == controller.currentChapterIndex,
+                    leading: Text('${index + 1}'),
+                    title: Text(controller.chapters[index].title),
+                    subtitle: Text(
+                      _remoteChapterSubtitle(
+                        controller.chapters[index],
+                        controller.tracks.length,
+                      ),
+                    ),
+                    trailing: index == controller.currentChapterIndex
+                        ? const Icon(Icons.graphic_eq)
+                        : null,
+                    onTap: () =>
+                        controller.jumpToChapter(controller.chapters[index]),
+                  ),
+              const SizedBox(height: 24),
+              Text('Dateien', style: Theme.of(context).textTheme.titleMedium),
               for (var index = 0; index < controller.tracks.length; index++)
                 ListTile(
                   selected: index == controller.currentIndex,
@@ -1937,7 +1959,10 @@ class _RemotePlayerBar extends StatelessWidget {
                     spacing: 8,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      PlaybackSleepTimerButton(timer: controller.sleepTimer),
+                      PlaybackSleepTimerButton(
+                        timer: controller.sleepTimer,
+                        supportsChapterEnd: controller.chapters.isNotEmpty,
+                      ),
                       PopupMenuButton<double>(
                         tooltip: 'Geschwindigkeit',
                         initialValue: controller.rate,
@@ -1972,6 +1997,16 @@ String _formatRemoteDuration(Duration value) {
   final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
   final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
   return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+}
+
+String _remoteChapterSubtitle(FundusRemoteChapter chapter, int trackCount) {
+  final parts = <String>[];
+  if (trackCount > 1) parts.add('Datei ${chapter.trackIndex + 1}');
+  parts.add('ab ${_formatRemoteDuration(chapter.position)}');
+  if (chapter.duration case final duration?) {
+    parts.add('Dauer ${_formatRemoteDuration(duration)}');
+  }
+  return parts.join(' · ');
 }
 
 class _PairingScanner extends StatefulWidget {

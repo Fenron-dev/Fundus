@@ -17,6 +17,33 @@ import 'fundus_offline_store.dart';
 typedef FundusRemoteServerResolver =
     Future<FundusRemoteServer> Function(FundusRemoteServer server);
 
+final class FundusRemoteChapterTarget {
+  const FundusRemoteChapterTarget({
+    required this.trackIndex,
+    required this.position,
+  });
+
+  final int trackIndex;
+  final Duration position;
+}
+
+FundusRemoteChapterTarget? resolveRemoteChapterTarget(
+  List<FundusRemoteTrack> tracks,
+  FundusRemoteChapter chapter,
+) {
+  var trackIndex = chapter.trackIndex;
+  if (trackIndex < 0 ||
+      trackIndex >= tracks.length ||
+      tracks[trackIndex].id != chapter.fileId) {
+    trackIndex = tracks.indexWhere((track) => track.id == chapter.fileId);
+  }
+  if (trackIndex < 0 || chapter.position < Duration.zero) return null;
+  return FundusRemoteChapterTarget(
+    trackIndex: trackIndex,
+    position: chapter.position,
+  );
+}
+
 final class FundusRemotePlayerController extends ChangeNotifier {
   FundusRemotePlayerController({
     required this.deviceId,
@@ -41,7 +68,17 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         if (_ready && !value) unawaited(persist());
       }),
       _player.stream.position.listen((value) {
+        final previousChapter = _lastChapterIndex;
         _position = value;
+        final chapter = currentChapterIndex;
+        if (_ready &&
+            _playing &&
+            previousChapter != null &&
+            chapter != null &&
+            chapter != previousChapter) {
+          unawaited(_sleepTimer.chapterEnded());
+        }
+        _lastChapterIndex = chapter;
         notifyListeners();
         final last = _lastPersistedAt;
         if (_ready && _playing && last != null) {
@@ -57,13 +94,18 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       }),
       _player.stream.playlist.listen((playlist) {
         if (_tracks.isEmpty) return;
+        if (playlist.index != _currentIndex) {
+          unawaited(_sleepTimer.chapterEnded());
+        }
         _currentIndex = playlist.index.clamp(0, _tracks.length - 1);
         _position = Duration.zero;
+        _lastChapterIndex = null;
         _syncSystemMediaSession();
         notifyListeners();
       }),
       _player.stream.completed.listen((completed) {
         if (!completed) return;
+        unawaited(_sleepTimer.chapterEnded());
         if (_currentIndex == _tracks.length - 1) {
           final finished =
               _duration > Duration.zero &&
@@ -94,7 +136,9 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   FundusRemoteLibrary? _library;
   FundusRemoteWork? _work;
   List<FundusRemoteTrack> _tracks = const [];
+  List<FundusRemoteChapter> _chapters = const [];
   int _currentIndex = 0;
+  int? _lastChapterIndex;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _playing = false;
@@ -112,8 +156,19 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   FundusRemoteTrack? get track =>
       _tracks.isEmpty ? null : _tracks[_currentIndex];
   List<FundusRemoteTrack> get tracks => List.unmodifiable(_tracks);
+  List<FundusRemoteChapter> get chapters => List.unmodifiable(_chapters);
   String? get offlineCoverPath => _offlineWork?.coverPath;
   int get currentIndex => _currentIndex;
+  int? get currentChapterIndex {
+    int? result;
+    for (var index = 0; index < _chapters.length; index++) {
+      final chapter = _chapters[index];
+      if (chapter.trackIndex != _currentIndex) continue;
+      if (chapter.position <= _position) result = index;
+    }
+    return result;
+  }
+
   Duration get position => _position;
   Duration get duration => _duration;
   bool get playing => _playing;
@@ -142,24 +197,33 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     _work = work;
     _offlineWork = offlineWork;
     _tracks = const [];
+    _chapters = const [];
     _currentIndex = 0;
+    _lastChapterIndex = null;
     _position = Duration.zero;
     _activateSystemMediaSession();
     notifyListeners();
     try {
-      final tracks = offlineWork == null
-          ? (await _withReconnect(
-              (active) => _client.work(active, library.id, work),
-            )).tracks
-          : [
-              for (final track in offlineWork.tracks)
-                FundusRemoteTrack(
-                  id: track.id,
-                  title: track.title,
-                  position: track.position,
-                  duration: track.duration,
-                ),
-            ];
+      final List<FundusRemoteTrack> tracks;
+      final List<FundusRemoteChapter> chapters;
+      if (offlineWork == null) {
+        final detail = await _withReconnect(
+          (active) => _client.work(active, library.id, work),
+        );
+        tracks = detail.tracks;
+        chapters = detail.chapters;
+      } else {
+        tracks = [
+          for (final track in offlineWork.tracks)
+            FundusRemoteTrack(
+              id: track.id,
+              title: track.title,
+              position: track.position,
+              duration: track.duration,
+            ),
+        ];
+        chapters = offlineWork.chapters;
+      }
       FundusRemoteProgress? localProgress;
       if (offlineWork != null) {
         localProgress = await _offlineStore.loadProgress(
@@ -180,6 +244,10 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         throw StateError('Dieses Werk enthält keine abspielbaren Dateien.');
       }
       _tracks = tracks;
+      _chapters = [
+        for (final chapter in chapters)
+          if (resolveRemoteChapterTarget(tracks, chapter) != null) chapter,
+      ];
       _syncSystemMediaSession();
       var progress = serverProgress ?? localProgress;
       if (localProgress != null && serverProgress != null) {
@@ -371,6 +439,24 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     if (!_ready || index < 0 || index >= _tracks.length) return;
     await persist();
     await _player.jump(index);
+  }
+
+  Future<void> jumpToChapter(FundusRemoteChapter chapter) async {
+    if (!_ready) return;
+    final target = resolveRemoteChapterTarget(_tracks, chapter);
+    if (target == null) {
+      throw StateError('Das Kapitel gehört nicht zum geöffneten Hörbuch.');
+    }
+    await persist();
+    if (target.trackIndex != _currentIndex) {
+      await _player.jump(target.trackIndex);
+      _currentIndex = target.trackIndex;
+    }
+    await _player.seek(target.position);
+    _position = target.position;
+    _lastChapterIndex = _chapters.indexOf(chapter);
+    notifyListeners();
+    await persist();
   }
 
   Future<void> persist({bool finished = false}) async {

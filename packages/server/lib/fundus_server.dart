@@ -182,6 +182,7 @@ final class FundusServerHandler {
       'multiple_libraries',
       'work_browse',
       'cover',
+      'chapters',
       'range_streaming',
       'progress',
     ],
@@ -208,17 +209,23 @@ final class FundusServerHandler {
     });
   }
 
-  Response _work(Request request, String libraryId, String workId) {
+  Future<Response> _work(
+    Request request,
+    String libraryId,
+    String workId,
+  ) async {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
     final work = _findWork(entry.library, workId);
     if (work == null) return _notFound('work_not_found');
+    final chapters = await entry.library.playbackChapters(workId);
     return _json({
       ..._workJson(work),
       'files': [
         for (final track in entry.library.playbackTracks(workId))
           _trackJson(track),
       ],
+      'chapters': [for (final chapter in chapters) _chapterJson(chapter)],
       'cover_url': work.coverPath == null
           ? null
           : '/v1/libraries/$libraryId/works/$workId/cover',
@@ -472,6 +479,16 @@ final class FundusServerHandler {
     'duration_seconds': track.duration?.inMilliseconds == null
         ? null
         : track.duration!.inMilliseconds / 1000,
+  };
+
+  static Map<String, Object?> _chapterJson(LibraryPlaybackChapter chapter) => {
+    'title': chapter.title,
+    'file_id': chapter.fileId,
+    'track_index': chapter.trackIndex,
+    'position_seconds': chapter.position.inMilliseconds / 1000,
+    'duration_seconds': chapter.duration?.inMilliseconds == null
+        ? null
+        : chapter.duration!.inMilliseconds / 1000,
   };
 
   static Map<String, Object?> _progressJson(LibraryPlaybackProgress progress) =>

@@ -161,6 +161,7 @@ void main() {
     expect(body['library_format_version'], 1);
     expect(body['capabilities'], contains('multiple_libraries'));
     expect(body['capabilities'], contains('range_streaming'));
+    expect(body['capabilities'], contains('chapters'));
   });
 
   test('lists multiple libraries without exposing local paths', () async {
@@ -185,9 +186,13 @@ void main() {
     final source = await response.readAsString();
     final body = jsonDecode(source) as Map<String, Object?>;
     final files = body['files']! as List<dynamic>;
+    final chapters = body['chapters']! as List<dynamic>;
     expect(response.statusCode, 200);
     expect(body['title'], 'Der Server-Test');
     expect((files.single as Map<String, dynamic>)['id'], track.fileId);
+    expect(chapters, hasLength(1));
+    expect((chapters.single as Map<String, dynamic>)['file_id'], track.fileId);
+    expect((chapters.single as Map<String, dynamic>)['position_seconds'], 0);
     expect(source, isNot(contains(temporary.path)));
     expect(source, isNot(contains(track.relativePath)));
   });
