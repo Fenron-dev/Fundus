@@ -14,6 +14,7 @@ import 'library/recent_library_store.dart';
 import 'library/security_scoped_bookmarks.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/playback_conflict_settings.dart';
+import 'playback/playlist_session_conflict.dart';
 import 'playback/playback_sleep_timer_button.dart';
 import 'playback/fundus_system_media_session.dart';
 import 'server/fundus_peer_server_controller.dart';
@@ -594,6 +595,12 @@ class _FundusAppState extends State<FundusApp> {
                 ? Future.value(PlaybackConflictChoice.keepCurrent)
                 : resolvePlaybackConflict(context, conflict);
           },
+          onPlaylistConflict: (conflict) {
+            final context = _navigatorKey.currentContext;
+            return context == null
+                ? Future.value(PlaylistSessionChoice.keepSession)
+                : resolvePlaylistSessionConflict(context, conflict);
+          },
         );
     if (_player == null) setState(() => _player = player);
     await player.open(
@@ -615,6 +622,12 @@ class _FundusAppState extends State<FundusApp> {
             return context == null
                 ? Future.value(PlaybackConflictChoice.keepCurrent)
                 : resolvePlaybackConflict(context, conflict);
+          },
+          onPlaylistConflict: (conflict) {
+            final context = _navigatorKey.currentContext;
+            return context == null
+                ? Future.value(PlaylistSessionChoice.keepSession)
+                : resolvePlaylistSessionConflict(context, conflict);
           },
         );
     if (_player == null) setState(() => _player = player);

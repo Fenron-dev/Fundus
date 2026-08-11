@@ -11,6 +11,7 @@ import 'playback_sleep_timer.dart';
 import 'playback_shake_restart.dart';
 import 'playback_resume_policy.dart';
 import 'fundus_system_media_session.dart';
+import 'playlist_session_conflict.dart';
 
 final class PlayerWorkProgress {
   const PlayerWorkProgress({
@@ -29,7 +30,8 @@ final class PlayerWorkProgress {
 final class FundusPlayerController extends ChangeNotifier {
   static const progressPersistInterval = Duration(seconds: 5);
 
-  FundusPlayerController({this.onConflict}) : _player = Player() {
+  FundusPlayerController({this.onConflict, this.onPlaylistConflict})
+    : _player = Player() {
     _sleepTimer = PlaybackSleepTimer(onElapsed: _pauseForSleepTimer);
     _sleepTimer.addListener(notifyListeners);
     _shakeRestart = PlaybackShakeRestartController(
@@ -85,6 +87,7 @@ final class FundusPlayerController extends ChangeNotifier {
 
   final Player _player;
   final PlaybackConflictResolver? onConflict;
+  final PlaylistSessionConflictResolver? onPlaylistConflict;
   late final PlaybackSleepTimer _sleepTimer;
   late final PlaybackShakeRestartController _shakeRestart;
   final List<StreamSubscription<Object?>> _subscriptions = [];
@@ -178,10 +181,14 @@ final class FundusPlayerController extends ChangeNotifier {
     _loading = true;
     _error = null;
     _library = library;
-    _work = work;
-    _configureQueue(library, work, preserveQueue: preserveQueue);
-    _tracks = library.playbackTracks(work.id);
-    _chapters = await library.playbackChapters(work.id);
+    final activeWork = await _configureQueue(
+      library,
+      work,
+      preserveQueue: preserveQueue,
+    );
+    _work = activeWork;
+    _tracks = library.playbackTracks(activeWork.id);
+    _chapters = await library.playbackChapters(activeWork.id);
     _currentIndex = 0;
     _position = Duration.zero;
     _lastChapterIndex = null;
@@ -196,11 +203,11 @@ final class FundusPlayerController extends ChangeNotifier {
       return;
     }
 
-    final progress = library.loadProgress(work.id);
+    final progress = library.loadProgress(activeWork.id);
     _progressRevision = progress?.revision ?? 0;
     unawaited(
       FundusDiagnostics.instance.record('playback.open', {
-        'work_id': work.id,
+        'work_id': activeWork.id,
         'track_count': _tracks.length,
         'stored_file_id': progress?.fileId,
         'stored_position_ms': progress == null
@@ -237,7 +244,7 @@ final class FundusPlayerController extends ChangeNotifier {
         notifyListeners();
         unawaited(
           FundusDiagnostics.instance.record('playback.resume_applied', {
-            'work_id': work.id,
+            'work_id': activeWork.id,
             'file_id': track?.fileId,
             'track_index': _currentIndex,
             'position_ms': resumePosition.inMilliseconds,
@@ -257,7 +264,7 @@ final class FundusPlayerController extends ChangeNotifier {
       _error = 'Wiedergabe konnte nicht gestartet werden: $error';
       unawaited(
         FundusDiagnostics.instance.record('playback.open_failed', {
-          'work_id': work.id,
+          'work_id': activeWork.id,
           'error': error.toString(),
         }),
       );
@@ -841,15 +848,15 @@ final class FundusPlayerController extends ChangeNotifier {
     }
   }
 
-  void _configureQueue(
+  Future<LibraryWorkSummary> _configureQueue(
     FundusLibrary library,
     LibraryWorkSummary work, {
     required bool preserveQueue,
-  }) {
+  }) async {
     if (preserveQueue && _queue.isNotEmpty) {
       final index = _queue.indexWhere((item) => item.id == work.id);
       if (index >= 0) _queueIndex = index;
-      return;
+      return work;
     }
     final sameLibrary = _queueLibraryId == library.manifest.libraryId;
     if (!sameLibrary || _savedPlaylists.isEmpty) {
@@ -877,10 +884,43 @@ final class FundusPlayerController extends ChangeNotifier {
               : [];
           _playlistId = restored.playlistId;
           _playlistRevision = restored.playlistRevision;
-          _playlistName = restored.playlistId == null
+          final savedPlaylist = restored.playlistId == null
               ? null
-              : library.loadPlaylist(restored.playlistId!)?.name;
-          return;
+              : library.loadPlaylist(restored.playlistId!);
+          _playlistName = savedPlaylist?.name;
+          if (savedPlaylist != null &&
+              playlistSessionHasChanged(restored, savedPlaylist) &&
+              onPlaylistConflict != null) {
+            final choice = await onPlaylistConflict!(
+              PlaylistSessionConflict(
+                playlistName: savedPlaylist.name,
+                sessionRevision: restored.playlistRevision ?? 0,
+                currentRevision: savedPlaylist.revision,
+                sessionWorkIds: restored.items
+                    .map((item) => item.workId)
+                    .toList(growable: false),
+                currentWorkIds: savedPlaylist.workIds,
+              ),
+            );
+            if (choice == PlaylistSessionChoice.useCurrentPlaylist) {
+              final currentQueue = savedPlaylist.workIds
+                  .map((workId) => byId[workId])
+                  .whereType<LibraryWorkSummary>()
+                  .toList(growable: false);
+              if (currentQueue.isNotEmpty) {
+                final restoredCurrentId = restored.currentItem.workId;
+                final currentIndex = currentQueue.indexWhere(
+                  (item) => item.id == restoredCurrentId,
+                );
+                _queue = currentQueue;
+                _queueIndex = currentIndex < 0 ? 0 : currentIndex;
+                _playlistRevision = savedPlaylist.revision;
+                _shuffleOrder = [];
+                return _queue[_queueIndex];
+              }
+            }
+          }
+          return work;
         }
       }
     }
@@ -892,6 +932,7 @@ final class FundusPlayerController extends ChangeNotifier {
     _playlistId = null;
     _playlistName = null;
     _playlistRevision = null;
+    return work;
   }
 
   Future<void> _persistPlaybackSession() async {
