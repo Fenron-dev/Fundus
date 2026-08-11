@@ -3084,6 +3084,107 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
     super.dispose();
   }
 
+  Future<void> _savePlaylist() async {
+    final existingName = widget.controller.playlistName;
+    final nameController = TextEditingController(
+      text: existingName ?? 'Neue Playlist',
+    );
+    final choice = await showDialog<({String name, bool overwrite})>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Playlist speichern'),
+        content: TextField(
+          controller: nameController,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Name'),
+          onSubmitted: (value) => Navigator.pop(context, (
+            name: value,
+            overwrite: existingName != null,
+          )),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
+          if (existingName != null)
+            TextButton(
+              onPressed: () => Navigator.pop(context, (
+                name: nameController.text,
+                overwrite: false,
+              )),
+              child: const Text('Als neue speichern'),
+            ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, (
+              name: nameController.text,
+              overwrite: existingName != null,
+            )),
+            child: Text(existingName == null ? 'Speichern' : 'Überschreiben'),
+          ),
+        ],
+      ),
+    );
+    nameController.dispose();
+    if (choice == null || choice.name.trim().isEmpty || !mounted) return;
+    try {
+      final saved = widget.controller.saveQueueAs(
+        choice.name,
+        overwrite: choice.overwrite,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Playlist „${saved.name}“ gespeichert.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Playlist konnte nicht gespeichert werden: $error'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _loadPlaylist(String playlistId) async {
+    try {
+      await widget.controller.loadSavedPlaylist(playlistId);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Playlist konnte nicht geöffnet werden: $error'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _deletePlaylist() async {
+    final id = widget.controller.playlistId;
+    final name = widget.controller.playlistName;
+    if (id == null || name == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Playlist löschen?'),
+        content: Text(
+          '„$name“ wird dauerhaft gelöscht. Die aktuelle Queue bleibt erhalten.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Löschen'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) widget.controller.deleteSavedPlaylist(id);
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -3299,49 +3400,90 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
 
   Widget _playlist(LibraryWorkSummary? work) {
     final queue = widget.controller.queue;
+    final savedPlaylists = widget.controller.savedPlaylists;
     if (queue.isEmpty) return const Center(child: Text('Playlist ist leer.'));
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
-        Row(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Text(
-                'Aktuelle Playlist · ${queue.length} Werk(e)',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
+            Text(
+              '${widget.controller.playlistName ?? 'Aktuelle Playlist'} · ${queue.length} Werk(e)',
+              style: Theme.of(context).textTheme.titleMedium,
             ),
-            IconButton(
-              onPressed: queue.length < 2
-                  ? null
-                  : () => widget.controller.setShuffle(
-                      !widget.controller.shuffleEnabled,
-                    ),
-              tooltip: widget.controller.shuffleEnabled
-                  ? 'Shuffle ausschalten'
-                  : 'Shuffle einschalten',
-              icon: Icon(
-                Icons.shuffle,
-                color: widget.controller.shuffleEnabled
-                    ? Theme.of(context).colorScheme.primary
-                    : null,
-              ),
-            ),
-            IconButton(
-              onPressed: widget.controller.cycleRepeatMode,
-              tooltip: switch (widget.controller.repeatMode.name) {
-                'all' => 'Playlist wiederholen',
-                'one' => 'Werk wiederholen',
-                _ => 'Wiederholen aus',
-              },
-              icon: Icon(
-                widget.controller.repeatMode.name == 'one'
-                    ? Icons.repeat_one
-                    : Icons.repeat,
-                color: widget.controller.repeatMode.name == 'none'
-                    ? null
-                    : Theme.of(context).colorScheme.primary,
-              ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                PopupMenuButton<String>(
+                  enabled: savedPlaylists.isNotEmpty,
+                  tooltip: 'Gespeicherte Playlist öffnen',
+                  icon: const Icon(Icons.folder_open_outlined),
+                  onSelected: _loadPlaylist,
+                  itemBuilder: (context) => [
+                    for (final playlist in savedPlaylists)
+                      PopupMenuItem(
+                        value: playlist.id,
+                        child: Row(
+                          children: [
+                            if (playlist.id == widget.controller.playlistId)
+                              const Padding(
+                                padding: EdgeInsets.only(right: 8),
+                                child: Icon(Icons.check, size: 18),
+                              ),
+                            Expanded(child: Text(playlist.name)),
+                            Text('${playlist.workIds.length}'),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+                IconButton(
+                  onPressed: widget.library?.isReadOnly == false
+                      ? _savePlaylist
+                      : null,
+                  tooltip: 'Playlist speichern',
+                  icon: const Icon(Icons.save_outlined),
+                ),
+                if (widget.controller.playlistId != null)
+                  IconButton(
+                    onPressed: _deletePlaylist,
+                    tooltip: 'Gespeicherte Playlist löschen',
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                IconButton(
+                  onPressed: queue.length < 2
+                      ? null
+                      : () => widget.controller.setShuffle(
+                          !widget.controller.shuffleEnabled,
+                        ),
+                  tooltip: widget.controller.shuffleEnabled
+                      ? 'Shuffle ausschalten'
+                      : 'Shuffle einschalten',
+                  icon: Icon(
+                    Icons.shuffle,
+                    color: widget.controller.shuffleEnabled
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+                  ),
+                ),
+                IconButton(
+                  onPressed: widget.controller.cycleRepeatMode,
+                  tooltip: switch (widget.controller.repeatMode.name) {
+                    'all' => 'Playlist wiederholen',
+                    'one' => 'Werk wiederholen',
+                    _ => 'Wiederholen aus',
+                  },
+                  icon: Icon(
+                    widget.controller.repeatMode.name == 'one'
+                        ? Icons.repeat_one
+                        : Icons.repeat,
+                    color: widget.controller.repeatMode.name == 'none'
+                        ? null
+                        : Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+              ],
             ),
           ],
         ),

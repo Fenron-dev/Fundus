@@ -6,6 +6,7 @@ import 'package:sqlite3/sqlite3.dart';
 import '../import/abs_importer.dart';
 import '../library/work_annotations.dart';
 import '../model/fundus_id.dart';
+import '../model/library_playlist.dart';
 import '../model/media_position.dart';
 import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
@@ -637,6 +638,104 @@ final class FundusDatabase {
     );
     session.validate();
     return session;
+  }
+
+  List<LibraryPlaylist> listPlaylists() {
+    final rows = _database.select(
+      'SELECT * FROM playlists ORDER BY name COLLATE NOCASE, updated_at DESC',
+    );
+    return rows.map(_playlistFromRow).toList(growable: false);
+  }
+
+  LibraryPlaylist? loadPlaylist(String playlistId) {
+    final rows = _database.select('SELECT * FROM playlists WHERE id = ?', [
+      playlistId,
+    ]);
+    return rows.isEmpty ? null : _playlistFromRow(rows.first);
+  }
+
+  LibraryPlaylist savePlaylist({
+    String? playlistId,
+    required String name,
+    required List<String> workIds,
+    LibraryPlaylistKind kind = LibraryPlaylistKind.manual,
+  }) {
+    final normalizedName = name.trim();
+    if (normalizedName.isEmpty) {
+      throw ArgumentError.value(name, 'name', 'Playlistname ist leer.');
+    }
+    if (workIds.isEmpty) {
+      throw StateError('Eine Playlist benötigt mindestens ein Werk.');
+    }
+    final id = playlistId ?? FundusId.generate();
+    return transaction(() {
+      final previous = _database.select(
+        'SELECT revision, created_at FROM playlists WHERE id = ?',
+        [id],
+      );
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final revision = previous.isEmpty
+          ? 1
+          : (previous.first['revision'] as int) + 1;
+      final createdAt = previous.isEmpty
+          ? now
+          : previous.first['created_at'] as int;
+      _database.execute(
+        '''
+        INSERT INTO playlists (
+          id, name, kind, revision, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          kind = excluded.kind,
+          revision = excluded.revision,
+          updated_at = excluded.updated_at
+        ''',
+        [id, normalizedName, kind.name, revision, createdAt, now],
+      );
+      _database.execute('DELETE FROM playlist_items WHERE playlist_id = ?', [
+        id,
+      ]);
+      for (var position = 0; position < workIds.length; position++) {
+        _database.execute(
+          '''
+          INSERT INTO playlist_items (id, playlist_id, work_id, position)
+          VALUES (?, ?, ?, ?)
+          ''',
+          [FundusId.generate(), id, workIds[position], position],
+        );
+      }
+      return loadPlaylist(id)!;
+    });
+  }
+
+  void deletePlaylist(String playlistId) {
+    _database.execute('DELETE FROM playlists WHERE id = ?', [playlistId]);
+  }
+
+  LibraryPlaylist _playlistFromRow(Row row) {
+    final id = row['id'] as String;
+    final items = _database.select(
+      '''
+      SELECT work_id FROM playlist_items
+      WHERE playlist_id = ?
+      ORDER BY position
+      ''',
+      [id],
+    );
+    final kindName = row['kind'] as String;
+    return LibraryPlaylist(
+      id: id,
+      name: row['name'] as String,
+      kind: LibraryPlaylistKind.values.firstWhere(
+        (kind) => kind.name == kindName,
+        orElse: () => LibraryPlaylistKind.manual,
+      ),
+      workIds: items.map((item) => item['work_id'] as String).toList(),
+      revision: row['revision'] as int,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
+    );
   }
 
   String? workSourcePath(String workId) {

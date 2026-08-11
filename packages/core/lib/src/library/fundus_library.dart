@@ -11,6 +11,7 @@ import '../import/embedded_cover.dart';
 import '../model/fundus_id.dart';
 import '../model/library_configuration.dart';
 import '../model/library_manifest.dart';
+import '../model/library_playlist.dart';
 import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
 import '../scan/library_scanner.dart';
@@ -238,6 +239,29 @@ final class FundusLibrary {
 
   PlaybackSession? latestPlaybackSession({String userId = 'default'}) =>
       _database.latestPlaybackSession(userId: userId);
+
+  List<LibraryPlaylist> listPlaylists() => _database.listPlaylists();
+
+  LibraryPlaylist? loadPlaylist(String playlistId) =>
+      _database.loadPlaylist(playlistId);
+
+  LibraryPlaylist savePlaylist({
+    String? playlistId,
+    required String name,
+    required List<String> workIds,
+  }) {
+    _ensureWritable();
+    return _database.savePlaylist(
+      playlistId: playlistId,
+      name: name,
+      workIds: workIds,
+    );
+  }
+
+  void deletePlaylist(String playlistId) {
+    _ensureWritable();
+    _database.deletePlaylist(playlistId);
+  }
 
   WorkAnnotations loadAnnotations(String workId) =>
       _database.loadAnnotations(workId);

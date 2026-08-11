@@ -113,6 +113,10 @@ final class FundusPlayerController extends ChangeNotifier {
   int _queueIndex = 0;
   RepeatMode _repeatMode = RepeatMode.none;
   List<int> _shuffleOrder = [];
+  String? _playlistId;
+  String? _playlistName;
+  int? _playlistRevision;
+  List<LibraryPlaylist> _savedPlaylists = [];
 
   LibraryWorkSummary? get work => _work;
   LibraryPlaybackTrack? get track =>
@@ -142,6 +146,10 @@ final class FundusPlayerController extends ChangeNotifier {
   int get queueIndex => _queueIndex;
   RepeatMode get repeatMode => _repeatMode;
   bool get shuffleEnabled => _shuffleOrder.isNotEmpty;
+  String? get playlistId => _playlistId;
+  String? get playlistName => _playlistName;
+  List<LibraryPlaylist> get savedPlaylists =>
+      List.unmodifiable(_savedPlaylists);
   PlayerWorkProgress? progressForWork(String workId) =>
       _sessionProgress[workId];
 
@@ -416,6 +424,7 @@ final class FundusPlayerController extends ChangeNotifier {
       _library = library;
       _queue = [work];
       _queueLibraryId = library.manifest.libraryId;
+      _savedPlaylists = library.listPlaylists();
       _queueIndex = 0;
       _shuffleOrder = [];
     } else if (!_queue.any((item) => item.id == work.id)) {
@@ -423,6 +432,63 @@ final class FundusPlayerController extends ChangeNotifier {
       if (_shuffleOrder.isNotEmpty) {
         _shuffleOrder = [..._shuffleOrder, _queue.length - 1];
       }
+    }
+    notifyListeners();
+    unawaited(_persistPlaybackSession());
+  }
+
+  LibraryPlaylist saveQueueAs(String name, {bool overwrite = false}) {
+    final library = _library;
+    if (library == null || _queue.isEmpty) {
+      throw StateError('Es ist keine Playlist zum Speichern geöffnet.');
+    }
+    final saved = library.savePlaylist(
+      playlistId: overwrite ? _playlistId : null,
+      name: name,
+      workIds: _queue.map((work) => work.id).toList(growable: false),
+    );
+    _playlistId = saved.id;
+    _playlistName = saved.name;
+    _playlistRevision = saved.revision;
+    _savedPlaylists = library.listPlaylists();
+    notifyListeners();
+    unawaited(_persistPlaybackSession());
+    return saved;
+  }
+
+  Future<void> loadSavedPlaylist(String playlistId) async {
+    final library = _library;
+    final playlist = library?.loadPlaylist(playlistId);
+    if (library == null || playlist == null) return;
+    final byId = {for (final work in library.listWorks()) work.id: work};
+    final works = <LibraryWorkSummary>[];
+    for (final workId in playlist.workIds) {
+      final work = byId[workId];
+      if (work != null) works.add(work);
+    }
+    if (works.isEmpty) {
+      throw StateError('Die Playlist enthält keine verfügbaren Werke.');
+    }
+    _queue = works;
+    _queueLibraryId = library.manifest.libraryId;
+    _queueIndex = 0;
+    _shuffleOrder = [];
+    _playlistId = playlist.id;
+    _playlistName = playlist.name;
+    _playlistRevision = playlist.revision;
+    await open(library, works.first, preserveQueue: true);
+    await _persistPlaybackSession();
+  }
+
+  void deleteSavedPlaylist(String playlistId) {
+    final library = _library;
+    if (library == null) return;
+    library.deletePlaylist(playlistId);
+    _savedPlaylists = library.listPlaylists();
+    if (_playlistId == playlistId) {
+      _playlistId = null;
+      _playlistName = null;
+      _playlistRevision = null;
     }
     notifyListeners();
     unawaited(_persistPlaybackSession());
@@ -773,6 +839,9 @@ final class FundusPlayerController extends ChangeNotifier {
       return;
     }
     final sameLibrary = _queueLibraryId == library.manifest.libraryId;
+    if (!sameLibrary || _savedPlaylists.isEmpty) {
+      _savedPlaylists = library.listPlaylists();
+    }
     if (!sameLibrary || _queue.isEmpty) {
       final restored = library.latestPlaybackSession();
       if (restored != null) {
@@ -793,6 +862,11 @@ final class FundusPlayerController extends ChangeNotifier {
           _shuffleOrder = restored.shuffleOrder.length == restoredQueue.length
               ? [...restored.shuffleOrder]
               : [];
+          _playlistId = restored.playlistId;
+          _playlistRevision = restored.playlistRevision;
+          _playlistName = restored.playlistId == null
+              ? null
+              : library.loadPlaylist(restored.playlistId!)?.name;
           return;
         }
       }
@@ -802,6 +876,9 @@ final class FundusPlayerController extends ChangeNotifier {
     _queueIndex = 0;
     _repeatMode = RepeatMode.none;
     _shuffleOrder = [];
+    _playlistId = null;
+    _playlistName = null;
+    _playlistRevision = null;
   }
 
   Future<void> _persistPlaybackSession() async {
@@ -833,6 +910,8 @@ final class FundusPlayerController extends ChangeNotifier {
     library.savePlaybackSession(
       PlaybackSession(
         id: 'current-${library.manifest.libraryId}',
+        playlistId: _playlistId,
+        playlistRevision: _playlistRevision,
         items: items,
         currentIndex: _queueIndex.clamp(0, items.length - 1),
         currentPosition: MediaPosition(
