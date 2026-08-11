@@ -146,12 +146,14 @@ void main() {
     final playlist = library.savePlaylist(
       name: 'Unterwegs hören',
       workIds: [works[1].id, works[0].id],
+      mediaType: 'audiobook',
     );
     expect(playlist.revision, 1);
     final updatedPlaylist = library.savePlaylist(
       playlistId: playlist.id,
       name: 'Unterwegs hören',
       workIds: [works[0].id, works[1].id],
+      mediaType: 'audiobook',
     );
     expect(updatedPlaylist.revision, 2);
     library.close();
@@ -176,10 +178,18 @@ void main() {
     final restoredPlaylist = reopened.listPlaylists().single;
     expect(restoredPlaylist.id, playlist.id);
     expect(restoredPlaylist.name, 'Unterwegs hören');
+    expect(restoredPlaylist.mediaType, 'audiobook');
     expect(restoredPlaylist.workIds, [works[0].id, works[1].id]);
     expect(restoredPlaylist.revision, 2);
     reopened.deletePlaylist(playlist.id);
     expect(reopened.listPlaylists(), isEmpty);
+    final empty = reopened.savePlaylist(
+      name: 'Noch leer',
+      workIds: const [],
+      mediaType: 'video',
+    );
+    expect(empty.workIds, isEmpty);
+    expect(empty.mediaType, 'video');
   });
 
   test(

@@ -153,6 +153,13 @@ final class FundusPlayerController extends ChangeNotifier {
   PlayerWorkProgress? progressForWork(String workId) =>
       _sessionProgress[workId];
 
+  void refreshSavedPlaylists() {
+    final library = _library;
+    if (library == null) return;
+    _savedPlaylists = library.listPlaylists();
+    notifyListeners();
+  }
+
   Future<void> open(
     FundusLibrary library,
     LibraryWorkSummary work, {
@@ -446,6 +453,9 @@ final class FundusPlayerController extends ChangeNotifier {
       playlistId: overwrite ? _playlistId : null,
       name: name,
       workIds: _queue.map((work) => work.id).toList(growable: false),
+      mediaType: _queue.map((work) => work.kind).toSet().length == 1
+          ? _queue.first.kind
+          : null,
     );
     _playlistId = saved.id;
     _playlistName = saved.name;

@@ -5,6 +5,7 @@ final class LibraryPlaylist {
     required this.id,
     required this.name,
     required this.kind,
+    this.mediaType,
     required this.workIds,
     required this.revision,
     required this.createdAt,
@@ -14,6 +15,7 @@ final class LibraryPlaylist {
   final String id;
   final String name;
   final LibraryPlaylistKind kind;
+  final String? mediaType;
   final List<String> workIds;
   final int revision;
   final DateTime createdAt;

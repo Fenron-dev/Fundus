@@ -951,6 +951,7 @@ class LibraryShell extends StatefulWidget {
 }
 
 class _LibraryShellState extends State<LibraryShell> {
+  _LibrarySection _section = _LibrarySection.library;
   int _selectedIndex = 0;
   int _mobileDestination = 0;
   LibraryWorkQuery _query = const LibraryWorkQuery();
@@ -964,6 +965,7 @@ class _LibraryShellState extends State<LibraryShell> {
   LibraryWorkSummary? _inlineDetailWork;
   double _leftPaneWidth = 236;
   double _detailPaneWidth = 368;
+  String? _playlistTypeFilter;
 
   List<LibraryWorkSummary> get _visibleWorks =>
       LibraryWorkSearch.apply(widget.works, _query);
@@ -1057,6 +1059,12 @@ class _LibraryShellState extends State<LibraryShell> {
                   SizedBox(
                     width: _leftPaneWidth,
                     child: _Sidebar(
+                      selectedSection: _section,
+                      onSelectSection: (section) => setState(() {
+                        _section = section;
+                        _inlineDetailWork = null;
+                        _playerExpanded = false;
+                      }),
                       onOpenSettings: widget.peerServer == null
                           ? null
                           : () => _openServerSettings(context),
@@ -1082,11 +1090,15 @@ class _LibraryShellState extends State<LibraryShell> {
                             onSelectAuthor: _showAuthor,
                             onSelectNarrator: _showNarrator,
                           )
+                        : _section == _LibrarySection.playlists
+                        ? _playlists(context)
                         : !_detailPaneVisible && _inlineDetailWork != null
                         ? _inlineDetail(_inlineDetailWork!)
                         : _library(context),
                   ),
-                  if (_detailPaneVisible && !_playerExpanded) ...[
+                  if (_detailPaneVisible &&
+                      !_playerExpanded &&
+                      _section == _LibrarySection.library) ...[
                     _ResizeHandle(
                       onDrag: (delta) => setState(
                         () => _detailPaneWidth = (_detailPaneWidth - delta)
@@ -1142,7 +1154,12 @@ class _LibraryShellState extends State<LibraryShell> {
               child: Row(
                 children: [
                   NavigationRail(
-                    selectedIndex: 0,
+                    selectedIndex: _section.index,
+                    onDestinationSelected: (value) => setState(() {
+                      _section = _LibrarySection.values[value];
+                      _inlineDetailWork = null;
+                      _playerExpanded = false;
+                    }),
                     labelType: NavigationRailLabelType.all,
                     destinations: const [
                       NavigationRailDestination(
@@ -1151,8 +1168,9 @@ class _LibraryShellState extends State<LibraryShell> {
                         label: Text('Hörbücher'),
                       ),
                       NavigationRailDestination(
-                        icon: Icon(Icons.explore_outlined),
-                        label: Text('Entdecken'),
+                        icon: Icon(Icons.queue_music_outlined),
+                        selectedIcon: Icon(Icons.queue_music),
+                        label: Text('Playlists'),
                       ),
                     ],
                   ),
@@ -1168,6 +1186,8 @@ class _LibraryShellState extends State<LibraryShell> {
                             onSelectAuthor: _showAuthor,
                             onSelectNarrator: _showNarrator,
                           )
+                        : _section == _LibrarySection.playlists
+                        ? _playlists(context)
                         : _inlineDetailWork == null
                         ? _library(context, detailAsDialog: true)
                         : _inlineDetail(_inlineDetailWork!),
@@ -1185,6 +1205,7 @@ class _LibraryShellState extends State<LibraryShell> {
     final pages = [
       _library(context, detailAsDialog: true),
       _library(context, detailAsDialog: true, showSearch: true),
+      _playlists(context),
       widget.offlineWorks.isEmpty
           ? const Center(child: Text('Noch keine Offline-Downloads.'))
           : ListView(
@@ -1224,7 +1245,9 @@ class _LibraryShellState extends State<LibraryShell> {
     ];
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Hörbücher & Hörspiele'),
+        title: Text(
+          _mobileDestination == 2 ? 'Playlists' : 'Hörbücher & Hörspiele',
+        ),
         actions: [
           if (widget.onClose != null)
             IconButton(
@@ -1268,6 +1291,10 @@ class _LibraryShellState extends State<LibraryShell> {
               ),
               NavigationDestination(icon: Icon(Icons.search), label: 'Suche'),
               NavigationDestination(
+                icon: Icon(Icons.queue_music_outlined),
+                label: 'Playlists',
+              ),
+              NavigationDestination(
                 icon: Icon(Icons.download_outlined),
                 label: 'Downloads',
               ),
@@ -1280,6 +1307,302 @@ class _LibraryShellState extends State<LibraryShell> {
         ],
       ),
     );
+  }
+
+  static const _playlistMediaTypes = {
+    'audiobook': 'Hörbücher & Hörspiele',
+    'video': 'Filme & Serien',
+    'ebook': 'E-Books & PDFs',
+    'image': 'Bilder',
+    'podcast': 'Podcasts',
+    'custom': 'Eigene Medien',
+  };
+
+  Widget _playlists(BuildContext context) {
+    final library = widget.library;
+    if (library == null) {
+      return const Center(
+        child: Text('Playlists sind für lokale Bibliotheken verfügbar.'),
+      );
+    }
+    final playlists = library
+        .listPlaylists()
+        .where(
+          (playlist) =>
+              _playlistTypeFilter == null ||
+              playlist.mediaType == _playlistTypeFilter,
+        )
+        .toList(growable: false);
+    final worksById = {for (final work in widget.works) work.id: work};
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Playlists', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 210,
+                    child: DropdownButtonFormField<String?>(
+                      initialValue: _playlistTypeFilter,
+                      decoration: const InputDecoration(
+                        labelText: 'Medientyp',
+                        prefixIcon: Icon(Icons.filter_list),
+                      ),
+                      items: [
+                        const DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text('Alle Typen'),
+                        ),
+                        for (final entry in _playlistMediaTypes.entries)
+                          DropdownMenuItem<String?>(
+                            value: entry.key,
+                            child: Text(entry.value),
+                          ),
+                      ],
+                      onChanged: (value) =>
+                          setState(() => _playlistTypeFilter = value),
+                    ),
+                  ),
+                  FilledButton.icon(
+                    onPressed: library.isReadOnly ? null : _createPlaylist,
+                    icon: const Icon(Icons.playlist_add),
+                    label: const Text('Neue Playlist'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: playlists.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.queue_music_outlined, size: 64),
+                      const SizedBox(height: 12),
+                      Text(
+                        _playlistTypeFilter == null
+                            ? 'Noch keine Playlists gespeichert.'
+                            : 'Keine Playlist für diesen Medientyp.',
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: playlists.length,
+                  itemBuilder: (context, index) {
+                    final playlist = playlists[index];
+                    final available = playlist.workIds
+                        .map((id) => worksById[id])
+                        .whereType<LibraryWorkSummary>()
+                        .toList(growable: false);
+                    return Card(
+                      child: ListTile(
+                        onTap: library.isReadOnly
+                            ? null
+                            : () => _editPlaylist(playlist),
+                        leading: const Icon(Icons.queue_music, size: 34),
+                        title: Text(playlist.name),
+                        subtitle: Text(
+                          '${_playlistTypeLabel(playlist.mediaType)} · ${available.length} Werk(e) · Revision ${playlist.revision}',
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              onPressed: library.isReadOnly
+                                  ? null
+                                  : () => _editPlaylist(playlist),
+                              tooltip: 'Inhalte verwalten',
+                              icon: const Icon(Icons.edit_outlined),
+                            ),
+                            IconButton(
+                              onPressed: library.isReadOnly
+                                  ? null
+                                  : () => _deleteLibraryPlaylist(playlist),
+                              tooltip: 'Playlist löschen',
+                              icon: const Icon(Icons.delete_outline),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  String _playlistTypeLabel(String? type) =>
+      type == null ? 'Gemischte Medien' : _playlistMediaTypes[type] ?? type;
+
+  Future<void> _createPlaylist() async {
+    final library = widget.library;
+    if (library == null) return;
+    final nameController = TextEditingController();
+    var mediaType = 'audiobook';
+    final result = await showDialog<({String name, String type})>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Neue Playlist'),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: 'Name'),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  initialValue: mediaType,
+                  decoration: const InputDecoration(labelText: 'Medientyp'),
+                  items: [
+                    for (final entry in _playlistMediaTypes.entries)
+                      DropdownMenuItem(
+                        value: entry.key,
+                        child: Text(entry.value),
+                      ),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) {
+                      setDialogState(() => mediaType = value);
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, (
+                name: nameController.text,
+                type: mediaType,
+              )),
+              child: const Text('Erstellen'),
+            ),
+          ],
+        ),
+      ),
+    );
+    nameController.dispose();
+    if (result == null || result.name.trim().isEmpty || !mounted) return;
+    library.savePlaylist(
+      name: result.name,
+      workIds: const [],
+      mediaType: result.type,
+    );
+    widget.player?.refreshSavedPlaylists();
+    setState(() {});
+  }
+
+  Future<void> _editPlaylist(LibraryPlaylist playlist) async {
+    final library = widget.library;
+    if (library == null) return;
+    final candidates = widget.works
+        .where(
+          (work) =>
+              playlist.mediaType == null || work.kind == playlist.mediaType,
+        )
+        .toList(growable: false);
+    final selected = playlist.workIds.toSet();
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('„${playlist.name}“ verwalten'),
+          content: SizedBox(
+            width: 520,
+            height: 520,
+            child: candidates.isEmpty
+                ? const Center(
+                    child: Text('Keine passenden Medien in der Bibliothek.'),
+                  )
+                : ListView(
+                    children: [
+                      for (final work in candidates)
+                        CheckboxListTile(
+                          value: selected.contains(work.id),
+                          title: Text(work.title),
+                          subtitle: Text(work.author),
+                          onChanged: (checked) => setDialogState(() {
+                            checked == true
+                                ? selected.add(work.id)
+                                : selected.remove(work.id);
+                          }),
+                        ),
+                    ],
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Speichern'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved != true || !mounted) return;
+    library.savePlaylist(
+      playlistId: playlist.id,
+      name: playlist.name,
+      mediaType: playlist.mediaType,
+      workIds: [
+        for (final work in candidates)
+          if (selected.contains(work.id)) work.id,
+      ],
+    );
+    widget.player?.refreshSavedPlaylists();
+    setState(() {});
+  }
+
+  Future<void> _deleteLibraryPlaylist(LibraryPlaylist playlist) async {
+    final library = widget.library;
+    if (library == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Playlist löschen?'),
+        content: Text('„${playlist.name}“ wird dauerhaft gelöscht.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Löschen'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    library.deletePlaylist(playlist.id);
+    widget.player?.refreshSavedPlaylists();
+    setState(() {});
   }
 
   Widget _library(
@@ -1836,6 +2159,8 @@ class _LibraryShellState extends State<LibraryShell> {
   };
 }
 
+enum _LibrarySection { library, playlists }
+
 enum _LibraryLayout { grid, table }
 
 enum _LibraryGrouping { books, authors, series, narrators }
@@ -2014,8 +2339,14 @@ class _MediaFilterButton extends StatelessWidget {
 }
 
 class _Sidebar extends StatelessWidget {
-  const _Sidebar({this.onOpenSettings});
+  const _Sidebar({
+    required this.selectedSection,
+    required this.onSelectSection,
+    this.onOpenSettings,
+  });
 
+  final _LibrarySection selectedSection;
+  final ValueChanged<_LibrarySection> onSelectSection;
   final VoidCallback? onOpenSettings;
 
   @override
@@ -2024,10 +2355,11 @@ class _Sidebar extends StatelessWidget {
       padding: const EdgeInsets.all(10),
       children: [
         const _SectionLabel('Bibliothek'),
-        const ListTile(
-          leading: Icon(Icons.headphones),
-          title: Text('Hörbücher'),
-          selected: true,
+        ListTile(
+          leading: const Icon(Icons.headphones),
+          title: const Text('Hörbücher'),
+          selected: selectedSection == _LibrarySection.library,
+          onTap: () => onSelectSection(_LibrarySection.library),
         ),
         const ListTile(
           leading: Icon(Icons.movie_outlined),
@@ -2051,6 +2383,12 @@ class _Sidebar extends StatelessWidget {
         const ListTile(
           leading: Icon(Icons.star_outline),
           title: Text('Sammlungen'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.queue_music_outlined),
+          title: const Text('Playlists'),
+          selected: selectedSection == _LibrarySection.playlists,
+          onTap: () => onSelectSection(_LibrarySection.playlists),
         ),
         const ListTile(
           leading: Icon(Icons.folder_outlined),

@@ -249,12 +249,14 @@ final class FundusLibrary {
     String? playlistId,
     required String name,
     required List<String> workIds,
+    String? mediaType,
   }) {
     _ensureWritable();
     return _database.savePlaylist(
       playlistId: playlistId,
       name: name,
       workIds: workIds,
+      mediaType: mediaType,
     );
   }
 

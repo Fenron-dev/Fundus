@@ -659,14 +659,13 @@ final class FundusDatabase {
     required String name,
     required List<String> workIds,
     LibraryPlaylistKind kind = LibraryPlaylistKind.manual,
+    String? mediaType,
   }) {
     final normalizedName = name.trim();
     if (normalizedName.isEmpty) {
       throw ArgumentError.value(name, 'name', 'Playlistname ist leer.');
     }
-    if (workIds.isEmpty) {
-      throw StateError('Eine Playlist benötigt mindestens ein Werk.');
-    }
+    final normalizedMediaType = mediaType?.trim();
     final id = playlistId ?? FundusId.generate();
     return transaction(() {
       final previous = _database.select(
@@ -683,15 +682,26 @@ final class FundusDatabase {
       _database.execute(
         '''
         INSERT INTO playlists (
-          id, name, kind, revision, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
+          id, name, kind, media_type, revision, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           kind = excluded.kind,
+          media_type = excluded.media_type,
           revision = excluded.revision,
           updated_at = excluded.updated_at
         ''',
-        [id, normalizedName, kind.name, revision, createdAt, now],
+        [
+          id,
+          normalizedName,
+          kind.name,
+          normalizedMediaType == null || normalizedMediaType.isEmpty
+              ? null
+              : normalizedMediaType,
+          revision,
+          createdAt,
+          now,
+        ],
       );
       _database.execute('DELETE FROM playlist_items WHERE playlist_id = ?', [
         id,
@@ -731,6 +741,7 @@ final class FundusDatabase {
         (kind) => kind.name == kindName,
         orElse: () => LibraryPlaylistKind.manual,
       ),
+      mediaType: row['media_type'] as String?,
       workIds: items.map((item) => item['work_id'] as String).toList(),
       revision: row['revision'] as int,
       createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
