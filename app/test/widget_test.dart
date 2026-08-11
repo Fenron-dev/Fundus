@@ -87,6 +87,53 @@ void main() {
     expect(find.text('Hörbücher'), findsWidgets);
   });
 
+  testWidgets('playlist card starts playback instead of opening the editor', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final setup = await tester.runAsync(() async {
+      final root = await Directory.systemTemp.createTemp('fundus-playlist-');
+      final book = Directory('${root.path}/Autor/Serie/01 - Titel');
+      await book.create(recursive: true);
+      await File('${book.path}/Kapitel.mp3').writeAsBytes([1, 2, 3]);
+      final library = await FundusLibrary.create(root);
+      await library.index().drain<void>();
+      final work = library.listWorks().single;
+      final playlist = library.savePlaylist(
+        name: 'Meine Testliste',
+        workIds: [work.id],
+        mediaType: 'audiobook',
+      );
+      return (root: root, library: library, work: work, playlist: playlist);
+    });
+    final data = setup!;
+    addTearDown(() => data.root.delete(recursive: true));
+    addTearDown(data.library.close);
+    String? startedPlaylist;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LibraryShell(
+          works: [data.work],
+          library: data.library,
+          onToggleTheme: () {},
+          onPlayPlaylist: (id) async => startedPlaylist = id,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Playlists').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Meine Testliste'));
+    await tester.pumpAndSettle();
+
+    expect(startedPlaylist, data.playlist.id);
+    expect(find.textContaining('verwalten'), findsNothing);
+  });
+
   testWidgets('regular start offers portable library actions', (tester) async {
     await tester.pumpWidget(const FundusApp());
     await tester.pumpAndSettle();

@@ -29,6 +29,7 @@ typedef WorkPlaybackCallback =
       String? startFileId,
       Duration? startPosition,
     });
+typedef PlaylistPlaybackCallback = Future<void> Function(String playlistId);
 
 final class _RemoteLibraryChoice {
   const _RemoteLibraryChoice({
@@ -177,6 +178,7 @@ class _FundusAppState extends State<FundusApp> {
               onClose: _library == null ? null : _closeLibrary,
               player: _player,
               onPlay: _library == null ? null : _startPlayback,
+              onPlayPlaylist: _library == null ? null : _startPlaylist,
               onExportDiagnostics: _library == null ? null : _exportDiagnostics,
               onToggleTheme: _toggleTheme,
               peerServer: _peerServer,
@@ -602,6 +604,23 @@ class _FundusAppState extends State<FundusApp> {
     );
   }
 
+  Future<void> _startPlaylist(String playlistId) async {
+    final library = _library;
+    if (library == null) return;
+    final player =
+        _player ??
+        FundusPlayerController(
+          onConflict: (conflict) {
+            final context = _navigatorKey.currentContext;
+            return context == null
+                ? Future.value(PlaybackConflictChoice.keepCurrent)
+                : resolvePlaybackConflict(context, conflict);
+          },
+        );
+    if (_player == null) setState(() => _player = player);
+    await player.loadSavedPlaylist(playlistId, library: library);
+  }
+
   Future<void> _stopPlayer() async {
     final player = _player;
     if (player == null) return;
@@ -924,6 +943,7 @@ class LibraryShell extends StatefulWidget {
     this.onClose,
     this.player,
     this.onPlay,
+    this.onPlayPlaylist,
     this.onExportDiagnostics,
     this.peerServer,
     this.offlineStore,
@@ -940,6 +960,7 @@ class LibraryShell extends StatefulWidget {
   final VoidCallback? onClose;
   final FundusPlayerController? player;
   final WorkPlaybackCallback? onPlay;
+  final PlaylistPlaybackCallback? onPlayPlaylist;
   final VoidCallback? onExportDiagnostics;
   final FundusPeerServerController? peerServer;
   final FundusOfflineStore? offlineStore;
@@ -1352,6 +1373,7 @@ class _LibraryShellState extends State<LibraryShell> {
                     width: 210,
                     child: DropdownButtonFormField<String?>(
                       initialValue: _playlistTypeFilter,
+                      isExpanded: true,
                       decoration: const InputDecoration(
                         labelText: 'Medientyp',
                         prefixIcon: Icon(Icons.filter_list),
@@ -1408,9 +1430,7 @@ class _LibraryShellState extends State<LibraryShell> {
                         .toList(growable: false);
                     return Card(
                       child: ListTile(
-                        onTap: library.isReadOnly
-                            ? null
-                            : () => _editPlaylist(playlist),
+                        onTap: () => _playLibraryPlaylist(playlist, available),
                         leading: const Icon(Icons.queue_music, size: 34),
                         title: Text(playlist.name),
                         subtitle: Text(
@@ -1419,6 +1439,16 @@ class _LibraryShellState extends State<LibraryShell> {
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
+                            IconButton(
+                              onPressed: available.isEmpty
+                                  ? null
+                                  : () => _playLibraryPlaylist(
+                                      playlist,
+                                      available,
+                                    ),
+                              tooltip: 'Playlist abspielen',
+                              icon: const Icon(Icons.play_arrow),
+                            ),
                             IconButton(
                               onPressed: library.isReadOnly
                                   ? null
@@ -1447,6 +1477,35 @@ class _LibraryShellState extends State<LibraryShell> {
   String _playlistTypeLabel(String? type) =>
       type == null ? 'Gemischte Medien' : _playlistMediaTypes[type] ?? type;
 
+  Future<void> _playLibraryPlaylist(
+    LibraryPlaylist playlist,
+    List<LibraryWorkSummary> available,
+  ) async {
+    if (available.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Diese Playlist ist noch leer. Über den Stift kannst du Werke hinzufügen.',
+          ),
+        ),
+      );
+      return;
+    }
+    final play = widget.onPlayPlaylist;
+    if (play == null) return;
+    try {
+      await play(playlist.id);
+      if (mounted) setState(() => _playerExpanded = true);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Playlist konnte nicht gestartet werden: $error'),
+        ),
+      );
+    }
+  }
+
   Future<void> _createPlaylist() async {
     final library = widget.library;
     if (library == null) return;
@@ -1470,6 +1529,7 @@ class _LibraryShellState extends State<LibraryShell> {
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
                   initialValue: mediaType,
+                  isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Medientyp'),
                   items: [
                     for (final entry in _playlistMediaTypes.entries)

@@ -466,11 +466,14 @@ final class FundusPlayerController extends ChangeNotifier {
     return saved;
   }
 
-  Future<void> loadSavedPlaylist(String playlistId) async {
-    final library = _library;
-    final playlist = library?.loadPlaylist(playlistId);
-    if (library == null || playlist == null) return;
-    final byId = {for (final work in library.listWorks()) work.id: work};
+  Future<void> loadSavedPlaylist(
+    String playlistId, {
+    FundusLibrary? library,
+  }) async {
+    final targetLibrary = library ?? _library;
+    final playlist = targetLibrary?.loadPlaylist(playlistId);
+    if (targetLibrary == null || playlist == null) return;
+    final byId = {for (final work in targetLibrary.listWorks()) work.id: work};
     final works = <LibraryWorkSummary>[];
     for (final workId in playlist.workIds) {
       final work = byId[workId];
@@ -480,13 +483,13 @@ final class FundusPlayerController extends ChangeNotifier {
       throw StateError('Die Playlist enthält keine verfügbaren Werke.');
     }
     _queue = works;
-    _queueLibraryId = library.manifest.libraryId;
+    _queueLibraryId = targetLibrary.manifest.libraryId;
     _queueIndex = 0;
     _shuffleOrder = [];
     _playlistId = playlist.id;
     _playlistName = playlist.name;
     _playlistRevision = playlist.revision;
-    await open(library, works.first, preserveQueue: true);
+    await open(targetLibrary, works.first, preserveQueue: true);
     await _persistPlaybackSession();
   }
 
