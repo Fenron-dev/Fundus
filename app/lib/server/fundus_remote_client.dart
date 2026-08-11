@@ -178,6 +178,46 @@ final class FundusRemoteLibraryReference {
   }
 }
 
+final class FundusRemotePlaylist {
+  const FundusRemotePlaylist({
+    required this.id,
+    required this.name,
+    required this.kind,
+    required this.workIds,
+    required this.revision,
+    required this.createdAt,
+    required this.updatedAt,
+    this.mediaType,
+  });
+
+  final String id;
+  final String name;
+  final String kind;
+  final String? mediaType;
+  final List<String> workIds;
+  final int revision;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+}
+
+final class FundusRemotePlaylistConflict implements Exception {
+  const FundusRemotePlaylistConflict(this.current);
+
+  final FundusRemotePlaylist current;
+
+  @override
+  String toString() =>
+      'Die Playlist wurde auf einem anderen Gerät geändert (Revision ${current.revision}).';
+}
+
+final class FundusRemoteRequestException extends HttpException {
+  FundusRemoteRequestException(this.statusCode, this.responseBody)
+    : super('Serverfehler $statusCode.');
+
+  final int statusCode;
+  final String responseBody;
+}
+
 final class FundusRemoteWork {
   const FundusRemoteWork({
     required this.id,
@@ -536,6 +576,140 @@ final class FundusRemoteClient {
     ];
   }
 
+  Future<List<FundusRemotePlaylist>> playlists(
+    FundusRemoteServer server,
+    String libraryId,
+  ) async {
+    final value = await _json(server, '/v1/libraries/$libraryId/playlists');
+    final items = value['playlists'];
+    if (items is! List) return const [];
+    return items
+        .map(_playlistFromJson)
+        .whereType<FundusRemotePlaylist>()
+        .toList();
+  }
+
+  Future<FundusRemotePlaylist> createPlaylist(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String name,
+    required List<String> workIds,
+    String? mediaType,
+  }) => _writePlaylist(
+    server,
+    '/v1/libraries/$libraryId/playlists',
+    method: 'POST',
+    body: {'name': name, 'media_type': mediaType, 'work_ids': workIds},
+  );
+
+  Future<FundusRemotePlaylist> savePlaylist(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required FundusRemotePlaylist playlist,
+    required String name,
+    required List<String> workIds,
+    String? mediaType,
+  }) => _writePlaylist(
+    server,
+    '/v1/libraries/$libraryId/playlists/${Uri.encodeComponent(playlist.id)}',
+    method: 'PUT',
+    body: {
+      'name': name,
+      'media_type': mediaType,
+      'work_ids': workIds,
+      'expected_revision': playlist.revision,
+    },
+  );
+
+  Future<void> deletePlaylist(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required FundusRemotePlaylist playlist,
+  }) async {
+    final path =
+        '/v1/libraries/$libraryId/playlists/${Uri.encodeComponent(playlist.id)}'
+        '?expected_revision=${playlist.revision}';
+    try {
+      await _request(
+        server.baseUri.resolve(path),
+        fingerprint: server.certificateFingerprint,
+        token: server.token,
+        method: 'DELETE',
+      );
+    } on FundusRemoteRequestException catch (error) {
+      _throwPlaylistConflict(error);
+      rethrow;
+    }
+  }
+
+  Future<FundusRemotePlaylist> _writePlaylist(
+    FundusRemoteServer server,
+    String path, {
+    required String method,
+    required Map<String, Object?> body,
+  }) async {
+    try {
+      final bytes = await _request(
+        server.baseUri.resolve(path),
+        fingerprint: server.certificateFingerprint,
+        token: server.token,
+        method: method,
+        body: jsonEncode(body),
+      );
+      final value = jsonDecode(utf8.decode(bytes));
+      final playlist = _playlistFromJson(value);
+      if (playlist == null) {
+        throw const HttpException('Ungültige Playlist-Antwort.');
+      }
+      return playlist;
+    } on FundusRemoteRequestException catch (error) {
+      _throwPlaylistConflict(error);
+      rethrow;
+    }
+  }
+
+  static Never? _throwPlaylistConflict(FundusRemoteRequestException error) {
+    if (error.statusCode != HttpStatus.conflict) return null;
+    try {
+      final value = jsonDecode(error.responseBody);
+      final current = value is Map
+          ? _playlistFromJson(value['playlist'])
+          : null;
+      if (current != null) throw FundusRemotePlaylistConflict(current);
+    } on FormatException {
+      return null;
+    }
+    return null;
+  }
+
+  static FundusRemotePlaylist? _playlistFromJson(Object? value) {
+    if (value is! Map ||
+        value['id'] is! String ||
+        value['name'] is! String ||
+        value['kind'] is! String ||
+        value['work_ids'] is! List ||
+        value['revision'] is! int) {
+      return null;
+    }
+    final createdAt = DateTime.tryParse('${value['created_at'] ?? ''}');
+    final updatedAt = DateTime.tryParse('${value['updated_at'] ?? ''}');
+    if (createdAt == null || updatedAt == null) return null;
+    return FundusRemotePlaylist(
+      id: value['id'] as String,
+      name: value['name'] as String,
+      kind: value['kind'] as String,
+      mediaType: value['media_type'] is String
+          ? value['media_type'] as String
+          : null,
+      workIds: (value['work_ids'] as List).whereType<String>().toList(
+        growable: false,
+      ),
+      revision: value['revision'] as int,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    );
+  }
+
   static Duration? _durationFromSeconds(Object? value) =>
       value is num ? Duration(milliseconds: (value * 1000).round()) : null;
 
@@ -761,8 +935,8 @@ final class FundusRemoteClient {
         );
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        await response.drain<void>();
-        throw HttpException('Serverfehler ${response.statusCode}.');
+        final responseBody = await utf8.decoder.bind(response).join();
+        throw FundusRemoteRequestException(response.statusCode, responseBody);
       }
       return FundusRemoteStream(client, response);
     } catch (_) {

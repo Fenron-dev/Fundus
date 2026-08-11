@@ -88,6 +88,14 @@ final class FundusServerHandler {
       ..get('/v1/libraries/<libraryId>/works/<workId>/cover', _cover)
       ..get('/v1/libraries/<libraryId>/files/<fileId>', _file)
       ..get('/v1/libraries/<libraryId>/files/<fileId>/content', _content)
+      ..get('/v1/libraries/<libraryId>/playlists', _playlists)
+      ..post('/v1/libraries/<libraryId>/playlists', _createPlaylist)
+      ..get('/v1/libraries/<libraryId>/playlists/<playlistId>', _playlist)
+      ..put('/v1/libraries/<libraryId>/playlists/<playlistId>', _savePlaylist)
+      ..delete(
+        '/v1/libraries/<libraryId>/playlists/<playlistId>',
+        _deletePlaylist,
+      )
       ..get('/v1/libraries/<libraryId>/progress/<workId>', _progress)
       ..put('/v1/libraries/<libraryId>/progress/<workId>', _saveProgress);
     return Pipeline()
@@ -116,6 +124,7 @@ final class FundusServerHandler {
   static String _resourceType(List<String> segments) {
     if (segments.contains('content')) return 'content';
     if (segments.contains('cover')) return 'cover';
+    if (segments.contains('playlists')) return 'playlists';
     if (segments.contains('progress')) return 'progress';
     if (segments.contains('works')) return 'works';
     if (segments.contains('libraries')) return 'libraries';
@@ -185,6 +194,8 @@ final class FundusServerHandler {
       'chapters',
       'range_streaming',
       'progress',
+      'playlists',
+      'playlist_revisions',
     ],
   });
 
@@ -271,6 +282,151 @@ final class FundusServerHandler {
       request,
       File(located.track.absolutePath),
       resourceId: fileId,
+    );
+  }
+
+  Response _playlists(Request request, String libraryId) {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    return _json({
+      'library_id': libraryId,
+      'playlists': [
+        for (final playlist in entry.library.listPlaylists())
+          _playlistJson(playlist),
+      ],
+    });
+  }
+
+  Response _playlist(Request request, String libraryId, String playlistId) {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    final playlist = entry.library.loadPlaylist(playlistId);
+    if (playlist == null) return _notFound('playlist_not_found');
+    return _json(_playlistJson(playlist));
+  }
+
+  Future<Response> _createPlaylist(Request request, String libraryId) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    final decoded = await _readJson(request);
+    if (decoded == null) return _badRequest('invalid_json');
+    final values = _playlistValues(entry.library, decoded);
+    if (values == null) return _badRequest('invalid_playlist');
+    final playlist = entry.library.savePlaylist(
+      name: values.name,
+      mediaType: values.mediaType,
+      workIds: values.workIds,
+    );
+    return _json(_playlistJson(playlist), statusCode: HttpStatus.created);
+  }
+
+  Future<Response> _savePlaylist(
+    Request request,
+    String libraryId,
+    String playlistId,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    final current = entry.library.loadPlaylist(playlistId);
+    if (current == null) return _notFound('playlist_not_found');
+    final decoded = await _readJson(request);
+    if (decoded == null) return _badRequest('invalid_json');
+    final expectedRevision = decoded['expected_revision'];
+    if (expectedRevision is! int || expectedRevision < 1) {
+      return _badRequest('invalid_playlist_revision');
+    }
+    if (expectedRevision != current.revision) {
+      return _json({
+        'error': 'playlist_conflict',
+        'playlist': _playlistJson(current),
+      }, statusCode: HttpStatus.conflict);
+    }
+    final values = _playlistValues(entry.library, decoded);
+    if (values == null) return _badRequest('invalid_playlist');
+    final playlist = entry.library.savePlaylist(
+      playlistId: playlistId,
+      name: values.name,
+      mediaType: values.mediaType,
+      workIds: values.workIds,
+    );
+    return _json(_playlistJson(playlist));
+  }
+
+  Response _deletePlaylist(
+    Request request,
+    String libraryId,
+    String playlistId,
+  ) {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    final current = entry.library.loadPlaylist(playlistId);
+    if (current == null) return _notFound('playlist_not_found');
+    final expectedRevision = int.tryParse(
+      request.url.queryParameters['expected_revision'] ?? '',
+    );
+    if (expectedRevision == null || expectedRevision < 1) {
+      return _badRequest('invalid_playlist_revision');
+    }
+    if (expectedRevision != current.revision) {
+      return _json({
+        'error': 'playlist_conflict',
+        'playlist': _playlistJson(current),
+      }, statusCode: HttpStatus.conflict);
+    }
+    entry.library.deletePlaylist(playlistId);
+    return Response(HttpStatus.noContent);
+  }
+
+  static Future<Map<String, dynamic>?> _readJson(Request request) async {
+    try {
+      final decoded = jsonDecode(await request.readAsString());
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  static ({String name, String? mediaType, List<String> workIds})?
+  _playlistValues(FundusLibrary library, Map<String, dynamic> decoded) {
+    final name = decoded['name'];
+    final mediaType = decoded['media_type'];
+    final workIds = decoded['work_ids'];
+    if (name is! String ||
+        name.trim().isEmpty ||
+        name.trim().length > 200 ||
+        (mediaType != null && mediaType is! String) ||
+        workIds is! List ||
+        workIds.any((value) => value is! String)) {
+      return null;
+    }
+    final normalizedIds = workIds.cast<String>();
+    if (normalizedIds.toSet().length != normalizedIds.length ||
+        normalizedIds.any((id) => _findWork(library, id) == null)) {
+      return null;
+    }
+    final normalizedMediaType =
+        mediaType is String && mediaType.trim().isNotEmpty
+        ? mediaType.trim()
+        : null;
+    if (normalizedMediaType != null &&
+        normalizedIds.any(
+          (id) => _findWork(library, id)?.kind != normalizedMediaType,
+        )) {
+      return null;
+    }
+    return (
+      name: name.trim(),
+      mediaType: normalizedMediaType,
+      workIds: normalizedIds,
     );
   }
 
@@ -500,6 +656,17 @@ final class FundusServerHandler {
         'revision': progress.revision,
         'updated_at': progress.updatedAt.toUtc().toIso8601String(),
       };
+
+  static Map<String, Object?> _playlistJson(LibraryPlaylist playlist) => {
+    'id': playlist.id,
+    'name': playlist.name,
+    'kind': playlist.kind.name,
+    'media_type': playlist.mediaType,
+    'work_ids': playlist.workIds,
+    'revision': playlist.revision,
+    'created_at': playlist.createdAt.toUtc().toIso8601String(),
+    'updated_at': playlist.updatedAt.toUtc().toIso8601String(),
+  };
 
   static ({int start, int end})? _parseRange(String value, int size) {
     if (size <= 0 || !value.startsWith('bytes=') || value.contains(',')) {

@@ -162,6 +162,8 @@ void main() {
     expect(body['capabilities'], contains('multiple_libraries'));
     expect(body['capabilities'], contains('range_streaming'));
     expect(body['capabilities'], contains('chapters'));
+    expect(body['capabilities'], contains('playlists'));
+    expect(body['capabilities'], contains('playlist_revisions'));
   });
 
   test('lists multiple libraries without exposing local paths', () async {
@@ -274,6 +276,69 @@ void main() {
       42.5,
     );
   });
+
+  test('syncs playlists with revision conflict protection', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final path = '/v1/libraries/$libraryId/playlists';
+    final createdResponse = await _post(
+      server,
+      path,
+      jsonEncode({
+        'name': 'Unterwegs',
+        'media_type': 'audiobook',
+        'work_ids': [work.id],
+      }),
+    );
+    final created = await _json(createdResponse);
+    expect(createdResponse.statusCode, HttpStatus.created);
+    expect(created['revision'], 1);
+    expect(created['work_ids'], [work.id]);
+    final playlistId = created['id']! as String;
+
+    final listed = await _json(await _get(server, path));
+    expect(listed['playlists'], hasLength(1));
+
+    final updatedResponse = await _put(
+      server,
+      '$path/$playlistId',
+      jsonEncode({
+        'name': 'Unterwegs aktualisiert',
+        'media_type': 'audiobook',
+        'work_ids': [work.id],
+        'expected_revision': 1,
+      }),
+    );
+    final updated = await _json(updatedResponse);
+    expect(updated['revision'], 2);
+
+    final conflictResponse = await _put(
+      server,
+      '$path/$playlistId',
+      jsonEncode({
+        'name': 'Veraltete Änderung',
+        'media_type': 'audiobook',
+        'work_ids': [work.id],
+        'expected_revision': 1,
+      }),
+    );
+    final conflict = await _json(conflictResponse);
+    expect(conflictResponse.statusCode, HttpStatus.conflict);
+    expect(conflict['error'], 'playlist_conflict');
+    expect((conflict['playlist']! as Map<String, dynamic>)['revision'], 2);
+
+    final deleteConflict = await _delete(
+      server,
+      '$path/$playlistId?expected_revision=1',
+    );
+    expect(deleteConflict.statusCode, HttpStatus.conflict);
+    final deleted = await _delete(
+      server,
+      '$path/$playlistId?expected_revision=2',
+    );
+    expect(deleted.statusCode, HttpStatus.noContent);
+    final afterDelete = await _json(await _get(server, path));
+    expect(afterDelete['playlists'], isEmpty);
+  });
 }
 
 Future<FundusLibrary> _library(
@@ -317,6 +382,31 @@ Future<Response> _put(
     body: body,
   ),
 );
+
+Future<Response> _post(
+  FundusServerHandler server,
+  String path,
+  String body,
+) async => await server.handler(
+  Request(
+    'POST',
+    Uri.parse('http://localhost$path'),
+    headers: {
+      'authorization': 'Bearer secret',
+      'content-type': 'application/json',
+    },
+    body: body,
+  ),
+);
+
+Future<Response> _delete(FundusServerHandler server, String path) async =>
+    await server.handler(
+      Request(
+        'DELETE',
+        Uri.parse('http://localhost$path'),
+        headers: {'authorization': 'Bearer secret'},
+      ),
+    );
 
 Future<Map<String, Object?>> _json(Response response) async =>
     jsonDecode(await response.readAsString()) as Map<String, Object?>;

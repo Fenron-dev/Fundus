@@ -124,6 +124,51 @@ void main() {
     expect(loaded?.fileId, detail.tracks.single.id);
     expect(loaded?.position, const Duration(seconds: 2));
 
+    final playlist = await client.createPlaylist(
+      profile,
+      libraryId: libraries.single.id,
+      name: 'Mobil hören',
+      mediaType: 'audiobook',
+      workIds: [works.single.id],
+    );
+    expect(playlist.revision, 1);
+    expect(
+      (await client.playlists(profile, libraries.single.id)).single.id,
+      playlist.id,
+    );
+    final updatedPlaylist = await client.savePlaylist(
+      profile,
+      libraryId: libraries.single.id,
+      playlist: playlist,
+      name: 'Mobil hören – geändert',
+      mediaType: 'audiobook',
+      workIds: [works.single.id],
+    );
+    expect(updatedPlaylist.revision, 2);
+    await expectLater(
+      client.savePlaylist(
+        profile,
+        libraryId: libraries.single.id,
+        playlist: playlist,
+        name: 'Veraltete Änderung',
+        mediaType: 'audiobook',
+        workIds: [works.single.id],
+      ),
+      throwsA(
+        isA<FundusRemotePlaylistConflict>().having(
+          (error) => error.current.revision,
+          'current revision',
+          2,
+        ),
+      ),
+    );
+    await client.deletePlaylist(
+      profile,
+      libraryId: libraries.single.id,
+      playlist: updatedPlaylist,
+    );
+    expect(await client.playlists(profile, libraries.single.id), isEmpty);
+
     final portableLibrary = Directory('${temporary.path}/portable-library');
     final offlineStore = FundusOfflineStore.forLibrary(portableLibrary);
     final transferredBytes = <int>[];
