@@ -81,6 +81,7 @@ final class AudioTechnicalMetadata {
 
 abstract final class AudioTechnicalMetadataProbe {
   static const _maximumBytes = 256 * 1024;
+  static const _maximumMp4MetadataBytes = 64 * 1024 * 1024;
 
   static Future<AudioTechnicalMetadata?> inspect(
     File file,
@@ -106,7 +107,9 @@ abstract final class AudioTechnicalMetadataProbe {
       final data = Uint8List.fromList(bytes);
       return switch (extension) {
             'mp3' => _mp3(data),
-            'm4a' || 'm4b' || 'mp4' => _mp4(data, extension),
+            'm4a' || 'm4b' || 'mp4' =>
+              await _mp4FromFile(file, extension, fileSize) ??
+                  _mp4(data, extension),
             'wav' => _wav(data),
             'flac' => _flac(data),
             'ogg' || 'opus' => _ogg(data),
@@ -184,13 +187,66 @@ abstract final class AudioTechnicalMetadataProbe {
     return null;
   }
 
+  /// Reads MP4 atoms without loading or walking through the media payload.
+  ///
+  /// Large M4B files commonly put `moov` several megabytes before the end of
+  /// the file. Reading fixed head/tail windows therefore misses the audio
+  /// sample entry even though the file is valid. Top-level atom sizes let us
+  /// seek over `mdat` and read only the comparatively small metadata atom.
+  static Future<AudioTechnicalMetadata?> _mp4FromFile(
+    File file,
+    String extension,
+    int fileSize,
+  ) async {
+    final input = await file.open();
+    try {
+      var offset = 0;
+      while (offset + 8 <= fileSize) {
+        await input.setPosition(offset);
+        final header = await input.read(16);
+        if (header.length < 8) return null;
+        final headerBytes = Uint8List.fromList(header);
+        final type = _ascii(headerBytes, 4, 4);
+        var headerSize = 8;
+        var atomSize = _u32be(headerBytes, 0);
+        if (atomSize == 1) {
+          if (header.length < 16) return null;
+          headerSize = 16;
+          atomSize = _u64be(headerBytes, 8);
+        } else if (atomSize == 0) {
+          atomSize = fileSize - offset;
+        }
+        if (atomSize < headerSize || offset + atomSize > fileSize) return null;
+
+        if (type == 'moov' && atomSize <= _maximumMp4MetadataBytes) {
+          await input.setPosition(offset);
+          final atom = await input.read(atomSize);
+          if (atom.length != atomSize) return null;
+          return _mp4(Uint8List.fromList(atom), extension);
+        }
+        offset += atomSize;
+      }
+      return null;
+    } finally {
+      await input.close();
+    }
+  }
+
   static String? _aacProfile(Uint8List bytes, int start) {
     final end = (start + 4096).clamp(0, bytes.length);
     for (var index = start; index + 2 < end; index++) {
       if (bytes[index] != 0x05) continue;
-      final length = bytes[index + 1] & 0x7f;
-      if (length == 0 || index + 2 + length > end) continue;
-      final objectType = bytes[index + 2] >> 3;
+      var cursor = index + 1;
+      var length = 0;
+      var lengthBytes = 0;
+      while (cursor < end && lengthBytes < 4) {
+        final value = bytes[cursor++];
+        length = (length << 7) | (value & 0x7f);
+        lengthBytes++;
+        if ((value & 0x80) == 0) break;
+      }
+      if (length == 0 || cursor + length > end) continue;
+      final objectType = bytes[cursor] >> 3;
       return switch (objectType) {
         2 => 'AAC-LC',
         5 => 'HE-AAC',
@@ -318,6 +374,15 @@ abstract final class AudioTechnicalMetadataProbe {
             (bytes[offset + 1] << 8) |
             (bytes[offset + 2] << 16) |
             (bytes[offset + 3] << 24);
+
+  static int _u64be(Uint8List bytes, int offset) {
+    if (offset + 8 > bytes.length) return 0;
+    var value = 0;
+    for (var index = 0; index < 8; index++) {
+      value = (value << 8) | bytes[offset + index];
+    }
+    return value;
+  }
 
   static int _indexOf(Uint8List bytes, List<int> pattern) {
     for (var index = 0; index + pattern.length <= bytes.length; index++) {

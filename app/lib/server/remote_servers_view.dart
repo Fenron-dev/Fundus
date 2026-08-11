@@ -1151,6 +1151,35 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   ) async {
     final key = _offlineKey(server, library, work);
     final isOffline = _offlineKeys.contains(key);
+    var detailTracks = <FundusRemoteTrack>[];
+    if (isOffline) {
+      final offline = await _offlineStore.lookup(
+        serverId: server.id,
+        libraryId: library.id,
+        workId: work.id,
+      );
+      detailTracks = [
+        for (final track in offline?.tracks ?? const <FundusOfflineTrack>[])
+          FundusRemoteTrack(
+            id: track.id,
+            title: track.title,
+            position: track.position,
+            duration: track.duration,
+            audioMetadata: track.audioMetadata,
+          ),
+      ];
+    } else {
+      try {
+        final result = await _runWithReconnect(
+          server,
+          (active) => _client.work(active, library.id, work),
+        );
+        detailTracks = result.value.tracks;
+      } catch (_) {
+        // Summary details remain usable if the server becomes unavailable.
+      }
+    }
+    if (!mounted) return;
     final action = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
@@ -1243,6 +1272,24 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
               if (work.description case final description?) ...[
                 const SizedBox(height: 20),
                 Text(description),
+              ],
+              if (detailTracks.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                Text('Dateien', style: Theme.of(context).textTheme.titleMedium),
+                for (var index = 0; index < detailTracks.length; index++)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Text('${index + 1}'),
+                    title: Text(detailTracks[index].title),
+                    subtitle: _remoteTechnicalSubtitle(detailTracks[index]),
+                    trailing: detailTracks[index].duration == null
+                        ? null
+                        : Text(
+                            _formatRemoteDuration(
+                              detailTracks[index].duration!,
+                            ),
+                          ),
+                  ),
               ],
               const SizedBox(height: 24),
               Row(

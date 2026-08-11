@@ -4402,50 +4402,111 @@ class _PlayerBar extends StatelessWidget {
           return Material(
             elevation: 3,
             child: SizedBox(
-              height: 68,
-              child: Row(
+              height: 112,
+              child: Column(
                 children: [
-                  IconButton(
-                    onPressed: controller.loading
-                        ? null
-                        : controller.playOrPause,
-                    icon: controller.loading
-                        ? const SizedBox.square(
-                            dimension: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Icon(
-                            controller.playing ? Icons.pause : Icons.play_arrow,
-                          ),
-                  ),
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  SizedBox(
+                    height: 56,
+                    child: Row(
                       children: [
-                        Text(
-                          work?.title ?? 'Wiedergabe',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        IconButton.filled(
+                          onPressed: controller.loading
+                              ? null
+                              : controller.playOrPause,
+                          tooltip: controller.playing ? 'Pause' : 'Abspielen',
+                          icon: controller.loading
+                              ? const SizedBox.square(
+                                  dimension: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Icon(
+                                  controller.playing
+                                      ? Icons.pause
+                                      : Icons.play_arrow,
+                                ),
                         ),
-                        Text(
-                          '${track?.title ?? ''} · ${_time(controller.position)}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall,
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                work?.title ?? 'Wiedergabe',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Text(
+                                track?.title ?? '',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
                         ),
+                        PlaybackSleepTimerButton(
+                          timer: controller.sleepTimer,
+                          compact: true,
+                          supportsChapterEnd: controller.chapters.isNotEmpty,
+                        ),
+                        if (onExpand != null)
+                          IconButton(
+                            onPressed: onExpand,
+                            tooltip: 'Player vergrößern',
+                            icon: const Icon(Icons.open_in_full),
+                          ),
                       ],
                     ),
                   ),
-                  IconButton(
-                    onPressed: controller.next,
-                    tooltip: 'Nächster Track',
-                    icon: const Icon(Icons.skip_next),
-                  ),
-                  PlaybackSleepTimerButton(
-                    timer: controller.sleepTimer,
-                    compact: true,
-                    supportsChapterEnd: controller.chapters.isNotEmpty,
+                  SizedBox(
+                    height: 56,
+                    child: Row(
+                      children: [
+                        _compactButton(
+                          onPressed: controller.previous,
+                          tooltip: 'Vorheriger Track',
+                          icon: Icons.skip_previous,
+                        ),
+                        _compactButton(
+                          onPressed: () => controller.seekRelative(
+                            const Duration(seconds: -15),
+                          ),
+                          tooltip: '15 Sekunden zurück',
+                          icon: Icons.replay_10,
+                        ),
+                        Text(_time(controller.position)),
+                        Expanded(
+                          child: Slider(
+                            value: current,
+                            max: maximum > 0 ? maximum : 1,
+                            onChanged: maximum <= 0
+                                ? null
+                                : (value) => controller.seek(
+                                    Duration(milliseconds: value.round()),
+                                  ),
+                            onChangeEnd: maximum <= 0
+                                ? null
+                                : (_) => controller.persist(),
+                          ),
+                        ),
+                        Text(_time(controller.duration)),
+                        _compactButton(
+                          onPressed: () => controller.seekRelative(
+                            const Duration(seconds: 30),
+                          ),
+                          tooltip: '30 Sekunden vor',
+                          icon: Icons.forward_30,
+                        ),
+                        _compactButton(
+                          onPressed: controller.next,
+                          tooltip: 'Nächster Track',
+                          icon: Icons.skip_next,
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -4584,6 +4645,18 @@ class _PlayerBar extends StatelessWidget {
       },
     );
   }
+
+  static Widget _compactButton({
+    required VoidCallback onPressed,
+    required String tooltip,
+    required IconData icon,
+  }) => IconButton(
+    onPressed: onPressed,
+    tooltip: tooltip,
+    visualDensity: VisualDensity.compact,
+    constraints: const BoxConstraints.tightFor(width: 38, height: 38),
+    icon: Icon(icon),
+  );
 
   static String _time(Duration duration) {
     final hours = duration.inHours;

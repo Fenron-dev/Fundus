@@ -288,6 +288,10 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     Duration? startPosition,
   }) async {
     if (_closed) return;
+    final openStarted = Stopwatch()..start();
+    var sourceReadyMs = 0;
+    var progressReadyMs = 0;
+    var playerReadyMs = 0;
     if (persistCurrent) await persist();
     await _player.pause();
     _sleepTimer.cancel();
@@ -329,6 +333,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         ];
         chapters = offlineWork.chapters;
       }
+      sourceReadyMs = openStarted.elapsedMilliseconds;
       FundusRemoteProgress? localProgress;
       if (offlineWork != null) {
         localProgress = await _offlineStore.loadProgress(
@@ -338,13 +343,16 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         );
       }
       FundusRemoteProgress? serverProgress;
-      try {
-        serverProgress = await _withReconnect(
-          (active) => _client.progress(active, library.id, work.id),
-        );
-      } catch (_) {
-        serverProgress = null;
+      if (offlineWork == null) {
+        try {
+          serverProgress = await _withReconnect(
+            (active) => _client.progress(active, library.id, work.id),
+          );
+        } catch (_) {
+          serverProgress = null;
+        }
       }
+      progressReadyMs = openStarted.elapsedMilliseconds;
       if (tracks.isEmpty) {
         throw StateError('Dieses Werk enthält keine abspielbaren Dateien.');
       }
@@ -470,6 +478,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         media = offlineWork.tracks.map((track) => Media(track.path)).toList();
       }
       await _player.open(Playlist(media, index: _currentIndex), play: false);
+      playerReadyMs = openStarted.elapsedMilliseconds;
       _ready = true;
       _loading = false;
       _lastPersistedAt = DateTime.now();
@@ -492,11 +501,40 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         );
       }
       _syncSystemMediaSession();
+      if (offlineWork != null) {
+        // Local playback is ready immediately. A reachable server may still
+        // contribute a newer position, but reconnect attempts must never hold
+        // up playback when the device is offline.
+        unawaited(_refreshProgressBeforeResume());
+      }
+      unawaited(
+        FundusDiagnostics.instance.record('remote.playback_opened', {
+          'work_id': work.id,
+          'offline': offlineWork != null,
+          'track_count': tracks.length,
+          'source_ready_ms': sourceReadyMs,
+          'progress_ready_ms': progressReadyMs,
+          'player_ready_ms': playerReadyMs,
+          'total_ms': openStarted.elapsedMilliseconds,
+        }),
+      );
     } catch (error) {
       _loading = false;
       _ready = false;
       _error = 'Remote-Wiedergabe konnte nicht gestartet werden: $error';
       notifyListeners();
+      unawaited(
+        FundusDiagnostics.instance.record('remote.playback_open_failed', {
+          'work_id': work.id,
+          'offline': offlineWork != null,
+          'track_count': offlineWork?.tracks.length ?? 0,
+          'source_ready_ms': sourceReadyMs,
+          'progress_ready_ms': progressReadyMs,
+          'player_ready_ms': playerReadyMs,
+          'total_ms': openStarted.elapsedMilliseconds,
+          'error': error.runtimeType.toString(),
+        }),
+      );
     }
   }
 
@@ -523,6 +561,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     } catch (_) {
       return;
     }
+    if (_work?.id != work.id || _library?.id != library.id) return;
     if (latest == null || latest.revision <= _progressRevision) return;
     final initialLatest = latest;
     var targetIndex = initialLatest.fileId == null
