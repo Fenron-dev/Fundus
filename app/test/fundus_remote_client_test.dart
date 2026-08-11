@@ -123,6 +123,23 @@ void main() {
     expect(saved.position, const Duration(seconds: 2));
     expect(loaded?.fileId, detail.tracks.single.id);
     expect(loaded?.position, const Duration(seconds: 2));
+    final history = await client.progressRevisions(
+      profile,
+      libraries.single.id,
+      works.single.id,
+    );
+    expect(history.single.revision, 1);
+    expect(history.single.deviceName, 'Testgerät');
+    final restoredHistory = await client.restoreProgressRevision(
+      profile,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+      revision: 1,
+      deviceId: 'client-test',
+      operationId: 'restore-remote-progress-test',
+    );
+    expect(restoredHistory.revision, 2);
+    expect(restoredHistory.position, const Duration(seconds: 2));
 
     final queueSession = await client.savePlaybackSession(
       profile,

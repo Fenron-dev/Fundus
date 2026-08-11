@@ -207,6 +207,24 @@ final class FundusLibrary {
   LibraryPlaybackProgress? loadProgress(String workId) =>
       _database.loadProgress(workId);
 
+  List<LibraryPlaybackRevision> listProgressRevisions(String workId) =>
+      _database.listProgressRevisions(workId);
+
+  LibraryPlaybackProgress restoreProgressRevision({
+    required String workId,
+    required int revision,
+    String deviceId = 'desktop-local',
+    String? operationId,
+  }) {
+    _ensureWritable();
+    return _database.restoreProgressRevision(
+      workId: workId,
+      revision: revision,
+      deviceId: deviceId,
+      operationId: operationId ?? FundusId.generate(),
+    );
+  }
+
   LibraryPlaybackProgress saveProgress({
     required String workId,
     required String fileId,

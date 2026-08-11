@@ -165,6 +165,7 @@ void main() {
     expect(body['capabilities'], contains('playlists'));
     expect(body['capabilities'], contains('playlist_revisions'));
     expect(body['capabilities'], contains('playback_session_revisions'));
+    expect(body['capabilities'], contains('progress_history'));
   });
 
   test('lists multiple libraries without exposing local paths', () async {
@@ -276,6 +277,47 @@ void main() {
       (progress['position']! as Map<String, dynamic>)['numeric_value'],
       42.5,
     );
+  });
+
+  test('lists and restores progress history as a new revision', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final path = '/v1/libraries/$libraryId/progress/${work.id}';
+    for (final entry in [(id: 'one', seconds: 10), (id: 'two', seconds: 20)]) {
+      await _put(
+        server,
+        path,
+        jsonEncode({
+          'operation_id': entry.id,
+          'device_id': 'phone-test',
+          'file_id': track.fileId,
+          'position_seconds': entry.seconds,
+        }),
+      );
+    }
+    final history = await _json(await _get(server, '$path/revisions'));
+    final revisions = history['revisions']! as List;
+    expect(revisions, hasLength(2));
+    expect((revisions.first as Map)['revision'], 2);
+    expect((revisions.first as Map)['device_name'], 'Unbekanntes Gerät');
+
+    final restored = await _post(
+      server,
+      '$path/revisions/1/restore',
+      jsonEncode({'operation_id': 'restore-one', 'device_id': 'desktop-local'}),
+    );
+    final restoredBody = await _json(restored);
+    expect(restoredBody['revision'], 3);
+    expect(restoredBody['device_name'], 'Fundus');
+    expect(
+      (restoredBody['position']! as Map<String, dynamic>)['numeric_value'],
+      10,
+    );
+    final repeated = await _post(
+      server,
+      '$path/revisions/1/restore',
+      jsonEncode({'operation_id': 'restore-one', 'device_id': 'desktop-local'}),
+    );
+    expect((await _json(repeated))['revision'], 3);
   });
 
   test('syncs playlists with revision conflict protection', () async {

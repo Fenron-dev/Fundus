@@ -436,6 +436,67 @@ final class FundusDatabase {
       finished: (row['finished'] as int) == 1,
       revision: row['revision'] as int,
       updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
+      deviceId: row['device_id'] as String,
+      operationId: row['operation_id'] as String,
+    );
+  }
+
+  List<LibraryPlaybackRevision> listProgressRevisions(String workId) {
+    final rows = _database.select(
+      '''
+      SELECT revision, operation_id, snapshot_json, created_at
+      FROM progress_revisions
+      WHERE work_id = ? AND user_id = 'default'
+      ORDER BY revision DESC
+      ''',
+      [workId],
+    );
+    return [for (final row in rows) _progressRevisionFromRow(workId, row)];
+  }
+
+  LibraryPlaybackProgress restoreProgressRevision({
+    required String workId,
+    required int revision,
+    required String deviceId,
+    required String operationId,
+  }) {
+    final selected = listProgressRevisions(
+      workId,
+    ).where((item) => item.revision == revision).firstOrNull;
+    if (selected == null || selected.fileId == null) {
+      throw StateError('Fortschrittsrevision ist nicht wiederherstellbar.');
+    }
+    final seconds = selected.position.numericValue ?? 0;
+    final total = selected.position.total;
+    return saveProgress(
+      workId: workId,
+      fileId: selected.fileId!,
+      position: Duration(milliseconds: (seconds * 1000).round()),
+      duration: total == null
+          ? null
+          : Duration(milliseconds: (total * 1000).round()),
+      finished: selected.finished,
+      deviceId: deviceId,
+      operationId: operationId,
+    );
+  }
+
+  LibraryPlaybackRevision _progressRevisionFromRow(String workId, Row row) {
+    final snapshot = jsonDecode(row['snapshot_json'] as String) as Map;
+    final position = MediaPosition.fromJson(
+      (snapshot['position'] as Map).cast<String, Object?>(),
+    );
+    return LibraryPlaybackRevision(
+      workId: workId,
+      fileId: position.fileId,
+      position: position,
+      finished: snapshot['finished'] == true,
+      revision: row['revision'] as int,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
+      deviceId: snapshot['device_id'] is String
+          ? snapshot['device_id'] as String
+          : 'unknown',
+      operationId: row['operation_id'] as String,
     );
   }
 

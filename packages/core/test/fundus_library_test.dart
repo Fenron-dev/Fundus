@@ -65,6 +65,32 @@ void main() {
     );
     expect(duplicate.revision, 1);
     expect(duplicate.position.displayValue, '00:12:07');
+    final later = library.saveProgress(
+      workId: works.single.id,
+      fileId: tracks.first.fileId,
+      position: const Duration(minutes: 2),
+      operationId: 'playback-operation-2',
+      deviceId: 'phone-test',
+    );
+    expect(later.revision, 2);
+    final revisions = library.listProgressRevisions(works.single.id);
+    expect(revisions.map((item) => item.revision), [2, 1]);
+    expect(revisions.first.deviceId, 'phone-test');
+    final restoredRevision = library.restoreProgressRevision(
+      workId: works.single.id,
+      revision: 1,
+      operationId: 'restore-operation-1',
+      deviceId: 'desktop-test',
+    );
+    expect(restoredRevision.revision, 3);
+    expect(restoredRevision.position.displayValue, '00:12:07');
+    final repeatedRestore = library.restoreProgressRevision(
+      workId: works.single.id,
+      revision: 1,
+      operationId: 'restore-operation-1',
+      deviceId: 'desktop-test',
+    );
+    expect(repeatedRestore.revision, 3);
     library.close();
 
     final reopened = await FundusLibrary.open(root);
@@ -77,6 +103,7 @@ void main() {
     final resumed = reopened.loadProgress(rescannedWork.id)!;
     expect(resumed.fileId, tracks[1].fileId);
     expect(resumed.position.displayValue, '00:12:07');
+    expect(resumed.revision, 3);
   });
 
   test('caches and resolves embedded M4B artwork', () async {

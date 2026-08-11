@@ -99,7 +99,15 @@ final class FundusServerHandler {
       ..get('/v1/libraries/<libraryId>/playback-session', _playbackSession)
       ..put('/v1/libraries/<libraryId>/playback-session', _savePlaybackSession)
       ..get('/v1/libraries/<libraryId>/progress/<workId>', _progress)
-      ..put('/v1/libraries/<libraryId>/progress/<workId>', _saveProgress);
+      ..put('/v1/libraries/<libraryId>/progress/<workId>', _saveProgress)
+      ..get(
+        '/v1/libraries/<libraryId>/progress/<workId>/revisions',
+        _progressRevisions,
+      )
+      ..post(
+        '/v1/libraries/<libraryId>/progress/<workId>/revisions/<revision>/restore',
+        _restoreProgressRevision,
+      );
     return Pipeline()
         .addMiddleware(_requestDiagnostics())
         .addMiddleware(_authentication())
@@ -197,6 +205,7 @@ final class FundusServerHandler {
       'chapters',
       'range_streaming',
       'progress',
+      'progress_history',
       'playlists',
       'playlist_revisions',
       'playback_session',
@@ -621,6 +630,60 @@ final class FundusServerHandler {
     return _json(_progressJson(progress));
   }
 
+  Response _progressRevisions(
+    Request request,
+    String libraryId,
+    String workId,
+  ) {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (_findWork(entry.library, workId) == null) {
+      return _notFound('work_not_found');
+    }
+    return _json({
+      'work_id': workId,
+      'revisions': [
+        for (final revision in entry.library.listProgressRevisions(workId))
+          _progressRevisionJson(revision),
+      ],
+    });
+  }
+
+  Future<Response> _restoreProgressRevision(
+    Request request,
+    String libraryId,
+    String workId,
+    String revision,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    final parsedRevision = int.tryParse(revision);
+    final decoded = await _readJson(request);
+    if (parsedRevision == null || parsedRevision < 1 || decoded == null) {
+      return _badRequest('invalid_progress_revision');
+    }
+    final operationId = decoded['operation_id'];
+    if (operationId is! String || operationId.trim().isEmpty) {
+      return _badRequest('invalid_progress_revision');
+    }
+    try {
+      final restored = entry.library.restoreProgressRevision(
+        workId: workId,
+        revision: parsedRevision,
+        deviceId: decoded['device_id'] is String
+            ? decoded['device_id'] as String
+            : 'remote-peer',
+        operationId: operationId,
+      );
+      return _json(_progressJson(restored));
+    } on StateError {
+      return _notFound('progress_revision_not_found');
+    }
+  }
+
   Future<Response> _serveFile(
     Request request,
     File file, {
@@ -766,15 +829,38 @@ final class FundusServerHandler {
         : chapter.duration!.inMilliseconds / 1000,
   };
 
-  static Map<String, Object?> _progressJson(LibraryPlaybackProgress progress) =>
-      {
-        'work_id': progress.workId,
-        'file_id': progress.fileId,
-        'position': progress.position.toJson(),
-        'finished': progress.finished,
-        'revision': progress.revision,
-        'updated_at': progress.updatedAt.toUtc().toIso8601String(),
-      };
+  Map<String, Object?> _progressJson(LibraryPlaybackProgress progress) => {
+    'work_id': progress.workId,
+    'file_id': progress.fileId,
+    'position': progress.position.toJson(),
+    'finished': progress.finished,
+    'revision': progress.revision,
+    'updated_at': progress.updatedAt.toUtc().toIso8601String(),
+    'device_id': progress.deviceId,
+    'device_name': _deviceName(progress.deviceId),
+  };
+
+  Map<String, Object?> _progressRevisionJson(
+    LibraryPlaybackRevision revision,
+  ) => {
+    'work_id': revision.workId,
+    'file_id': revision.fileId,
+    'position': revision.position.toJson(),
+    'finished': revision.finished,
+    'revision': revision.revision,
+    'created_at': revision.createdAt.toUtc().toIso8601String(),
+    'device_id': revision.deviceId,
+    'device_name': _deviceName(revision.deviceId),
+  };
+
+  String _deviceName(String deviceId) {
+    if (deviceId == 'desktop-local' || deviceId == serverId) return serverName;
+    return pairingAuthority?.devices
+            .where((device) => device.id == deviceId)
+            .firstOrNull
+            ?.name ??
+        'Unbekanntes Gerät';
+  }
 
   static Map<String, Object?> _playlistJson(LibraryPlaylist playlist) => {
     'id': playlist.id,

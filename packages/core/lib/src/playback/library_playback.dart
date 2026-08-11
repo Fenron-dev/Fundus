@@ -42,6 +42,8 @@ final class LibraryPlaybackProgress {
     required this.finished,
     required this.revision,
     required this.updatedAt,
+    this.deviceId = 'unknown',
+    this.operationId,
   });
 
   final String workId;
@@ -50,4 +52,28 @@ final class LibraryPlaybackProgress {
   final bool finished;
   final int revision;
   final DateTime updatedAt;
+  final String deviceId;
+  final String? operationId;
+}
+
+final class LibraryPlaybackRevision {
+  const LibraryPlaybackRevision({
+    required this.workId,
+    required this.fileId,
+    required this.position,
+    required this.finished,
+    required this.revision,
+    required this.createdAt,
+    required this.deviceId,
+    required this.operationId,
+  });
+
+  final String workId;
+  final String? fileId;
+  final MediaPosition position;
+  final bool finished;
+  final int revision;
+  final DateTime createdAt;
+  final String deviceId;
+  final String operationId;
 }

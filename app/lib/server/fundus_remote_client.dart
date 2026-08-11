@@ -307,12 +307,36 @@ final class FundusRemoteProgress {
     required this.position,
     required this.finished,
     required this.revision,
+    this.deviceId,
+    this.deviceName,
   });
 
   final String? fileId;
   final Duration position;
   final bool finished;
   final int revision;
+  final String? deviceId;
+  final String? deviceName;
+}
+
+final class FundusRemoteProgressRevision {
+  const FundusRemoteProgressRevision({
+    required this.fileId,
+    required this.position,
+    required this.finished,
+    required this.revision,
+    required this.createdAt,
+    required this.deviceId,
+    required this.deviceName,
+  });
+
+  final String? fileId;
+  final Duration position;
+  final bool finished;
+  final int revision;
+  final DateTime createdAt;
+  final String deviceId;
+  final String deviceName;
 }
 
 final class FundusRemoteWorkDetail {
@@ -916,6 +940,93 @@ final class FundusRemoteClient {
       ),
       finished: progress['finished'] == true,
       revision: progress['revision'] is int ? progress['revision'] as int : 0,
+      deviceId: progress['device_id'] is String
+          ? progress['device_id'] as String
+          : null,
+      deviceName: progress['device_name'] is String
+          ? progress['device_name'] as String
+          : null,
+    );
+  }
+
+  Future<List<FundusRemoteProgressRevision>> progressRevisions(
+    FundusRemoteServer server,
+    String libraryId,
+    String workId,
+  ) async {
+    final value = await _json(
+      server,
+      '/v1/libraries/$libraryId/progress/$workId/revisions',
+    );
+    final revisions = value['revisions'];
+    if (revisions is! List) return const [];
+    return revisions
+        .map(_progressRevisionFromJson)
+        .whereType<FundusRemoteProgressRevision>()
+        .toList(growable: false);
+  }
+
+  Future<FundusRemoteProgress> restoreProgressRevision(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required int revision,
+    required String deviceId,
+    required String operationId,
+  }) async {
+    final bytes = await _request(
+      server.baseUri.resolve(
+        '/v1/libraries/$libraryId/progress/$workId/revisions/$revision/restore',
+      ),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'POST',
+      body: jsonEncode({'device_id': deviceId, 'operation_id': operationId}),
+    );
+    final value = jsonDecode(utf8.decode(bytes));
+    if (value is! Map || value['position'] is! Map) {
+      throw const HttpException('Ungültige Fortschrittsrevision.');
+    }
+    final seconds = (value['position'] as Map)['numeric_value'];
+    return FundusRemoteProgress(
+      fileId: value['file_id'] is String ? value['file_id'] as String : null,
+      position: Duration(
+        milliseconds: seconds is num ? (seconds * 1000).round() : 0,
+      ),
+      finished: value['finished'] == true,
+      revision: value['revision'] is int ? value['revision'] as int : 0,
+      deviceId: value['device_id'] is String
+          ? value['device_id'] as String
+          : null,
+      deviceName: value['device_name'] is String
+          ? value['device_name'] as String
+          : null,
+    );
+  }
+
+  static FundusRemoteProgressRevision? _progressRevisionFromJson(
+    Object? value,
+  ) {
+    if (value is! Map ||
+        value['position'] is! Map ||
+        value['revision'] is! int ||
+        value['device_id'] is! String ||
+        value['device_name'] is! String) {
+      return null;
+    }
+    final createdAt = DateTime.tryParse('${value['created_at'] ?? ''}');
+    if (createdAt == null) return null;
+    final seconds = (value['position'] as Map)['numeric_value'];
+    return FundusRemoteProgressRevision(
+      fileId: value['file_id'] is String ? value['file_id'] as String : null,
+      position: Duration(
+        milliseconds: seconds is num ? (seconds * 1000).round() : 0,
+      ),
+      finished: value['finished'] == true,
+      revision: value['revision'] as int,
+      createdAt: createdAt,
+      deviceId: value['device_id'] as String,
+      deviceName: value['device_name'] as String,
     );
   }
 
@@ -958,6 +1069,12 @@ final class FundusRemoteClient {
       ),
       finished: value['finished'] == true,
       revision: value['revision'] is int ? value['revision'] as int : 0,
+      deviceId: value['device_id'] is String
+          ? value['device_id'] as String
+          : null,
+      deviceName: value['device_name'] is String
+          ? value['device_name'] as String
+          : null,
     );
   }
 
