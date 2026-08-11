@@ -110,7 +110,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
           final finished =
               _duration > Duration.zero &&
               _position + const Duration(seconds: 10) >= _duration;
-          unawaited(persist(finished: finished));
+          unawaited(_finishAndAdvanceQueue(finished: finished));
         } else {
           unawaited(_sleepTimer.trackEnded());
         }
@@ -151,8 +151,13 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   int _progressRevision = 0;
   String? _error;
   FundusOfflineWork? _offlineWork;
+  List<FundusRemoteWork> _workQueue = const [];
+  int _workQueueIndex = 0;
+  bool _advancingQueue = false;
 
   FundusRemoteWork? get work => _work;
+  List<FundusRemoteWork> get workQueue => List.unmodifiable(_workQueue);
+  int get workQueueIndex => _workQueueIndex;
   FundusRemoteTrack? get track =>
       _tracks.isEmpty ? null : _tracks[_currentIndex];
   List<FundusRemoteTrack> get tracks => List.unmodifiable(_tracks);
@@ -182,9 +187,44 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     FundusRemoteLibrary library,
     FundusRemoteWork work, {
     FundusOfflineWork? offlineWork,
+  }) {
+    _workQueue = [work];
+    _workQueueIndex = 0;
+    return _openWork(server, library, work, offlineWork: offlineWork);
+  }
+
+  Future<void> openQueue(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    List<FundusRemoteWork> works, {
+    int startIndex = 0,
+  }) async {
+    if (works.isEmpty) {
+      throw ArgumentError.value(works, 'works', 'Die Playlist ist leer.');
+    }
+    if (startIndex < 0 || startIndex >= works.length) {
+      throw RangeError.index(startIndex, works, 'startIndex');
+    }
+    _workQueue = List.unmodifiable(works);
+    _workQueueIndex = startIndex;
+    final work = works[startIndex];
+    final offlineWork = await _offlineStore.lookup(
+      serverId: server.id,
+      libraryId: library.id,
+      workId: work.id,
+    );
+    await _openWork(server, library, work, offlineWork: offlineWork);
+  }
+
+  Future<void> _openWork(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work, {
+    FundusOfflineWork? offlineWork,
+    bool persistCurrent = true,
   }) async {
     if (_closed) return;
-    await persist();
+    if (persistCurrent) await persist();
     await _player.pause();
     _sleepTimer.cancel();
     await _proxy?.close();
@@ -420,9 +460,13 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   }
 
   Future<void> next() async {
-    if (!_ready || _currentIndex >= _tracks.length - 1) return;
-    await persist();
-    await _player.next();
+    if (!_ready) return;
+    if (_currentIndex < _tracks.length - 1) {
+      await persist();
+      await _player.next();
+      return;
+    }
+    await _advanceWorkQueue();
   }
 
   Future<void> previous() async {
@@ -432,7 +476,59 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     } else if (_currentIndex > 0) {
       await persist();
       await _player.previous();
+    } else if (_workQueueIndex > 0) {
+      await persist();
+      _ready = false;
+      _workQueueIndex--;
+      await _openQueuedWork(persistCurrent: false);
     }
+  }
+
+  Future<void> _finishAndAdvanceQueue({required bool finished}) async {
+    if (_advancingQueue) return;
+    _advancingQueue = true;
+    try {
+      await persist(finished: finished);
+      if (_workQueueIndex < _workQueue.length - 1) {
+        _ready = false;
+        _workQueueIndex++;
+        await _openQueuedWork(persistCurrent: false);
+      }
+    } finally {
+      _advancingQueue = false;
+    }
+  }
+
+  Future<void> _advanceWorkQueue() async {
+    if (_workQueueIndex >= _workQueue.length - 1 || _advancingQueue) return;
+    _advancingQueue = true;
+    try {
+      await persist();
+      _ready = false;
+      _workQueueIndex++;
+      await _openQueuedWork(persistCurrent: false);
+    } finally {
+      _advancingQueue = false;
+    }
+  }
+
+  Future<void> _openQueuedWork({required bool persistCurrent}) async {
+    final server = _server;
+    final library = _library;
+    if (server == null || library == null || _workQueue.isEmpty) return;
+    final work = _workQueue[_workQueueIndex];
+    final offlineWork = await _offlineStore.lookup(
+      serverId: server.id,
+      libraryId: library.id,
+      workId: work.id,
+    );
+    await _openWork(
+      server,
+      library,
+      work,
+      offlineWork: offlineWork,
+      persistCurrent: persistCurrent,
+    );
   }
 
   Future<void> jumpToTrack(int index) async {

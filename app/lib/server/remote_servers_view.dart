@@ -21,6 +21,8 @@ enum _RemoteSort { title, author, series }
 
 enum _RemoteGrouping { books, authors, series, narrators }
 
+enum _RemoteLibrarySection { media, playlists }
+
 Future<void> showFundusRemoteServers(
   BuildContext context, {
   String? initialServerId,
@@ -68,6 +70,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   FundusRemoteLibrary? _selectedLibrary;
   String? _offlineLibraryFilter;
   List<FundusRemoteWork> _works = const [];
+  List<FundusRemotePlaylist> _playlists = const [];
+  _RemoteLibrarySection _librarySection = _RemoteLibrarySection.media;
   String? _selectedKind;
   String _search = '';
   _RemoteLayout _layout = _RemoteLayout.grid;
@@ -270,6 +274,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       _selectedLibrary = null;
       _offlineLibraryFilter = null;
       _works = const [];
+      _playlists = const [];
     });
     try {
       final result = await _runWithReconnect(
@@ -306,14 +311,19 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       _error = null;
       _selectedLibrary = library;
       _selectedKind = null;
+      _librarySection = _RemoteLibrarySection.media;
     });
     try {
       final result = await _runWithReconnect(
         server,
-        (active) => _client.works(active, library.id),
+        (active) async => (
+          works: await _client.works(active, library.id),
+          playlists: await _client.playlists(active, library.id),
+        ),
       );
       final activeServer = result.server;
-      final works = result.value;
+      final works = result.value.works;
+      final playlists = result.value.playlists;
       final offline = await Future.wait([
         for (final work in works)
           _offlineStore.refreshMetadata(
@@ -326,6 +336,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       setState(() {
         _selectedServer = activeServer;
         _works = works;
+        _playlists = playlists;
         _offlineKeys
           ..removeWhere(
             (key) => key.startsWith('${activeServer.id}/${library.id}/'),
@@ -371,6 +382,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         _selectedLibrary = null;
         _libraries = const [];
         _works = const [];
+        _playlists = const [];
       }
     });
   }
@@ -691,6 +703,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   );
 
   Widget _worksGrid(FundusRemoteLibrary library) {
+    if (_librarySection == _RemoteLibrarySection.playlists) {
+      return _remotePlaylistsView(library);
+    }
     final server = _selectedServer!;
     final kinds = _works.map((work) => work.kind).toSet().toList()..sort();
     var works = _selectedKind == null
@@ -723,6 +738,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             subtitle: Text('${works.length} Medien'),
           ),
         ),
+        SliverToBoxAdapter(child: _librarySectionSelector()),
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
@@ -951,6 +967,121 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           ),
       ],
     );
+  }
+
+  Widget _librarySectionSelector() => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+    child: SegmentedButton<_RemoteLibrarySection>(
+      segments: const [
+        ButtonSegment(
+          value: _RemoteLibrarySection.media,
+          icon: Icon(Icons.video_library_outlined),
+          label: Text('Medien'),
+        ),
+        ButtonSegment(
+          value: _RemoteLibrarySection.playlists,
+          icon: Icon(Icons.playlist_play),
+          label: Text('Playlisten'),
+        ),
+      ],
+      selected: {_librarySection},
+      onSelectionChanged: (value) =>
+          setState(() => _librarySection = value.first),
+    ),
+  );
+
+  Widget _remotePlaylistsView(FundusRemoteLibrary library) {
+    final server = _selectedServer!;
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 16),
+      children: [
+        ListTile(
+          leading: BackButton(
+            onPressed: () => setState(() => _selectedLibrary = null),
+          ),
+          title: Text(library.name),
+          subtitle: Text('${_playlists.length} Playlist(en)'),
+        ),
+        _librarySectionSelector(),
+        if (_playlists.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(32),
+            child: Center(
+              child: Text(
+                'Auf diesem Server wurden noch keine Playlists gespeichert.',
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        for (final playlist in _playlists)
+          Card(
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+            child: ListTile(
+              leading: const Icon(Icons.queue_music),
+              title: Text(playlist.name),
+              subtitle: Text(
+                [
+                  if (playlist.mediaType != null)
+                    _kindLabel(playlist.mediaType!),
+                  '${playlist.workIds.length} Werk(e)',
+                  'Revision ${playlist.revision}',
+                ].join(' · '),
+              ),
+              trailing: IconButton.filledTonal(
+                onPressed: playlist.workIds.isEmpty
+                    ? null
+                    : () => _playRemotePlaylist(server, library, playlist),
+                tooltip: 'Playlist abspielen',
+                icon: const Icon(Icons.play_arrow),
+              ),
+              onTap: playlist.workIds.isEmpty
+                  ? null
+                  : () => _playRemotePlaylist(server, library, playlist),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _playRemotePlaylist(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemotePlaylist playlist,
+  ) async {
+    final byId = {for (final work in _works) work.id: work};
+    final works = playlist.workIds
+        .map((id) => byId[id])
+        .whereType<FundusRemoteWork>()
+        .toList(growable: false);
+    if (works.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Diese Playlist enthält keine verfügbaren Medien.'),
+        ),
+      );
+      return;
+    }
+    final player =
+        _remotePlayer ??
+        FundusRemotePlayerController(
+          deviceId: await _store.deviceId(),
+          offlineStore: _offlineStore,
+          onConflict: (conflict) => resolvePlaybackConflict(context, conflict),
+          serverResolver: _relocatePlayerServer,
+        );
+    if (_remotePlayer == null && mounted) {
+      setState(() => _remotePlayer = player);
+    }
+    await player.openQueue(server, library, works);
+    if (!mounted) return;
+    final missing = playlist.workIds.length - works.length;
+    if (missing > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$missing nicht verfügbare Werk(e) übersprungen.'),
+        ),
+      );
+    }
   }
 
   bool _remoteMatches(FundusRemoteWork work, String query) {
