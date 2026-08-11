@@ -7,6 +7,7 @@ import '../import/abs_importer.dart';
 import '../library/work_annotations.dart';
 import '../model/fundus_id.dart';
 import '../model/media_position.dart';
+import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
 import '../scan/library_scanner.dart';
 
@@ -516,6 +517,126 @@ final class FundusDatabase {
       );
       return loadProgress(workId)!;
     });
+  }
+
+  void savePlaybackSession(
+    PlaybackSession session, {
+    String userId = 'default',
+    String deviceId = 'desktop-local',
+  }) {
+    session.validate();
+    transaction(() {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      _database.execute(
+        '''
+        INSERT INTO playback_sessions (
+          id, playlist_id, playlist_revision, current_index,
+          current_position_json, shuffle_order_json, repeat_mode,
+          user_id, device_id, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          playlist_id = excluded.playlist_id,
+          playlist_revision = excluded.playlist_revision,
+          current_index = excluded.current_index,
+          current_position_json = excluded.current_position_json,
+          shuffle_order_json = excluded.shuffle_order_json,
+          repeat_mode = excluded.repeat_mode,
+          user_id = excluded.user_id,
+          device_id = excluded.device_id,
+          updated_at = excluded.updated_at
+        ''',
+        [
+          session.id,
+          session.playlistId,
+          session.playlistRevision,
+          session.currentIndex,
+          jsonEncode(session.currentPosition.toJson()),
+          jsonEncode(session.shuffleOrder),
+          session.repeatMode.name,
+          userId,
+          deviceId,
+          now,
+        ],
+      );
+      _database.execute(
+        'DELETE FROM playback_session_items WHERE session_id = ?',
+        [session.id],
+      );
+      for (final item in session.items) {
+        _database.execute(
+          '''
+          INSERT INTO playback_session_items (
+            session_id, work_id, file_ids_json, position
+          ) VALUES (?, ?, ?, ?)
+          ''',
+          [session.id, item.workId, jsonEncode(item.fileIds), item.position],
+        );
+      }
+    });
+  }
+
+  PlaybackSession? loadPlaybackSession(String sessionId) {
+    final rows = _database.select(
+      'SELECT * FROM playback_sessions WHERE id = ?',
+      [sessionId],
+    );
+    if (rows.isEmpty) return null;
+    return _playbackSessionFromRow(rows.first);
+  }
+
+  PlaybackSession? latestPlaybackSession({String userId = 'default'}) {
+    final rows = _database.select(
+      '''
+      SELECT * FROM playback_sessions
+      WHERE user_id = ?
+      ORDER BY updated_at DESC
+      LIMIT 1
+      ''',
+      [userId],
+    );
+    if (rows.isEmpty) return null;
+    return _playbackSessionFromRow(rows.first);
+  }
+
+  PlaybackSession _playbackSessionFromRow(Row row) {
+    final sessionId = row['id'] as String;
+    final itemRows = _database.select(
+      '''
+      SELECT work_id, file_ids_json, position
+      FROM playback_session_items
+      WHERE session_id = ?
+      ORDER BY position
+      ''',
+      [sessionId],
+    );
+    final positionJson = jsonDecode(row['current_position_json'] as String);
+    final shuffleJson = jsonDecode(row['shuffle_order_json'] as String);
+    final repeatName = row['repeat_mode'] as String;
+    final session = PlaybackSession(
+      id: sessionId,
+      playlistId: row['playlist_id'] as String?,
+      playlistRevision: row['playlist_revision'] as int?,
+      items: [
+        for (final item in itemRows)
+          PlaybackSessionItem(
+            workId: item['work_id'] as String,
+            fileIds: (jsonDecode(item['file_ids_json'] as String) as List)
+                .cast<String>(),
+            position: item['position'] as int,
+          ),
+      ],
+      currentIndex: row['current_index'] as int,
+      currentPosition: MediaPosition.fromJson(
+        (positionJson as Map).cast<String, Object?>(),
+      ),
+      repeatMode: RepeatMode.values.firstWhere(
+        (mode) => mode.name == repeatName,
+        orElse: () => RepeatMode.none,
+      ),
+      shuffleOrder: (shuffleJson as List).cast<int>(),
+    );
+    session.validate();
+    return session;
   }
 
   String? workSourcePath(String workId) {

@@ -11,6 +11,7 @@ import '../import/embedded_cover.dart';
 import '../model/fundus_id.dart';
 import '../model/library_configuration.dart';
 import '../model/library_manifest.dart';
+import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
 import '../scan/library_scanner.dart';
 import '../search/library_work_query.dart';
@@ -222,6 +223,21 @@ final class FundusLibrary {
     deviceId: deviceId,
     operationId: operationId ?? FundusId.generate(),
   );
+
+  void savePlaybackSession(
+    PlaybackSession session, {
+    String userId = 'default',
+    String deviceId = 'desktop-local',
+  }) {
+    _ensureWritable();
+    _database.savePlaybackSession(session, userId: userId, deviceId: deviceId);
+  }
+
+  PlaybackSession? loadPlaybackSession(String sessionId) =>
+      _database.loadPlaybackSession(sessionId);
+
+  PlaybackSession? latestPlaybackSession({String userId = 'default'}) =>
+      _database.latestPlaybackSession(userId: userId);
 
   WorkAnnotations loadAnnotations(String workId) =>
       _database.loadAnnotations(workId);

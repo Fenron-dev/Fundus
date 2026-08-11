@@ -2392,6 +2392,7 @@ class _DetailPanelState extends State<_DetailPanel> {
   bool _bookmarkAvailable = false;
   bool _workIsCurrent = false;
   bool _workIsPlaying = false;
+  bool _workIsQueued = false;
 
   @override
   void initState() {
@@ -2442,9 +2443,12 @@ class _DetailPanelState extends State<_DetailPanel> {
         widget.player?.work?.id == widget.work?.id &&
         widget.player?.track != null;
     final playing = current && (widget.player?.playing ?? false);
+    final queued =
+        widget.player?.queue.any((item) => item.id == widget.work?.id) ?? false;
     if (current == _bookmarkAvailable &&
         current == _workIsCurrent &&
-        playing == _workIsPlaying) {
+        playing == _workIsPlaying &&
+        queued == _workIsQueued) {
       return;
     }
     if (notify && mounted) {
@@ -2452,11 +2456,13 @@ class _DetailPanelState extends State<_DetailPanel> {
         _bookmarkAvailable = current;
         _workIsCurrent = current;
         _workIsPlaying = playing;
+        _workIsQueued = queued;
       });
     } else {
       _bookmarkAvailable = current;
       _workIsCurrent = current;
       _workIsPlaying = playing;
+      _workIsQueued = queued;
     }
   }
 
@@ -2488,6 +2494,26 @@ class _DetailPanelState extends State<_DetailPanel> {
           onSelectAuthor: widget.onSelectAuthor,
           onSelectNarrator: widget.onSelectNarrator,
         ),
+        if (widget.library != null && widget.player != null) ...[
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _workIsQueued
+                  ? null
+                  : () => widget.player!.addToQueue(
+                      widget.library!,
+                      selectedWork,
+                    ),
+              icon: Icon(
+                _workIsQueued ? Icons.playlist_add_check : Icons.playlist_add,
+              ),
+              label: Text(
+                _workIsQueued ? 'In aktueller Playlist' : 'Zur Playlist',
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: 20),
         Row(
           children: [
@@ -3272,34 +3298,126 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
   };
 
   Widget _playlist(LibraryWorkSummary? work) {
-    if (work == null) return const Center(child: Text('Playlist ist leer.'));
+    final queue = widget.controller.queue;
+    if (queue.isEmpty) return const Center(child: Text('Playlist ist leer.'));
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
-        Text(
-          'Aktuelle Playlist',
-          style: Theme.of(context).textTheme.titleMedium,
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Aktuelle Playlist · ${queue.length} Werk(e)',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            IconButton(
+              onPressed: queue.length < 2
+                  ? null
+                  : () => widget.controller.setShuffle(
+                      !widget.controller.shuffleEnabled,
+                    ),
+              tooltip: widget.controller.shuffleEnabled
+                  ? 'Shuffle ausschalten'
+                  : 'Shuffle einschalten',
+              icon: Icon(
+                Icons.shuffle,
+                color: widget.controller.shuffleEnabled
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
+              ),
+            ),
+            IconButton(
+              onPressed: widget.controller.cycleRepeatMode,
+              tooltip: switch (widget.controller.repeatMode.name) {
+                'all' => 'Playlist wiederholen',
+                'one' => 'Werk wiederholen',
+                _ => 'Wiederholen aus',
+              },
+              icon: Icon(
+                widget.controller.repeatMode.name == 'one'
+                    ? Icons.repeat_one
+                    : Icons.repeat,
+                color: widget.controller.repeatMode.name == 'none'
+                    ? null
+                    : Theme.of(context).colorScheme.primary,
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 8),
-        ListTile(
-          selected: true,
-          leading: SizedBox.square(
-            dimension: 48,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: _WorkCover(
-                work: work,
-                iconSize: 24,
-                player: widget.controller,
+        for (var index = 0; index < queue.length; index++)
+          ListTile(
+            selected: index == widget.controller.queueIndex,
+            onTap: () => widget.controller.jumpToQueueWork(index),
+            leading: SizedBox.square(
+              dimension: 48,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: _WorkCover(
+                  work: queue[index],
+                  iconSize: 24,
+                  player: widget.controller,
+                ),
+              ),
+            ),
+            title: Text(queue[index].title),
+            subtitle: Text(
+              '${queue[index].author} · ${queue[index].fileCount} Datei(en)',
+            ),
+            trailing: SizedBox(
+              width: 76,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (index == widget.controller.queueIndex)
+                    const Icon(Icons.graphic_eq),
+                  PopupMenuButton<String>(
+                    tooltip: 'Playlist-Eintrag verwalten',
+                    onSelected: (action) {
+                      switch (action) {
+                        case 'up':
+                          widget.controller.moveQueueItem(index, index - 1);
+                        case 'down':
+                          widget.controller.moveQueueItem(index, index + 1);
+                        case 'remove':
+                          widget.controller.removeFromQueue(index);
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      PopupMenuItem(
+                        value: 'up',
+                        enabled: index > 0,
+                        child: const ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.arrow_upward),
+                          title: Text('Nach oben'),
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'down',
+                        enabled: index + 1 < queue.length,
+                        child: const ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.arrow_downward),
+                          title: Text('Nach unten'),
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'remove',
+                        enabled: index != widget.controller.queueIndex,
+                        child: const ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.close),
+                          title: Text('Entfernen'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ),
-          title: Text(work.title),
-          subtitle: Text(
-            '${work.author} · ${widget.controller.trackCount} Datei(en)',
-          ),
-          trailing: const Icon(Icons.graphic_eq),
-        ),
       ],
     );
   }

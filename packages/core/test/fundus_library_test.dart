@@ -99,6 +99,71 @@ void main() {
     expect(coverBytes.sublist(0, 3), [0xff, 0xd8, 0xff]);
   });
 
+  test('persists a work-based playback session exactly', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-session-');
+    addTearDown(() => root.delete(recursive: true));
+    final first = Directory('${root.path}/Audiobooks/Autor/Serie/01 - Eins');
+    final second = Directory('${root.path}/Audiobooks/Autor/Serie/02 - Zwei');
+    await first.create(recursive: true);
+    await second.create(recursive: true);
+    await File('${first.path}/eins.mp3').writeAsBytes([1]);
+    await File('${second.path}/zwei-a.mp3').writeAsBytes([2]);
+    await File('${second.path}/zwei-b.mp3').writeAsBytes([3]);
+
+    final library = await FundusLibrary.create(root);
+    await library.index().drain<void>();
+    final works = library.listWorks()
+      ..sort((a, b) => a.seriesSequence!.compareTo(b.seriesSequence!));
+    final secondTracks = library.playbackTracks(works[1].id);
+    final session = PlaybackSession(
+      id: 'current-session',
+      items: [
+        PlaybackSessionItem(
+          workId: works[0].id,
+          fileIds: library
+              .playbackTracks(works[0].id)
+              .map((track) => track.fileId)
+              .toList(),
+          position: 0,
+        ),
+        PlaybackSessionItem(
+          workId: works[1].id,
+          fileIds: secondTracks.map((track) => track.fileId).toList(),
+          position: 1,
+        ),
+      ],
+      currentIndex: 1,
+      currentPosition: MediaPosition(
+        kind: MediaPositionKind.time,
+        numericValue: 75,
+        total: 900,
+        fileId: secondTracks[1].fileId,
+      ),
+      repeatMode: RepeatMode.all,
+      shuffleOrder: const [1, 0],
+    );
+    library.savePlaybackSession(session, deviceId: 'android-test');
+    library.close();
+
+    final reopened = await FundusLibrary.open(root);
+    addTearDown(reopened.close);
+    final restored = reopened.latestPlaybackSession()!;
+    expect(restored.id, 'current-session');
+    expect(restored.items.map((item) => item.workId), [
+      works[0].id,
+      works[1].id,
+    ]);
+    expect(
+      restored.items[1].fileIds,
+      secondTracks.map((track) => track.fileId),
+    );
+    expect(restored.currentIndex, 1);
+    expect(restored.currentPosition.numericValue, 75);
+    expect(restored.currentPosition.fileId, secondTracks[1].fileId);
+    expect(restored.repeatMode, RepeatMode.all);
+    expect(restored.shuffleOrder, [1, 0]);
+  });
+
   test(
     'does not resolve a manipulated cover path outside the library',
     () async {

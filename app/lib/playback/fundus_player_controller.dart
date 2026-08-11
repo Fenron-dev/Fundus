@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:fundus_core/fundus_core.dart';
@@ -107,6 +108,11 @@ final class FundusPlayerController extends ChangeNotifier {
   double _rate = 1;
   String? _error;
   final Map<String, PlayerWorkProgress> _sessionProgress = {};
+  List<LibraryWorkSummary> _queue = [];
+  String? _queueLibraryId;
+  int _queueIndex = 0;
+  RepeatMode _repeatMode = RepeatMode.none;
+  List<int> _shuffleOrder = [];
 
   LibraryWorkSummary? get work => _work;
   LibraryPlaybackTrack? get track =>
@@ -132,6 +138,10 @@ final class FundusPlayerController extends ChangeNotifier {
   double get rate => _rate;
   String? get error => _error;
   PlaybackSleepTimer get sleepTimer => _sleepTimer;
+  List<LibraryWorkSummary> get queue => List.unmodifiable(_queue);
+  int get queueIndex => _queueIndex;
+  RepeatMode get repeatMode => _repeatMode;
+  bool get shuffleEnabled => _shuffleOrder.isNotEmpty;
   PlayerWorkProgress? progressForWork(String workId) =>
       _sessionProgress[workId];
 
@@ -140,6 +150,7 @@ final class FundusPlayerController extends ChangeNotifier {
     LibraryWorkSummary work, {
     String? startFileId,
     Duration? startPosition,
+    bool preserveQueue = false,
   }) async {
     if (_closed) return;
     if (_ready) {
@@ -153,6 +164,7 @@ final class FundusPlayerController extends ChangeNotifier {
     _error = null;
     _library = library;
     _work = work;
+    _configureQueue(library, work, preserveQueue: preserveQueue);
     _tracks = library.playbackTracks(work.id);
     _chapters = await library.playbackChapters(work.id);
     _currentIndex = 0;
@@ -399,6 +411,87 @@ final class FundusPlayerController extends ChangeNotifier {
     await _player.setRate(value);
   }
 
+  void addToQueue(FundusLibrary library, LibraryWorkSummary work) {
+    if (_library?.manifest.libraryId != library.manifest.libraryId) {
+      _library = library;
+      _queue = [work];
+      _queueLibraryId = library.manifest.libraryId;
+      _queueIndex = 0;
+      _shuffleOrder = [];
+    } else if (!_queue.any((item) => item.id == work.id)) {
+      _queue = [..._queue, work];
+      if (_shuffleOrder.isNotEmpty) {
+        _shuffleOrder = [..._shuffleOrder, _queue.length - 1];
+      }
+    }
+    notifyListeners();
+    unawaited(_persistPlaybackSession());
+  }
+
+  Future<void> jumpToQueueWork(int index) async {
+    final library = _library;
+    if (library == null || index < 0 || index >= _queue.length) return;
+    if (index == _queueIndex && _work?.id == _queue[index].id) return;
+    _queueIndex = index;
+    await open(library, _queue[index], preserveQueue: true);
+  }
+
+  void removeFromQueue(int index) {
+    if (index < 0 || index >= _queue.length || index == _queueIndex) return;
+    final next = [..._queue]..removeAt(index);
+    _queue = next;
+    if (index < _queueIndex) _queueIndex--;
+    _shuffleOrder = [];
+    notifyListeners();
+    unawaited(_persistPlaybackSession());
+  }
+
+  void moveQueueItem(int oldIndex, int newIndex) {
+    if (oldIndex < 0 ||
+        oldIndex >= _queue.length ||
+        newIndex < 0 ||
+        newIndex >= _queue.length ||
+        oldIndex == newIndex) {
+      return;
+    }
+    final currentId = _work?.id;
+    final next = [..._queue];
+    final item = next.removeAt(oldIndex);
+    next.insert(newIndex, item);
+    _queue = next;
+    _queueIndex = currentId == null
+        ? 0
+        : _queue
+              .indexWhere((work) => work.id == currentId)
+              .clamp(0, _queue.length - 1);
+    _shuffleOrder = [];
+    notifyListeners();
+    unawaited(_persistPlaybackSession());
+  }
+
+  void setShuffle(bool enabled) {
+    if (!enabled || _queue.length < 2) {
+      _shuffleOrder = [];
+    } else {
+      final remaining = List<int>.generate(_queue.length, (index) => index)
+        ..remove(_queueIndex)
+        ..shuffle(Random());
+      _shuffleOrder = [_queueIndex, ...remaining];
+    }
+    notifyListeners();
+    unawaited(_persistPlaybackSession());
+  }
+
+  void cycleRepeatMode() {
+    _repeatMode = switch (_repeatMode) {
+      RepeatMode.none => RepeatMode.all,
+      RepeatMode.all => RepeatMode.one,
+      RepeatMode.one => RepeatMode.none,
+    };
+    notifyListeners();
+    unawaited(_persistPlaybackSession());
+  }
+
   Future<void> persist({bool finished = false}) async {
     if (!_ready || _persisting || _closed) return;
     final library = _library;
@@ -439,6 +532,7 @@ final class FundusPlayerController extends ChangeNotifier {
         finished: finished,
       );
       _lastPersistedAt = DateTime.now();
+      await _persistPlaybackSession();
       unawaited(
         FundusDiagnostics.instance.record('playback.progress_saved', {
           'work_id': work.id,
@@ -660,6 +754,113 @@ final class FundusPlayerController extends ChangeNotifier {
     if (finished || _position > Duration.zero) {
       await persist(finished: finished);
     }
+    final nextIndex = _nextQueueIndex();
+    final library = _library;
+    if (nextIndex != null && library != null) {
+      _queueIndex = nextIndex;
+      await open(library, _queue[nextIndex], preserveQueue: true);
+    }
+  }
+
+  void _configureQueue(
+    FundusLibrary library,
+    LibraryWorkSummary work, {
+    required bool preserveQueue,
+  }) {
+    if (preserveQueue && _queue.isNotEmpty) {
+      final index = _queue.indexWhere((item) => item.id == work.id);
+      if (index >= 0) _queueIndex = index;
+      return;
+    }
+    final sameLibrary = _queueLibraryId == library.manifest.libraryId;
+    if (!sameLibrary || _queue.isEmpty) {
+      final restored = library.latestPlaybackSession();
+      if (restored != null) {
+        final byId = {for (final item in library.listWorks()) item.id: item};
+        final restoredQueue = <LibraryWorkSummary>[];
+        for (final item in restored.items) {
+          final restoredWork = byId[item.workId];
+          if (restoredWork != null) restoredQueue.add(restoredWork);
+        }
+        final selectedIndex = restoredQueue.indexWhere(
+          (item) => item.id == work.id,
+        );
+        if (restoredQueue.isNotEmpty && selectedIndex >= 0) {
+          _queue = restoredQueue;
+          _queueLibraryId = library.manifest.libraryId;
+          _queueIndex = selectedIndex;
+          _repeatMode = restored.repeatMode;
+          _shuffleOrder = restored.shuffleOrder.length == restoredQueue.length
+              ? [...restored.shuffleOrder]
+              : [];
+          return;
+        }
+      }
+    }
+    _queue = [work];
+    _queueLibraryId = library.manifest.libraryId;
+    _queueIndex = 0;
+    _repeatMode = RepeatMode.none;
+    _shuffleOrder = [];
+  }
+
+  Future<void> _persistPlaybackSession() async {
+    final library = _library;
+    final currentTrack = track;
+    if (library == null ||
+        currentTrack == null ||
+        _queue.isEmpty ||
+        library.isReadOnly) {
+      return;
+    }
+    final items = <PlaybackSessionItem>[];
+    for (var index = 0; index < _queue.length; index++) {
+      final work = _queue[index];
+      items.add(
+        PlaybackSessionItem(
+          workId: work.id,
+          fileIds: library
+              .playbackTracks(work.id)
+              .map((track) => track.fileId)
+              .toList(growable: false),
+          position: index,
+        ),
+      );
+    }
+    final sessionDuration = _duration > Duration.zero
+        ? _duration
+        : currentTrack.duration;
+    library.savePlaybackSession(
+      PlaybackSession(
+        id: 'current-${library.manifest.libraryId}',
+        items: items,
+        currentIndex: _queueIndex.clamp(0, items.length - 1),
+        currentPosition: MediaPosition(
+          kind: MediaPositionKind.time,
+          numericValue: _position.inMilliseconds / 1000,
+          total: sessionDuration == null
+              ? null
+              : sessionDuration.inMilliseconds / 1000,
+          fileId: currentTrack.fileId,
+        ),
+        repeatMode: _repeatMode,
+        shuffleOrder: _shuffleOrder,
+      ),
+    );
+  }
+
+  int? _nextQueueIndex() {
+    if (_queue.isEmpty) return null;
+    if (_repeatMode == RepeatMode.one) return _queueIndex;
+    if (_shuffleOrder.isNotEmpty) {
+      final position = _shuffleOrder.indexOf(_queueIndex);
+      if (position >= 0 && position + 1 < _shuffleOrder.length) {
+        return _shuffleOrder[position + 1];
+      }
+      return _repeatMode == RepeatMode.all ? _shuffleOrder.first : null;
+    }
+    if (_queueIndex + 1 < _queue.length) return _queueIndex + 1;
+    return _repeatMode == RepeatMode.all ? 0 : null;
   }
 
   @override
