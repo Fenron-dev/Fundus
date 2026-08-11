@@ -2,6 +2,14 @@ name: Build macOS Preview
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'packages/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - '.github/workflows/build-macos.yml'
 
 permissions:
   contents: read
