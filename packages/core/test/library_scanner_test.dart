@@ -11,7 +11,9 @@ void main() {
 
     final book = Directory(p.join(root.path, 'Autor', 'Serie', '01 - Titel'));
     await book.create(recursive: true);
-    await File(p.join(book.path, '01 - Anfang.mp3')).writeAsBytes([1, 2, 3]);
+    await File(
+      p.join(book.path, '01 - Anfang.mp3'),
+    ).writeAsBytes([0xff, 0xfb, 0x90, 0x64, ...List.filled(16, 0)]);
     await File(p.join(book.path, 'cover.jpg')).writeAsBytes([4, 5]);
     final internal = Directory(p.join(root.path, '.library'));
     await internal.create();
@@ -29,6 +31,9 @@ void main() {
       contains('Autor/Serie/01 - Titel/01 - Anfang.mp3'),
     );
     expect(files.map((file) => file.mimeType), contains('audio/mpeg'));
+    final audio = files.singleWhere((file) => file.extension == 'mp3');
+    expect(audio.audioMetadata?.codec, 'MP3');
+    expect(audio.audioMetadata?.sampleRateHz, 44100);
     expect(events.last.kind, ScanEventKind.completed);
   });
 

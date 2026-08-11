@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'audio_technical_metadata.dart';
+
 enum ScanEventKind { started, file, skipped, error, completed, cancelled }
 
 final class ScannedFile {
@@ -14,6 +16,7 @@ final class ScannedFile {
     required this.size,
     required this.modifiedAt,
     required this.mimeType,
+    this.audioMetadata,
   });
 
   final String absolutePath;
@@ -23,6 +26,7 @@ final class ScannedFile {
   final int size;
   final DateTime modifiedAt;
   final String? mimeType;
+  final AudioTechnicalMetadata? audioMetadata;
 }
 
 final class ScanEvent {
@@ -135,6 +139,11 @@ final class LibraryScanner {
                 size: stat.size,
                 modifiedAt: stat.modified,
                 mimeType: _mimeTypes[extension],
+                audioMetadata: await AudioTechnicalMetadataProbe.inspect(
+                  entity,
+                  extension,
+                  stat.size,
+                ),
               ),
             );
           } catch (error) {

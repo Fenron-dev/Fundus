@@ -14,6 +14,8 @@ void main() {
     expect(database.tableExists('works'), isTrue);
     expect(database.tableExists('playback_sessions'), isTrue);
     expect(database.columnExists('playback_sessions', 'revision'), isTrue);
+    expect(database.columnExists('files', 'audio_codec'), isTrue);
+    expect(database.columnExists('files', 'sample_rate_hz'), isTrue);
     expect(database.tableExists('search_index'), isTrue);
   });
 
@@ -47,5 +49,24 @@ void main() {
     expect(migrated.userVersion, FundusDatabase.schemaVersion);
     expect(migrated.columnExists('progress_revisions', 'operation_id'), isTrue);
     expect(migrated.columnExists('works', 'generated_cover_path'), isTrue);
+  });
+
+  test('schema v4 is migrated with portable audio properties', () async {
+    final directory = await Directory.systemTemp.createTemp('fundus-db-v4-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/index.db');
+    final legacy = sqlite3.open(file.path);
+    legacy.execute('CREATE TABLE files (id TEXT PRIMARY KEY)');
+    legacy.userVersion = 4;
+    legacy.close();
+
+    final migrated = FundusDatabase.openFile(file);
+    addTearDown(migrated.close);
+    expect(migrated.userVersion, FundusDatabase.schemaVersion);
+    expect(migrated.columnExists('files', 'container'), isTrue);
+    expect(migrated.columnExists('files', 'audio_codec'), isTrue);
+    expect(migrated.columnExists('files', 'codec_profile'), isTrue);
+    expect(migrated.columnExists('files', 'audio_channels'), isTrue);
+    expect(migrated.columnExists('files', 'sample_rate_hz'), isTrue);
   });
 }

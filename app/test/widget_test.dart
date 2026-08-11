@@ -339,13 +339,25 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('#Fantasy'), findsOneWidget);
     final detailScroll = find
         .descendant(
           of: find.byKey(const ValueKey('detail-panel-scroll')),
           matching: find.byType(Scrollable),
         )
         .first;
+    expect(find.text('Audio-Kompatibilität'), findsOneWidget);
+    await tester.tap(find.text('Audio-Kompatibilität'));
+    await tester.pumpAndSettle();
+    expect(find.text('Desktop: geeignet'), findsOneWidget);
+    expect(find.text('Android: geeignet'), findsOneWidget);
+    await tester.tap(find.text('Audio-Kompatibilität'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('#Fantasy'),
+      300,
+      scrollable: detailScroll,
+    );
+    expect(find.text('#Fantasy'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Meine **Notiz**'),
       300,

@@ -13,5 +13,6 @@ export 'src/model/library_playlist.dart';
 export 'src/model/media_position.dart';
 export 'src/model/playback_session.dart';
 export 'src/playback/library_playback.dart';
+export 'src/scan/audio_technical_metadata.dart';
 export 'src/scan/library_scanner.dart';
 export 'src/search/library_work_query.dart';

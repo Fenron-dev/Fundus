@@ -31,6 +31,8 @@ void main() {
     expect(library.workDirectoryPath(works.single.id), book.path);
 
     final tracks = library.playbackTracks(works.single.id);
+    expect(tracks.first.audioMetadata?.container, 'MP3');
+    expect(tracks.first.audioMetadata?.codec, 'MP3');
     expect(tracks.map((track) => track.title), [
       '01 - Kapitel.mp3',
       '02 - Kapitel.mp3',
@@ -101,6 +103,10 @@ void main() {
     final rescannedWork = reopened.listWorks().single;
     expect(rescannedWork.id, works.single.id);
     final resumed = reopened.loadProgress(rescannedWork.id)!;
+    expect(
+      reopened.playbackTracks(rescannedWork.id).first.audioMetadata?.codec,
+      'MP3',
+    );
     expect(resumed.fileId, tracks[1].fileId);
     expect(resumed.position.displayValue, '00:12:07');
     expect(resumed.revision, 3);

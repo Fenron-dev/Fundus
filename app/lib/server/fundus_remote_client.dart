@@ -277,12 +277,14 @@ final class FundusRemoteTrack {
     required this.title,
     required this.position,
     this.duration,
+    this.audioMetadata,
   });
 
   final String id;
   final String title;
   final int position;
   final Duration? duration;
+  final AudioTechnicalMetadata? audioMetadata;
 }
 
 final class FundusRemoteChapter {
@@ -891,6 +893,7 @@ final class FundusRemoteClient {
                           .round(),
                     )
                   : null,
+              audioMetadata: _audioMetadata(item['audio']),
             ),
       ]..sort((a, b) => a.position.compareTo(b.position)),
       chapters: [
@@ -916,6 +919,21 @@ final class FundusRemoteClient {
                   : null,
             ),
       ],
+    );
+  }
+
+  static AudioTechnicalMetadata? _audioMetadata(Object? value) {
+    if (value is! Map ||
+        value['container'] is! String ||
+        value['codec'] is! String) {
+      return null;
+    }
+    return AudioTechnicalMetadata(
+      container: value['container'] as String,
+      codec: value['codec'] as String,
+      profile: value['profile'] as String?,
+      channels: value['channels'] as int?,
+      sampleRateHz: value['sample_rate_hz'] as int?,
     );
   }
 

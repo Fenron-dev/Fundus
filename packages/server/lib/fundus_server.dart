@@ -817,6 +817,15 @@ final class FundusServerHandler {
     'duration_seconds': track.duration?.inMilliseconds == null
         ? null
         : track.duration!.inMilliseconds / 1000,
+    'audio': track.audioMetadata == null
+        ? null
+        : {
+            'container': track.audioMetadata!.container,
+            'codec': track.audioMetadata!.codec,
+            'profile': track.audioMetadata!.profile,
+            'channels': track.audioMetadata!.channels,
+            'sample_rate_hz': track.audioMetadata!.sampleRateHz,
+          },
   };
 
   static Map<String, Object?> _chapterJson(LibraryPlaybackChapter chapter) => {

@@ -193,7 +193,9 @@ void main() {
     final chapters = body['chapters']! as List<dynamic>;
     expect(response.statusCode, 200);
     expect(body['title'], 'Der Server-Test');
-    expect((files.single as Map<String, dynamic>)['id'], track.fileId);
+    final remoteFile = files.single as Map<String, dynamic>;
+    expect(remoteFile['id'], track.fileId);
+    expect((remoteFile['audio'] as Map<String, dynamic>)['codec'], 'MP3');
     expect(chapters, hasLength(1));
     expect((chapters.single as Map<String, dynamic>)['file_id'], track.fileId);
     expect((chapters.single as Map<String, dynamic>)['position_seconds'], 0);

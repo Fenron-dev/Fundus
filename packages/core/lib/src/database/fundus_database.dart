@@ -11,6 +11,7 @@ import '../model/media_position.dart';
 import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
 import '../scan/library_scanner.dart';
+import '../scan/audio_technical_metadata.dart';
 
 final class LibraryWorkSummary {
   const LibraryWorkSummary({
@@ -75,7 +76,7 @@ final class LibraryWorkSummary {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 4;
+  static const schemaVersion = 5;
 
   final Database _database;
 
@@ -139,13 +140,19 @@ final class FundusDatabase {
       '''
       INSERT INTO files (
         id, path, filename, extension, size, mime_type, file_modified_at,
-        indexed_at, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available')
+        indexed_at, status, container, audio_codec, codec_profile,
+        audio_channels, sample_rate_hz
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?, ?, ?, ?)
       ON CONFLICT(path) DO UPDATE SET
         filename = excluded.filename,
         extension = excluded.extension,
         size = excluded.size,
         mime_type = excluded.mime_type,
+        container = excluded.container,
+        audio_codec = excluded.audio_codec,
+        codec_profile = excluded.codec_profile,
+        audio_channels = excluded.audio_channels,
+        sample_rate_hz = excluded.sample_rate_hz,
         file_modified_at = excluded.file_modified_at,
         indexed_at = excluded.indexed_at,
         status = 'available'
@@ -159,6 +166,11 @@ final class FundusDatabase {
         file.mimeType,
         file.modifiedAt.millisecondsSinceEpoch,
         now,
+        file.audioMetadata?.container,
+        file.audioMetadata?.codec,
+        file.audioMetadata?.profile,
+        file.audioMetadata?.channels,
+        file.audioMetadata?.sampleRateHz,
       ],
     );
     return id;
@@ -395,12 +407,21 @@ final class FundusDatabase {
   }
 
   List<
-    ({String fileId, String path, String title, int position, int? durationMs})
+    ({
+      String fileId,
+      String path,
+      String title,
+      int position,
+      int? durationMs,
+      AudioTechnicalMetadata? audioMetadata,
+    })
   >
   playbackTracks(String workId) {
     final rows = _database.select(
       '''
-      SELECT f.id, f.path, f.filename, wf.position, f.duration_ms
+      SELECT f.id, f.path, f.filename, wf.position, f.duration_ms,
+             f.container, f.audio_codec, f.codec_profile,
+             f.audio_channels, f.sample_rate_hz
       FROM work_files wf
       JOIN files f ON f.id = wf.file_id
       WHERE wf.work_id = ? AND wf.role = 'content' AND f.status = 'available'
@@ -416,6 +437,16 @@ final class FundusDatabase {
             title: row['filename'] as String,
             position: row['position'] as int,
             durationMs: row['duration_ms'] as int?,
+            audioMetadata:
+                row['container'] == null || row['audio_codec'] == null
+                ? null
+                : AudioTechnicalMetadata(
+                    container: row['container'] as String,
+                    codec: row['audio_codec'] as String,
+                    profile: row['codec_profile'] as String?,
+                    channels: row['audio_channels'] as int?,
+                    sampleRateHz: row['sample_rate_hz'] as int?,
+                  ),
           ),
         )
         .toList(growable: false);
@@ -1349,6 +1380,7 @@ final class FundusDatabase {
     if (_database.userVersion == 1 && !readOnly) _migrateToVersion2();
     if (_database.userVersion == 2 && !readOnly) _migrateToVersion3();
     if (_database.userVersion == 3 && !readOnly) _migrateToVersion4();
+    if (_database.userVersion == 4 && !readOnly) _migrateToVersion5();
   }
 
   void _migrateToVersion1() {
@@ -1406,6 +1438,33 @@ final class FundusDatabase {
         );
       }
       _database.userVersion = 4;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  void _migrateToVersion5() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      if (tableExists('files')) {
+        const columns = {
+          'container': 'TEXT',
+          'audio_codec': 'TEXT',
+          'codec_profile': 'TEXT',
+          'audio_channels': 'INTEGER',
+          'sample_rate_hz': 'INTEGER',
+        };
+        for (final entry in columns.entries) {
+          if (!columnExists('files', entry.key)) {
+            _database.execute(
+              'ALTER TABLE files ADD COLUMN ${entry.key} ${entry.value}',
+            );
+          }
+        }
+      }
+      _database.userVersion = 5;
       _database.execute('COMMIT');
     } catch (_) {
       _database.execute('ROLLBACK');

@@ -549,6 +549,7 @@ class _FundusAppState extends State<FundusApp> {
       if (mounted) {
         setState(() => _works = library.listWorks(includeMissing: true));
       }
+      await _recordAudioCompatibility(library);
       await FundusDiagnostics.instance.record('library.scan_completed', {
         'work_count': library.listWorks().length,
         'file_count': _indexEvent?.fileCount,
@@ -561,6 +562,37 @@ class _FundusAppState extends State<FundusApp> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _recordAudioCompatibility(FundusLibrary library) async {
+    var checkedFiles = 0;
+    final attention = <Map<String, Object?>>[];
+    for (final work in library.listWorks()) {
+      for (final track in library.playbackTracks(work.id)) {
+        final metadata = track.audioMetadata;
+        if (metadata == null) continue;
+        checkedFiles++;
+        final assessment = metadata.assess(AudioPlaybackTarget.android);
+        if (assessment.status == AudioCompatibilityStatus.compatible) continue;
+        attention.add({
+          'work_id': work.id,
+          'file_id': track.fileId,
+          'target': 'android',
+          'status': assessment.status.name,
+          'container': metadata.container,
+          'codec': metadata.codec,
+          'profile': metadata.profile,
+          'channels': metadata.channels,
+          'sample_rate_hz': metadata.sampleRateHz,
+          'reason': assessment.reason,
+        });
+      }
+    }
+    await FundusDiagnostics.instance.record('library.audio_compatibility', {
+      'checked_file_count': checkedFiles,
+      'attention_count': attention.length,
+      'attention': attention,
+    });
   }
 
   Future<void> _exportDiagnostics() async {
@@ -2846,6 +2878,130 @@ class _AudiobookHero extends StatelessWidget {
   }
 }
 
+class _AudioCompatibilityPanel extends StatelessWidget {
+  const _AudioCompatibilityPanel({required this.tracks});
+
+  final List<LibraryPlaybackTrack> tracks;
+
+  @override
+  Widget build(BuildContext context) {
+    final androidWarnings = tracks.where((track) {
+      final status = track.audioMetadata
+          ?.assess(AudioPlaybackTarget.android)
+          .status;
+      return status != null && status != AudioCompatibilityStatus.compatible;
+    }).length;
+    final unknown = tracks.where((track) => track.audioMetadata == null).length;
+    final hasAttention = androidWarnings > 0 || unknown > 0;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: ExpansionTile(
+        initiallyExpanded: hasAttention,
+        leading: Icon(
+          hasAttention ? Icons.warning_amber_rounded : Icons.task_alt,
+        ),
+        title: const Text('Audio-Kompatibilität'),
+        subtitle: Text(
+          hasAttention
+              ? [
+                  if (androidWarnings > 0)
+                    '$androidWarnings Android-Hinweis(e)',
+                  if (unknown > 0) '$unknown noch nicht analysiert',
+                ].join(' · ')
+              : 'Alle ${tracks.length} Datei(en) für Desktop und Android geeignet',
+        ),
+        children: [
+          for (final track in tracks) _technicalFile(track),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 4, 16, 14),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Die Prüfung verändert keine Quelldatei. Unbekannte Formate '
+                'können nach einem erneuten Bibliotheksscan bewertet werden.',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _technicalFile(LibraryPlaybackTrack track) {
+    final metadata = track.audioMetadata;
+    if (metadata == null) {
+      return ListTile(
+        leading: const Icon(Icons.help_outline),
+        title: Text(track.title),
+        subtitle: const Text('Technische Daten noch nicht erfasst.'),
+      );
+    }
+    final desktop = metadata.assess(AudioPlaybackTarget.desktop);
+    final android = metadata.assess(AudioPlaybackTarget.android);
+    final details = <String>[
+      metadata.container,
+      metadata.codec,
+      ?metadata.profile,
+      if (metadata.channels case final value?)
+        value == 1 ? 'Mono' : '$value Kanäle',
+      if (metadata.sampleRateHz case final value?) _sampleRate(value),
+    ];
+    return ListTile(
+      isThreeLine: true,
+      leading: Icon(_statusIcon(android.status)),
+      title: Text(track.title),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(details.join(' · ')),
+          const SizedBox(height: 5),
+          Wrap(
+            spacing: 6,
+            runSpacing: 5,
+            children: [
+              _targetChip('Desktop', desktop),
+              _targetChip('Android', android),
+            ],
+          ),
+          if (android.status != AudioCompatibilityStatus.compatible) ...[
+            const SizedBox(height: 4),
+            Text(android.reason),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _targetChip(String target, AudioCompatibilityAssessment assessment) {
+    return Chip(
+      visualDensity: VisualDensity.compact,
+      avatar: Icon(_statusIcon(assessment.status), size: 16),
+      label: Text('$target: ${_statusLabel(assessment.status)}'),
+    );
+  }
+
+  static IconData _statusIcon(AudioCompatibilityStatus status) =>
+      switch (status) {
+        AudioCompatibilityStatus.compatible => Icons.check_circle_outline,
+        AudioCompatibilityStatus.warning => Icons.warning_amber_rounded,
+        AudioCompatibilityStatus.unsupported => Icons.error_outline,
+        AudioCompatibilityStatus.unknown => Icons.help_outline,
+      };
+
+  static String _statusLabel(AudioCompatibilityStatus status) =>
+      switch (status) {
+        AudioCompatibilityStatus.compatible => 'geeignet',
+        AudioCompatibilityStatus.warning => 'prüfen',
+        AudioCompatibilityStatus.unsupported => 'nicht geeignet',
+        AudioCompatibilityStatus.unknown => 'unbekannt',
+      };
+
+  static String _sampleRate(int value) {
+    if (value % 1000 == 0) return '${value ~/ 1000} kHz';
+    return '${(value / 1000).toStringAsFixed(1)} kHz';
+  }
+}
+
 class _DetailPanel extends StatefulWidget {
   const _DetailPanel({
     required this.work,
@@ -2964,6 +3120,9 @@ class _DetailPanelState extends State<_DetailPanel> {
     final selectedWork = widget.work!;
     final canBookmark = _bookmarkAvailable;
     final directoryPath = widget.library?.workDirectoryPath(selectedWork.id);
+    final technicalTracks = selectedWork.available
+        ? widget.library?.playbackTracks(selectedWork.id)
+        : null;
     return ListView(
       key: const ValueKey('detail-panel-scroll'),
       padding: const EdgeInsets.all(20),
@@ -3021,6 +3180,10 @@ class _DetailPanelState extends State<_DetailPanel> {
               ),
             ),
           ),
+        ],
+        if (technicalTracks != null && technicalTracks.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          _AudioCompatibilityPanel(tracks: technicalTracks),
         ],
         if (widget.library != null && widget.player != null) ...[
           const SizedBox(height: 12),

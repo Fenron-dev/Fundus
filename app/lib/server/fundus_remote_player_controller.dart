@@ -324,6 +324,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
               title: track.title,
               position: track.position,
               duration: track.duration,
+              audioMetadata: track.audioMetadata,
             ),
         ];
         chapters = offlineWork.chapters;

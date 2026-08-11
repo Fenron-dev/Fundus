@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:fundus_core/fundus_core.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -14,6 +15,7 @@ final class FundusOfflineTrack {
     required this.path,
     required this.position,
     this.duration,
+    this.audioMetadata,
   });
 
   final String id;
@@ -21,6 +23,7 @@ final class FundusOfflineTrack {
   final String path;
   final int position;
   final Duration? duration;
+  final AudioTechnicalMetadata? audioMetadata;
 }
 
 final class FundusOfflineWork {
@@ -155,6 +158,7 @@ final class FundusOfflineStore {
             duration: item['duration_ms'] is int
                 ? Duration(milliseconds: item['duration_ms'] as int)
                 : null,
+            audioMetadata: _audioMetadata(item['audio']),
           ),
         );
       }
@@ -398,6 +402,7 @@ final class FundusOfflineStore {
             path: destination.path,
             position: track.position,
             duration: track.duration,
+            audioMetadata: track.audioMetadata,
           ),
         );
         completed++;
@@ -448,6 +453,14 @@ final class FundusOfflineStore {
                 'position': track.position,
                 if (track.duration != null)
                   'duration_ms': track.duration!.inMilliseconds,
+                if (track.audioMetadata != null)
+                  'audio': {
+                    'container': track.audioMetadata!.container,
+                    'codec': track.audioMetadata!.codec,
+                    'profile': track.audioMetadata!.profile,
+                    'channels': track.audioMetadata!.channels,
+                    'sample_rate_hz': track.audioMetadata!.sampleRateHz,
+                  },
               },
           ],
           'chapters': [
@@ -499,6 +512,21 @@ final class FundusOfflineStore {
       }
       rethrow;
     }
+  }
+
+  static AudioTechnicalMetadata? _audioMetadata(Object? value) {
+    if (value is! Map ||
+        value['container'] is! String ||
+        value['codec'] is! String) {
+      return null;
+    }
+    return AudioTechnicalMetadata(
+      container: value['container'] as String,
+      codec: value['codec'] as String,
+      profile: value['profile'] as String?,
+      channels: value['channels'] as int?,
+      sampleRateHz: value['sample_rate_hz'] as int?,
+    );
   }
 
   Future<void> remove({

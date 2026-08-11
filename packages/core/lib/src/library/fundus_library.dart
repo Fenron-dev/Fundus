@@ -154,6 +154,7 @@ final class FundusLibrary {
             duration: track.durationMs == null
                 ? null
                 : Duration(milliseconds: track.durationMs!),
+            audioMetadata: track.audioMetadata,
           );
         })
         .toList(growable: false);

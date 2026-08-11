@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:fundus_core/fundus_core.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../diagnostics/fundus_diagnostics.dart';
@@ -1974,6 +1975,7 @@ class _RemoteExpandedPlayer extends StatelessWidget {
                   selected: index == controller.currentIndex,
                   leading: Text('${index + 1}'),
                   title: Text(controller.tracks[index].title),
+                  subtitle: _remoteTechnicalSubtitle(controller.tracks[index]),
                   trailing: index == controller.currentIndex
                       ? const Icon(Icons.graphic_eq)
                       : null,
@@ -2141,6 +2143,33 @@ String _remoteChapterSubtitle(FundusRemoteChapter chapter, int trackCount) {
     parts.add('Dauer ${_formatRemoteDuration(duration)}');
   }
   return parts.join(' · ');
+}
+
+Widget? _remoteTechnicalSubtitle(FundusRemoteTrack track) {
+  final metadata = track.audioMetadata;
+  if (metadata == null) return null;
+  final target = Platform.isAndroid
+      ? AudioPlaybackTarget.android
+      : AudioPlaybackTarget.desktop;
+  final assessment = metadata.assess(target);
+  final parts = <String>[
+    metadata.container,
+    metadata.codec,
+    ?metadata.profile,
+    if (metadata.channels case final value?)
+      value == 1 ? 'Mono' : '$value Kanäle',
+    if (metadata.sampleRateHz case final value?)
+      '${(value / 1000).toStringAsFixed(value % 1000 == 0 ? 0 : 1)} kHz',
+  ];
+  final label = switch (assessment.status) {
+    AudioCompatibilityStatus.compatible => 'geeignet',
+    AudioCompatibilityStatus.warning => 'prüfen',
+    AudioCompatibilityStatus.unsupported => 'nicht geeignet',
+    AudioCompatibilityStatus.unknown => 'unbekannt',
+  };
+  return Text(
+    '${parts.join(' · ')}\n${Platform.isAndroid ? 'Android' : 'Desktop'}: $label',
+  );
 }
 
 class _PairingScanner extends StatefulWidget {
