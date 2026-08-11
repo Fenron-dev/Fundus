@@ -71,7 +71,7 @@ final class LibraryWorkSummary {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 3;
+  static const schemaVersion = 4;
 
   final Database _database;
 
@@ -520,21 +520,35 @@ final class FundusDatabase {
     });
   }
 
-  void savePlaybackSession(
+  PlaybackSession savePlaybackSession(
     PlaybackSession session, {
     String userId = 'default',
     String deviceId = 'desktop-local',
+    int? expectedRevision,
   }) {
     session.validate();
-    transaction(() {
+    return transaction(() {
+      final previous = _database.select(
+        'SELECT revision FROM playback_sessions WHERE id = ?',
+        [session.id],
+      );
+      final revision = previous.isEmpty
+          ? 1
+          : (previous.first['revision'] as int) + 1;
+      final currentRevision = previous.isEmpty
+          ? 0
+          : previous.first['revision'] as int;
+      if (expectedRevision != null && expectedRevision != currentRevision) {
+        throw PlaybackSessionRevisionConflict(loadPlaybackSession(session.id)!);
+      }
       final now = DateTime.now().millisecondsSinceEpoch;
       _database.execute(
         '''
         INSERT INTO playback_sessions (
           id, playlist_id, playlist_revision, current_index,
           current_position_json, shuffle_order_json, repeat_mode,
-          user_id, device_id, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          user_id, device_id, revision, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           playlist_id = excluded.playlist_id,
           playlist_revision = excluded.playlist_revision,
@@ -544,6 +558,7 @@ final class FundusDatabase {
           repeat_mode = excluded.repeat_mode,
           user_id = excluded.user_id,
           device_id = excluded.device_id,
+          revision = excluded.revision,
           updated_at = excluded.updated_at
         ''',
         [
@@ -556,6 +571,7 @@ final class FundusDatabase {
           session.repeatMode.name,
           userId,
           deviceId,
+          revision,
           now,
         ],
       );
@@ -573,6 +589,7 @@ final class FundusDatabase {
           [session.id, item.workId, jsonEncode(item.fileIds), item.position],
         );
       }
+      return loadPlaybackSession(session.id)!;
     });
   }
 
@@ -635,6 +652,8 @@ final class FundusDatabase {
         orElse: () => RepeatMode.none,
       ),
       shuffleOrder: (shuffleJson as List).cast<int>(),
+      revision: row['revision'] as int,
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
     );
     session.validate();
     return session;
@@ -1243,6 +1262,7 @@ final class FundusDatabase {
     }
     if (_database.userVersion == 1 && !readOnly) _migrateToVersion2();
     if (_database.userVersion == 2 && !readOnly) _migrateToVersion3();
+    if (_database.userVersion == 3 && !readOnly) _migrateToVersion4();
   }
 
   void _migrateToVersion1() {
@@ -1283,6 +1303,23 @@ final class FundusDatabase {
         'ALTER TABLE works ADD COLUMN generated_cover_path TEXT',
       );
       _database.userVersion = 3;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  void _migrateToVersion4() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      if (tableExists('playback_sessions') &&
+          !columnExists('playback_sessions', 'revision')) {
+        _database.execute(
+          'ALTER TABLE playback_sessions ADD COLUMN revision INTEGER NOT NULL DEFAULT 1',
+        );
+      }
+      _database.userVersion = 4;
       _database.execute('COMMIT');
     } catch (_) {
       _database.execute('ROLLBACK');

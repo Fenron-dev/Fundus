@@ -164,6 +164,7 @@ void main() {
     expect(body['capabilities'], contains('chapters'));
     expect(body['capabilities'], contains('playlists'));
     expect(body['capabilities'], contains('playlist_revisions'));
+    expect(body['capabilities'], contains('playback_session_revisions'));
   });
 
   test('lists multiple libraries without exposing local paths', () async {
@@ -338,6 +339,59 @@ void main() {
     expect(deleted.statusCode, HttpStatus.noContent);
     final afterDelete = await _json(await _get(server, path));
     expect(afterDelete['playlists'], isEmpty);
+  });
+
+  test('syncs a complete playback session with conflict protection', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final path = '/v1/libraries/$libraryId/playback-session';
+    final payload = {
+      'expected_revision': 0,
+      'device_id': 'phone-test',
+      'playlist_id': null,
+      'playlist_revision': null,
+      'items': [
+        {
+          'work_id': work.id,
+          'file_ids': [track.fileId],
+          'position': 0,
+        },
+      ],
+      'current_index': 0,
+      'current_position': {
+        'kind': 'time',
+        'numeric_value': 35.5,
+        'file_id': track.fileId,
+      },
+      'repeat_mode': 'all',
+      'shuffle_order': [0],
+    };
+    final savedResponse = await _put(server, path, jsonEncode(payload));
+    final saved = await _json(savedResponse);
+    expect(savedResponse.statusCode, 200);
+    expect(saved['revision'], 1);
+    expect(saved['repeat_mode'], 'all');
+    expect(saved['shuffle_order'], [0]);
+
+    final loaded = await _json(await _get(server, path));
+    final session = loaded['session']! as Map<String, dynamic>;
+    expect(session['current_index'], 0);
+    expect(
+      (session['current_position']! as Map<String, dynamic>)['numeric_value'],
+      35.5,
+    );
+
+    final conflictResponse = await _put(server, path, jsonEncode(payload));
+    final conflict = await _json(conflictResponse);
+    expect(conflictResponse.statusCode, HttpStatus.conflict);
+    expect(conflict['error'], 'playback_session_conflict');
+    expect((conflict['session']! as Map<String, dynamic>)['revision'], 1);
+
+    final updatedResponse = await _put(
+      server,
+      path,
+      jsonEncode({...payload, 'expected_revision': 1}),
+    );
+    expect((await _json(updatedResponse))['revision'], 2);
   });
 }
 

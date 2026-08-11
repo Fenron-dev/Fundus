@@ -225,13 +225,19 @@ final class FundusLibrary {
     operationId: operationId ?? FundusId.generate(),
   );
 
-  void savePlaybackSession(
+  PlaybackSession savePlaybackSession(
     PlaybackSession session, {
     String userId = 'default',
     String deviceId = 'desktop-local',
+    int? expectedRevision,
   }) {
     _ensureWritable();
-    _database.savePlaybackSession(session, userId: userId, deviceId: deviceId);
+    return _database.savePlaybackSession(
+      session,
+      userId: userId,
+      deviceId: deviceId,
+      expectedRevision: expectedRevision,
+    );
   }
 
   PlaybackSession? loadPlaybackSession(String sessionId) =>

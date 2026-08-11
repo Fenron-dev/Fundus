@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:fundus_core/fundus_core.dart';
 import 'package:media_kit/media_kit.dart';
 
 import '../diagnostics/fundus_diagnostics.dart';
@@ -154,10 +155,17 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   List<FundusRemoteWork> _workQueue = const [];
   int _workQueueIndex = 0;
   bool _advancingQueue = false;
+  String? _playlistId;
+  int? _playlistRevision;
+  int _sessionRevision = 0;
+  RepeatMode _repeatMode = RepeatMode.none;
+  List<int> _shuffleOrder = const [];
 
   FundusRemoteWork? get work => _work;
   List<FundusRemoteWork> get workQueue => List.unmodifiable(_workQueue);
   int get workQueueIndex => _workQueueIndex;
+  RepeatMode get repeatMode => _repeatMode;
+  bool get shuffleEnabled => _shuffleOrder.isNotEmpty;
   FundusRemoteTrack? get track =>
       _tracks.isEmpty ? null : _tracks[_currentIndex];
   List<FundusRemoteTrack> get tracks => List.unmodifiable(_tracks);
@@ -190,6 +198,10 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   }) {
     _workQueue = [work];
     _workQueueIndex = 0;
+    _playlistId = null;
+    _playlistRevision = null;
+    _repeatMode = RepeatMode.none;
+    _shuffleOrder = const [];
     return _openWork(server, library, work, offlineWork: offlineWork);
   }
 
@@ -198,6 +210,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     FundusRemoteLibrary library,
     List<FundusRemoteWork> works, {
     int startIndex = 0,
+    FundusRemotePlaylist? playlist,
   }) async {
     if (works.isEmpty) {
       throw ArgumentError.value(works, 'works', 'Die Playlist ist leer.');
@@ -205,15 +218,62 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     if (startIndex < 0 || startIndex >= works.length) {
       throw RangeError.index(startIndex, works, 'startIndex');
     }
-    _workQueue = List.unmodifiable(works);
-    _workQueueIndex = startIndex;
-    final work = works[startIndex];
+    await persist();
+    PlaybackSession? session;
+    try {
+      session = await _client.playbackSession(server, library.id);
+    } catch (_) {
+      session = null;
+    }
+    _sessionRevision = session?.revision ?? 0;
+    _playlistId = playlist?.id;
+    _playlistRevision = playlist?.revision;
+    _repeatMode = RepeatMode.none;
+    _shuffleOrder = const [];
+    var queue = List<FundusRemoteWork>.of(works);
+    var selectedIndex = startIndex;
+    String? startFileId;
+    Duration? startPosition;
+    if (session != null &&
+        playlist != null &&
+        session.playlistId == playlist.id &&
+        session.playlistRevision == playlist.revision) {
+      final byId = {for (final work in works) work.id: work};
+      final restored = session.items
+          .map((item) => byId[item.workId])
+          .whereType<FundusRemoteWork>()
+          .toList(growable: false);
+      if (restored.length == works.length) {
+        queue = restored;
+        selectedIndex = session.currentIndex.clamp(0, queue.length - 1);
+        _repeatMode = session.repeatMode;
+        _shuffleOrder = session.shuffleOrder.length == queue.length
+            ? [...session.shuffleOrder]
+            : const [];
+        startFileId = session.currentPosition.fileId;
+        final seconds = session.currentPosition.numericValue;
+        startPosition = seconds == null
+            ? null
+            : Duration(milliseconds: (seconds * 1000).round());
+      }
+    }
+    _workQueue = List.unmodifiable(queue);
+    _workQueueIndex = selectedIndex;
+    final work = queue[selectedIndex];
     final offlineWork = await _offlineStore.lookup(
       serverId: server.id,
       libraryId: library.id,
       workId: work.id,
     );
-    await _openWork(server, library, work, offlineWork: offlineWork);
+    await _openWork(
+      server,
+      library,
+      work,
+      offlineWork: offlineWork,
+      persistCurrent: false,
+      startFileId: startFileId,
+      startPosition: startPosition,
+    );
   }
 
   Future<void> _openWork(
@@ -222,6 +282,8 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     FundusRemoteWork work, {
     FundusOfflineWork? offlineWork,
     bool persistCurrent = true,
+    String? startFileId,
+    Duration? startPosition,
   }) async {
     if (_closed) return;
     if (persistCurrent) await persist();
@@ -327,7 +389,14 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       final resumeIndex = progress?.fileId == null
           ? -1
           : _tracks.indexWhere((item) => item.id == progress!.fileId);
-      if (resumeIndex >= 0) _currentIndex = resumeIndex;
+      final explicitIndex = startFileId == null
+          ? -1
+          : _tracks.indexWhere((item) => item.id == startFileId);
+      if (explicitIndex >= 0) {
+        _currentIndex = explicitIndex;
+      } else if (resumeIndex >= 0) {
+        _currentIndex = resumeIndex;
+      }
       final List<Media> media;
       if (offlineWork == null) {
         final proxy = await FundusRemoteStreamProxy.start(
@@ -348,16 +417,17 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       _lastPersistedAt = DateTime.now();
       notifyListeners();
       await _player.play();
-      if (progress != null &&
-          !progress.finished &&
-          progress.position > Duration.zero) {
-        _position = await _seekAndVerify(progress.position);
+      final resumePosition = startPosition ?? progress?.position;
+      if (resumePosition != null &&
+          !(progress?.finished ?? false) &&
+          resumePosition > Duration.zero) {
+        _position = await _seekAndVerify(resumePosition);
         notifyListeners();
         unawaited(
           FundusDiagnostics.instance.record('remote.resume_applied', {
             'work_id': work.id,
             'file_id': track?.id,
-            'position_ms': progress.position.inMilliseconds,
+            'position_ms': resumePosition.inMilliseconds,
             'player_position_ms': _position.inMilliseconds,
             'offline': offlineWork != null,
           }),
@@ -489,9 +559,10 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     _advancingQueue = true;
     try {
       await persist(finished: finished);
-      if (_workQueueIndex < _workQueue.length - 1) {
+      final nextIndex = _nextWorkQueueIndex();
+      if (nextIndex != null) {
         _ready = false;
-        _workQueueIndex++;
+        _workQueueIndex = nextIndex;
         await _openQueuedWork(persistCurrent: false);
       }
     } finally {
@@ -529,6 +600,77 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       offlineWork: offlineWork,
       persistCurrent: persistCurrent,
     );
+  }
+
+  int? _nextWorkQueueIndex() {
+    if (_workQueue.isEmpty) return null;
+    if (_repeatMode == RepeatMode.one) return _workQueueIndex;
+    if (_shuffleOrder.isNotEmpty) {
+      final position = _shuffleOrder.indexOf(_workQueueIndex);
+      if (position >= 0 && position + 1 < _shuffleOrder.length) {
+        return _shuffleOrder[position + 1];
+      }
+      return _repeatMode == RepeatMode.all ? _shuffleOrder.first : null;
+    }
+    if (_workQueueIndex + 1 < _workQueue.length) return _workQueueIndex + 1;
+    return _repeatMode == RepeatMode.all ? 0 : null;
+  }
+
+  Future<void> _persistPlaybackSession() async {
+    final library = _library;
+    final currentTrack = track;
+    if (library == null ||
+        currentTrack == null ||
+        _workQueue.isEmpty ||
+        _playlistId == null) {
+      return;
+    }
+    final session = PlaybackSession(
+      id: 'current-${library.id}',
+      playlistId: _playlistId,
+      playlistRevision: _playlistRevision,
+      items: [
+        for (var index = 0; index < _workQueue.length; index++)
+          PlaybackSessionItem(
+            workId: _workQueue[index].id,
+            fileIds: index == _workQueueIndex
+                ? _tracks.map((track) => track.id).toList(growable: false)
+                : const [],
+            position: index,
+          ),
+      ],
+      currentIndex: _workQueueIndex,
+      currentPosition: MediaPosition(
+        kind: MediaPositionKind.time,
+        numericValue: _position.inMilliseconds / 1000,
+        total: _duration > Duration.zero
+            ? _duration.inMilliseconds / 1000
+            : null,
+        fileId: currentTrack.id,
+      ),
+      repeatMode: _repeatMode,
+      shuffleOrder: _shuffleOrder,
+    );
+    try {
+      final saved = await _withReconnect(
+        (active) => _client.savePlaybackSession(
+          active,
+          libraryId: library.id,
+          session: session,
+          deviceId: deviceId,
+          expectedRevision: _sessionRevision,
+        ),
+      );
+      _sessionRevision = saved.revision;
+    } on FundusRemotePlaybackSessionConflict catch (error) {
+      _error =
+          'Die Playlist-Sitzung wurde auf einem anderen Gerät geändert. '
+          'Öffne die Playlist erneut, um Revision '
+          '${error.current?.revision ?? '?'} zu übernehmen.';
+      notifyListeners();
+    } catch (_) {
+      // Einzelner Werkfortschritt bleibt auch ohne Queue-Snapshot nutzbar.
+    }
   }
 
   Future<void> jumpToTrack(int index) async {
@@ -624,6 +766,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         if (_offlineWork == null) rethrow;
       }
       _lastPersistedAt = DateTime.now();
+      await _persistPlaybackSession();
     } catch (_) {
       _error = 'Fortschritt konnte nicht zum Server übertragen werden.';
       notifyListeners();

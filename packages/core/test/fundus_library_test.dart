@@ -142,7 +142,30 @@ void main() {
       repeatMode: RepeatMode.all,
       shuffleOrder: const [1, 0],
     );
-    library.savePlaybackSession(session, deviceId: 'android-test');
+    final firstSession = library.savePlaybackSession(
+      session,
+      deviceId: 'android-test',
+    );
+    final secondSession = library.savePlaybackSession(
+      session,
+      deviceId: 'android-test',
+    );
+    expect(firstSession.revision, 1);
+    expect(secondSession.revision, 2);
+    expect(
+      () => library.savePlaybackSession(
+        session,
+        deviceId: 'stale-device',
+        expectedRevision: 1,
+      ),
+      throwsA(
+        isA<PlaybackSessionRevisionConflict>().having(
+          (error) => error.current.revision,
+          'current revision',
+          2,
+        ),
+      ),
+    );
     final playlist = library.savePlaylist(
       name: 'Unterwegs hören',
       workIds: [works[1].id, works[0].id],
@@ -175,6 +198,8 @@ void main() {
     expect(restored.currentPosition.fileId, secondTracks[1].fileId);
     expect(restored.repeatMode, RepeatMode.all);
     expect(restored.shuffleOrder, [1, 0]);
+    expect(restored.revision, 2);
+    expect(restored.updatedAt, isNotNull);
     final restoredPlaylist = reopened.listPlaylists().single;
     expect(restoredPlaylist.id, playlist.id);
     expect(restoredPlaylist.name, 'Unterwegs hören');

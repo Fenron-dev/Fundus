@@ -96,6 +96,8 @@ final class FundusServerHandler {
         '/v1/libraries/<libraryId>/playlists/<playlistId>',
         _deletePlaylist,
       )
+      ..get('/v1/libraries/<libraryId>/playback-session', _playbackSession)
+      ..put('/v1/libraries/<libraryId>/playback-session', _savePlaybackSession)
       ..get('/v1/libraries/<libraryId>/progress/<workId>', _progress)
       ..put('/v1/libraries/<libraryId>/progress/<workId>', _saveProgress);
     return Pipeline()
@@ -125,6 +127,7 @@ final class FundusServerHandler {
     if (segments.contains('content')) return 'content';
     if (segments.contains('cover')) return 'cover';
     if (segments.contains('playlists')) return 'playlists';
+    if (segments.contains('playback-session')) return 'playback_session';
     if (segments.contains('progress')) return 'progress';
     if (segments.contains('works')) return 'works';
     if (segments.contains('libraries')) return 'libraries';
@@ -196,6 +199,8 @@ final class FundusServerHandler {
       'progress',
       'playlists',
       'playlist_revisions',
+      'playback_session',
+      'playback_session_revisions',
     ],
   });
 
@@ -384,6 +389,120 @@ final class FundusServerHandler {
     }
     entry.library.deletePlaylist(playlistId);
     return Response(HttpStatus.noContent);
+  }
+
+  Response _playbackSession(Request request, String libraryId) {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    final session = entry.library.latestPlaybackSession();
+    return _json({
+      'library_id': libraryId,
+      'session': session == null ? null : _playbackSessionJson(session),
+    });
+  }
+
+  Future<Response> _savePlaybackSession(
+    Request request,
+    String libraryId,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    final decoded = await _readJson(request);
+    if (decoded == null) return _badRequest('invalid_json');
+    final expectedRevision = decoded['expected_revision'];
+    if (expectedRevision is! int || expectedRevision < 0) {
+      return _badRequest('invalid_session_revision');
+    }
+    final current = entry.library.latestPlaybackSession();
+    if (expectedRevision != (current?.revision ?? 0)) {
+      return _json({
+        'error': 'playback_session_conflict',
+        'session': current == null ? null : _playbackSessionJson(current),
+      }, statusCode: HttpStatus.conflict);
+    }
+    final session = _playbackSessionFromJson(entry.library, libraryId, decoded);
+    if (session == null) return _badRequest('invalid_playback_session');
+    final saved = entry.library.savePlaybackSession(
+      session,
+      deviceId: decoded['device_id'] is String
+          ? decoded['device_id'] as String
+          : 'remote-peer',
+      expectedRevision: expectedRevision,
+    );
+    return _json(_playbackSessionJson(saved));
+  }
+
+  static PlaybackSession? _playbackSessionFromJson(
+    FundusLibrary library,
+    String libraryId,
+    Map<String, dynamic> decoded,
+  ) {
+    final itemsValue = decoded['items'];
+    final currentIndex = decoded['current_index'];
+    final positionValue = decoded['current_position'];
+    final shuffleValue = decoded['shuffle_order'];
+    final repeatValue = decoded['repeat_mode'];
+    final playlistId = decoded['playlist_id'];
+    final playlistRevision = decoded['playlist_revision'];
+    if (itemsValue is! List ||
+        itemsValue.isEmpty ||
+        currentIndex is! int ||
+        positionValue is! Map ||
+        shuffleValue is! List ||
+        shuffleValue.any((value) => value is! int) ||
+        repeatValue is! String ||
+        (playlistId != null && playlistId is! String) ||
+        (playlistRevision != null && playlistRevision is! int)) {
+      return null;
+    }
+    final items = <PlaybackSessionItem>[];
+    for (var index = 0; index < itemsValue.length; index++) {
+      final value = itemsValue[index];
+      if (value is! Map ||
+          value['work_id'] is! String ||
+          value['file_ids'] is! List ||
+          (value['file_ids'] as List).any((fileId) => fileId is! String)) {
+        return null;
+      }
+      final workId = value['work_id'] as String;
+      final work = _findWork(library, workId);
+      if (work == null) return null;
+      final validFileIds = library
+          .playbackTracks(workId)
+          .map((track) => track.fileId)
+          .toSet();
+      final fileIds = (value['file_ids'] as List).cast<String>();
+      if (fileIds.any((fileId) => !validFileIds.contains(fileId))) return null;
+      items.add(
+        PlaybackSessionItem(workId: workId, fileIds: fileIds, position: index),
+      );
+    }
+    if (items.map((item) => item.workId).toSet().length != items.length) {
+      return null;
+    }
+    try {
+      final session = PlaybackSession(
+        id: 'current-$libraryId',
+        playlistId: playlistId as String?,
+        playlistRevision: playlistRevision as int?,
+        items: items,
+        currentIndex: currentIndex,
+        currentPosition: MediaPosition.fromJson(
+          positionValue.cast<String, Object?>(),
+        ),
+        repeatMode: RepeatMode.values.firstWhere(
+          (mode) => mode.name == repeatValue,
+        ),
+        shuffleOrder: shuffleValue.cast<int>(),
+      );
+      session.validate();
+      return session;
+    } catch (_) {
+      return null;
+    }
   }
 
   static Future<Map<String, dynamic>?> _readJson(Request request) async {
@@ -666,6 +785,19 @@ final class FundusServerHandler {
     'revision': playlist.revision,
     'created_at': playlist.createdAt.toUtc().toIso8601String(),
     'updated_at': playlist.updatedAt.toUtc().toIso8601String(),
+  };
+
+  static Map<String, Object?> _playbackSessionJson(PlaybackSession session) => {
+    'id': session.id,
+    'playlist_id': session.playlistId,
+    'playlist_revision': session.playlistRevision,
+    'items': [for (final item in session.items) item.toJson()],
+    'current_index': session.currentIndex,
+    'current_position': session.currentPosition.toJson(),
+    'repeat_mode': session.repeatMode.name,
+    'shuffle_order': session.shuffleOrder,
+    'revision': session.revision,
+    'updated_at': session.updatedAt?.toUtc().toIso8601String(),
   };
 
   static ({int start, int end})? _parseRange(String value, int size) {

@@ -124,6 +124,52 @@ void main() {
     expect(loaded?.fileId, detail.tracks.single.id);
     expect(loaded?.position, const Duration(seconds: 2));
 
+    final queueSession = await client.savePlaybackSession(
+      profile,
+      libraryId: libraries.single.id,
+      deviceId: 'client-test',
+      expectedRevision: 0,
+      session: PlaybackSession(
+        id: 'ignored-client-id',
+        items: [
+          PlaybackSessionItem(
+            workId: works.single.id,
+            fileIds: [detail.tracks.single.id],
+            position: 0,
+          ),
+        ],
+        currentIndex: 0,
+        currentPosition: MediaPosition(
+          kind: MediaPositionKind.time,
+          numericValue: 2,
+          fileId: detail.tracks.single.id,
+        ),
+        repeatMode: RepeatMode.all,
+        shuffleOrder: const [0],
+      ),
+    );
+    expect(queueSession.revision, 1);
+    expect(
+      (await client.playbackSession(profile, libraries.single.id))?.repeatMode,
+      RepeatMode.all,
+    );
+    await expectLater(
+      client.savePlaybackSession(
+        profile,
+        libraryId: libraries.single.id,
+        deviceId: 'stale-client',
+        expectedRevision: 0,
+        session: queueSession,
+      ),
+      throwsA(
+        isA<FundusRemotePlaybackSessionConflict>().having(
+          (error) => error.current?.revision,
+          'current revision',
+          1,
+        ),
+      ),
+    );
+
     final playlist = await client.createPlaylist(
       profile,
       libraryId: libraries.single.id,

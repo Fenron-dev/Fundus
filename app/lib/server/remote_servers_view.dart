@@ -1072,7 +1072,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     if (_remotePlayer == null && mounted) {
       setState(() => _remotePlayer = player);
     }
-    await player.openQueue(server, library, works);
+    await player.openQueue(server, library, works, playlist: playlist);
     if (!mounted) return;
     final missing = playlist.workIds.length - works.length;
     if (missing > 0) {

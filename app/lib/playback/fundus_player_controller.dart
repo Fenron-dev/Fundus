@@ -119,6 +119,7 @@ final class FundusPlayerController extends ChangeNotifier {
   String? _playlistId;
   String? _playlistName;
   int? _playlistRevision;
+  int _playbackSessionRevision = 0;
   List<LibraryPlaylist> _savedPlaylists = [];
 
   LibraryWorkSummary? get work => _work;
@@ -865,6 +866,7 @@ final class FundusPlayerController extends ChangeNotifier {
     if (!sameLibrary || _queue.isEmpty) {
       final restored = library.latestPlaybackSession();
       if (restored != null) {
+        _playbackSessionRevision = restored.revision;
         final byId = {for (final item in library.listWorks()) item.id: item};
         final restoredQueue = <LibraryWorkSummary>[];
         for (final item in restored.items) {
@@ -932,6 +934,7 @@ final class FundusPlayerController extends ChangeNotifier {
     _playlistId = null;
     _playlistName = null;
     _playlistRevision = null;
+    _playbackSessionRevision = library.latestPlaybackSession()?.revision ?? 0;
     return work;
   }
 
@@ -961,25 +964,35 @@ final class FundusPlayerController extends ChangeNotifier {
     final sessionDuration = _duration > Duration.zero
         ? _duration
         : currentTrack.duration;
-    library.savePlaybackSession(
-      PlaybackSession(
-        id: 'current-${library.manifest.libraryId}',
-        playlistId: _playlistId,
-        playlistRevision: _playlistRevision,
-        items: items,
-        currentIndex: _queueIndex.clamp(0, items.length - 1),
-        currentPosition: MediaPosition(
-          kind: MediaPositionKind.time,
-          numericValue: _position.inMilliseconds / 1000,
-          total: sessionDuration == null
-              ? null
-              : sessionDuration.inMilliseconds / 1000,
-          fileId: currentTrack.fileId,
+    try {
+      final saved = library.savePlaybackSession(
+        PlaybackSession(
+          id: 'current-${library.manifest.libraryId}',
+          playlistId: _playlistId,
+          playlistRevision: _playlistRevision,
+          items: items,
+          currentIndex: _queueIndex.clamp(0, items.length - 1),
+          currentPosition: MediaPosition(
+            kind: MediaPositionKind.time,
+            numericValue: _position.inMilliseconds / 1000,
+            total: sessionDuration == null
+                ? null
+                : sessionDuration.inMilliseconds / 1000,
+            fileId: currentTrack.fileId,
+          ),
+          repeatMode: _repeatMode,
+          shuffleOrder: _shuffleOrder,
         ),
-        repeatMode: _repeatMode,
-        shuffleOrder: _shuffleOrder,
-      ),
-    );
+        expectedRevision: _playbackSessionRevision,
+      );
+      _playbackSessionRevision = saved.revision;
+    } on PlaybackSessionRevisionConflict catch (conflict) {
+      _error =
+          'Die Playlist-Sitzung wurde auf einem anderen Gerät geändert '
+          '(Revision ${conflict.current.revision}). Öffne sie erneut, um '
+          'den aktuellen Stand zu übernehmen.';
+      notifyListeners();
+    }
   }
 
   int? _nextQueueIndex() {

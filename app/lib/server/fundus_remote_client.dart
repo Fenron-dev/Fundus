@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:fundus_core/fundus_core.dart';
 
 final class FundusPairingInvitation {
   const FundusPairingInvitation({
@@ -216,6 +217,16 @@ final class FundusRemoteRequestException extends HttpException {
 
   final int statusCode;
   final String responseBody;
+}
+
+final class FundusRemotePlaybackSessionConflict implements Exception {
+  const FundusRemotePlaybackSessionConflict(this.current);
+
+  final PlaybackSession? current;
+
+  @override
+  String toString() =>
+      'Die Wiedergabe-Queue wurde auf einem anderen Gerät geändert.';
 }
 
 final class FundusRemoteWork {
@@ -587,6 +598,109 @@ final class FundusRemoteClient {
         .map(_playlistFromJson)
         .whereType<FundusRemotePlaylist>()
         .toList();
+  }
+
+  Future<PlaybackSession?> playbackSession(
+    FundusRemoteServer server,
+    String libraryId,
+  ) async {
+    final value = await _json(
+      server,
+      '/v1/libraries/$libraryId/playback-session',
+    );
+    return _playbackSessionFromJson(value['session']);
+  }
+
+  Future<PlaybackSession> savePlaybackSession(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required PlaybackSession session,
+    required String deviceId,
+    required int expectedRevision,
+  }) async {
+    try {
+      final bytes = await _request(
+        server.baseUri.resolve('/v1/libraries/$libraryId/playback-session'),
+        fingerprint: server.certificateFingerprint,
+        token: server.token,
+        method: 'PUT',
+        body: jsonEncode({
+          'expected_revision': expectedRevision,
+          'device_id': deviceId,
+          'playlist_id': session.playlistId,
+          'playlist_revision': session.playlistRevision,
+          'items': [for (final item in session.items) item.toJson()],
+          'current_index': session.currentIndex,
+          'current_position': session.currentPosition.toJson(),
+          'repeat_mode': session.repeatMode.name,
+          'shuffle_order': session.shuffleOrder,
+        }),
+      );
+      final saved = _playbackSessionFromJson(jsonDecode(utf8.decode(bytes)));
+      if (saved == null) {
+        throw const HttpException('Ungültige Wiedergabesitzungs-Antwort.');
+      }
+      return saved;
+    } on FundusRemoteRequestException catch (error) {
+      if (error.statusCode == HttpStatus.conflict) {
+        try {
+          final value = jsonDecode(error.responseBody);
+          final current = value is Map
+              ? _playbackSessionFromJson(value['session'])
+              : null;
+          throw FundusRemotePlaybackSessionConflict(current);
+        } on FormatException {
+          // Der ursprüngliche HTTP-Fehler enthält keine auswertbare Sitzung.
+        }
+      }
+      rethrow;
+    }
+  }
+
+  static PlaybackSession? _playbackSessionFromJson(Object? value) {
+    if (value is! Map ||
+        value['id'] is! String ||
+        value['items'] is! List ||
+        value['current_index'] is! int ||
+        value['current_position'] is! Map ||
+        value['repeat_mode'] is! String ||
+        value['shuffle_order'] is! List ||
+        value['revision'] is! int) {
+      return null;
+    }
+    try {
+      final session = PlaybackSession(
+        id: value['id'] as String,
+        playlistId: value['playlist_id'] is String
+            ? value['playlist_id'] as String
+            : null,
+        playlistRevision: value['playlist_revision'] is int
+            ? value['playlist_revision'] as int
+            : null,
+        items: [
+          for (final item in (value['items'] as List).whereType<Map>())
+            PlaybackSessionItem(
+              workId: item['work_id'] as String,
+              fileIds: (item['file_ids'] as List).cast<String>(),
+              position: item['position'] as int,
+            ),
+        ],
+        currentIndex: value['current_index'] as int,
+        currentPosition: MediaPosition.fromJson(
+          (value['current_position'] as Map).cast<String, Object?>(),
+        ),
+        repeatMode: RepeatMode.values.firstWhere(
+          (mode) => mode.name == value['repeat_mode'],
+        ),
+        shuffleOrder: (value['shuffle_order'] as List).cast<int>(),
+        revision: value['revision'] as int,
+        updatedAt: DateTime.tryParse('${value['updated_at'] ?? ''}'),
+      );
+      session.validate();
+      return session;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<FundusRemotePlaylist> createPlaylist(

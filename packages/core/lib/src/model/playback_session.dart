@@ -2,6 +2,12 @@ import 'media_position.dart';
 
 enum RepeatMode { none, one, all }
 
+final class PlaybackSessionRevisionConflict implements Exception {
+  const PlaybackSessionRevisionConflict(this.current);
+
+  final PlaybackSession current;
+}
+
 final class PlaybackSessionItem {
   const PlaybackSessionItem({
     required this.workId,
@@ -30,11 +36,15 @@ final class PlaybackSession {
     required this.shuffleOrder,
     this.playlistId,
     this.playlistRevision,
+    this.revision = 0,
+    this.updatedAt,
   });
 
   final String id;
   final String? playlistId;
   final int? playlistRevision;
+  final int revision;
+  final DateTime? updatedAt;
   final List<PlaybackSessionItem> items;
   final int currentIndex;
   final MediaPosition currentPosition;

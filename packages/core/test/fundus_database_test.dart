@@ -13,6 +13,7 @@ void main() {
     expect(database.tableExists('files'), isTrue);
     expect(database.tableExists('works'), isTrue);
     expect(database.tableExists('playback_sessions'), isTrue);
+    expect(database.columnExists('playback_sessions', 'revision'), isTrue);
     expect(database.tableExists('search_index'), isTrue);
   });
 
