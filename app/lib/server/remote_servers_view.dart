@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../diagnostics/fundus_diagnostics.dart';
-import '../playback/playback_sleep_timer.dart';
+import '../playback/playback_sleep_timer_button.dart';
 import '../playback/playback_conflict_settings.dart';
 import 'fundus_remote_client.dart';
 import 'fundus_peer_server_controller.dart';
@@ -1937,7 +1937,7 @@ class _RemotePlayerBar extends StatelessWidget {
                     spacing: 8,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      _RemoteSleepTimerButton(controller: controller),
+                      PlaybackSleepTimerButton(timer: controller.sleepTimer),
                       PopupMenuButton<double>(
                         tooltip: 'Geschwindigkeit',
                         initialValue: controller.rate,
@@ -1965,97 +1965,6 @@ class _RemotePlayerBar extends StatelessWidget {
       );
     },
   );
-}
-
-enum _RemoteSleepTimerChoice {
-  off,
-  minutes15,
-  minutes30,
-  minutes45,
-  minutes60,
-  trackEnd,
-}
-
-class _RemoteSleepTimerButton extends StatelessWidget {
-  const _RemoteSleepTimerButton({required this.controller});
-
-  final FundusRemotePlayerController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final timer = controller.sleepTimer;
-    final label = switch (timer.mode) {
-      PlaybackSleepTimerMode.off => 'Sleep-Timer',
-      PlaybackSleepTimerMode.endOfTrack => 'Am Trackende',
-      PlaybackSleepTimerMode.duration => _remaining(timer.remaining),
-    };
-    return PopupMenuButton<_RemoteSleepTimerChoice>(
-      tooltip: label,
-      onSelected: (choice) => _select(timer, choice),
-      itemBuilder: (context) => [
-        CheckedPopupMenuItem(
-          value: _RemoteSleepTimerChoice.off,
-          checked: timer.mode == PlaybackSleepTimerMode.off,
-          child: const Text('Aus'),
-        ),
-        for (final option in const [
-          (_RemoteSleepTimerChoice.minutes15, 15),
-          (_RemoteSleepTimerChoice.minutes30, 30),
-          (_RemoteSleepTimerChoice.minutes45, 45),
-          (_RemoteSleepTimerChoice.minutes60, 60),
-        ])
-          CheckedPopupMenuItem(
-            value: option.$1,
-            checked:
-                timer.mode == PlaybackSleepTimerMode.duration &&
-                timer.configuredDuration == Duration(minutes: option.$2),
-            child: Text('${option.$2} Minuten'),
-          ),
-        CheckedPopupMenuItem(
-          value: _RemoteSleepTimerChoice.trackEnd,
-          checked: timer.mode == PlaybackSleepTimerMode.endOfTrack,
-          child: const Text('Am Trackende'),
-        ),
-      ],
-      child: Chip(
-        avatar: Icon(
-          timer.active ? Icons.bedtime : Icons.bedtime_outlined,
-          size: 18,
-        ),
-        label: Text(label),
-      ),
-    );
-  }
-
-  static void _select(
-    PlaybackSleepTimer timer,
-    _RemoteSleepTimerChoice choice,
-  ) {
-    switch (choice) {
-      case _RemoteSleepTimerChoice.off:
-        timer.cancel();
-      case _RemoteSleepTimerChoice.minutes15:
-        timer.schedule(const Duration(minutes: 15));
-      case _RemoteSleepTimerChoice.minutes30:
-        timer.schedule(const Duration(minutes: 30));
-      case _RemoteSleepTimerChoice.minutes45:
-        timer.schedule(const Duration(minutes: 45));
-      case _RemoteSleepTimerChoice.minutes60:
-        timer.schedule(const Duration(minutes: 60));
-      case _RemoteSleepTimerChoice.trackEnd:
-        timer.scheduleEndOfTrack();
-    }
-  }
-
-  static String _remaining(Duration? value) {
-    if (value == null) return 'Sleep-Timer';
-    final totalMinutes = value.inMinutes;
-    final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
-    if (totalMinutes < 60) return '$totalMinutes:$seconds';
-    final hours = value.inHours;
-    final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
-    return '$hours:$minutes:$seconds';
-  }
 }
 
 String _formatRemoteDuration(Duration value) {

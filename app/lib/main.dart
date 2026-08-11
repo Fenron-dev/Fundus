@@ -14,7 +14,7 @@ import 'library/recent_library_store.dart';
 import 'library/security_scoped_bookmarks.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/playback_conflict_settings.dart';
-import 'playback/playback_sleep_timer.dart';
+import 'playback/playback_sleep_timer_button.dart';
 import 'server/fundus_peer_server_controller.dart';
 import 'server/fundus_peer_discovery.dart';
 import 'server/fundus_offline_store.dart';
@@ -3453,7 +3453,11 @@ class _PlayerBar extends StatelessWidget {
                     tooltip: 'Nächster Track',
                     icon: const Icon(Icons.skip_next),
                   ),
-                  _SleepTimerButton(controller: controller, compact: true),
+                  PlaybackSleepTimerButton(
+                    timer: controller.sleepTimer,
+                    compact: true,
+                    supportsChapterEnd: controller.chapters.isNotEmpty,
+                  ),
                 ],
               ),
             ),
@@ -3550,7 +3554,10 @@ class _PlayerBar extends StatelessWidget {
                         ),
                         Text(_time(controller.duration)),
                         const SizedBox(width: 8),
-                        _SleepTimerButton(controller: controller),
+                        PlaybackSleepTimerButton(
+                          timer: controller.sleepTimer,
+                          supportsChapterEnd: controller.chapters.isNotEmpty,
+                        ),
                         const SizedBox(width: 8),
                         PopupMenuButton<double>(
                           tooltip: 'Geschwindigkeit',
@@ -3594,105 +3601,6 @@ class _PlayerBar extends StatelessWidget {
     final minutes = (duration.inMinutes % 60).toString().padLeft(2, '0');
     final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
     return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
-  }
-}
-
-enum _SleepTimerChoice {
-  off,
-  minutes15,
-  minutes30,
-  minutes45,
-  minutes60,
-  trackEnd,
-}
-
-class _SleepTimerButton extends StatelessWidget {
-  const _SleepTimerButton({required this.controller, this.compact = false});
-
-  final FundusPlayerController controller;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final timer = controller.sleepTimer;
-    final label = switch (timer.mode) {
-      PlaybackSleepTimerMode.off => 'Sleep-Timer',
-      PlaybackSleepTimerMode.endOfTrack => 'Am Trackende',
-      PlaybackSleepTimerMode.duration => _remaining(timer.remaining),
-    };
-    return PopupMenuButton<_SleepTimerChoice>(
-      tooltip: label,
-      onSelected: (choice) => _select(timer, choice),
-      itemBuilder: (context) => [
-        CheckedPopupMenuItem(
-          value: _SleepTimerChoice.off,
-          checked: timer.mode == PlaybackSleepTimerMode.off,
-          child: const Text('Aus'),
-        ),
-        for (final option in const [
-          (_SleepTimerChoice.minutes15, 15),
-          (_SleepTimerChoice.minutes30, 30),
-          (_SleepTimerChoice.minutes45, 45),
-          (_SleepTimerChoice.minutes60, 60),
-        ])
-          CheckedPopupMenuItem(
-            value: option.$1,
-            checked:
-                timer.mode == PlaybackSleepTimerMode.duration &&
-                timer.configuredDuration == Duration(minutes: option.$2),
-            child: Text('${option.$2} Minuten'),
-          ),
-        CheckedPopupMenuItem(
-          value: _SleepTimerChoice.trackEnd,
-          checked: timer.mode == PlaybackSleepTimerMode.endOfTrack,
-          child: const Text('Am Trackende'),
-        ),
-      ],
-      child: compact
-          ? Padding(
-              padding: const EdgeInsets.all(8),
-              child: Badge(
-                isLabelVisible: timer.active,
-                child: Icon(
-                  timer.active ? Icons.bedtime : Icons.bedtime_outlined,
-                ),
-              ),
-            )
-          : Chip(
-              avatar: Icon(
-                timer.active ? Icons.bedtime : Icons.bedtime_outlined,
-                size: 18,
-              ),
-              label: Text(label),
-            ),
-    );
-  }
-
-  static void _select(PlaybackSleepTimer timer, _SleepTimerChoice choice) {
-    switch (choice) {
-      case _SleepTimerChoice.off:
-        timer.cancel();
-      case _SleepTimerChoice.minutes15:
-        timer.schedule(const Duration(minutes: 15));
-      case _SleepTimerChoice.minutes30:
-        timer.schedule(const Duration(minutes: 30));
-      case _SleepTimerChoice.minutes45:
-        timer.schedule(const Duration(minutes: 45));
-      case _SleepTimerChoice.minutes60:
-        timer.schedule(const Duration(minutes: 60));
-      case _SleepTimerChoice.trackEnd:
-        timer.scheduleEndOfTrack();
-    }
-  }
-
-  static String _remaining(Duration? value) {
-    if (value == null) return 'Sleep-Timer';
-    final totalMinutes = value.inMinutes;
-    final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
-    if (totalMinutes < 60) return '$totalMinutes:$seconds';
-    final hours = value.inHours;
-    final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
-    return '$hours:$minutes:$seconds';
   }
 }
 

@@ -158,7 +158,7 @@ final class PlaybackShakeRestartController {
     final now = DateTime.now();
     final last = _lastRestart;
     if (last != null && now.difference(last) < _configuration.cooldown) return;
-    if (!timer.restart()) return;
+    if (!timer.restart(fromShake: true)) return;
     _lastRestart = now;
     _restartCount++;
     if (_configuration.hapticFeedback) unawaited(_confirm());

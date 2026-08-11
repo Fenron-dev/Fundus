@@ -55,4 +55,41 @@ void main() {
     expect(elapsed.isCompleted, isFalse);
     await elapsed.future.timeout(const Duration(seconds: 1));
   });
+
+  test('schedules a timer for an absolute time', () {
+    final timer = PlaybackSleepTimer(onElapsed: () async {});
+    final target = DateTime.now().add(const Duration(hours: 2));
+
+    timer.scheduleAt(target);
+
+    expect(timer.mode, PlaybackSleepTimerMode.atTime);
+    expect(timer.endsAt, target);
+    expect(timer.remaining, isNotNull);
+    timer.dispose();
+  });
+
+  test('chapter end elapses only the matching mode', () async {
+    var elapsed = 0;
+    final timer = PlaybackSleepTimer(onElapsed: () async => elapsed++);
+    timer.scheduleEndOfChapter();
+
+    expect(await timer.chapterEnded(), isTrue);
+    expect(elapsed, 1);
+    expect(timer.mode, PlaybackSleepTimerMode.off);
+    expect(await timer.chapterEnded(), isFalse);
+    expect(elapsed, 1);
+    timer.dispose();
+  });
+
+  test('shake restart is observable and limited to duration mode', () {
+    final timer = PlaybackSleepTimer(onElapsed: () async {});
+    timer.schedule(const Duration(minutes: 15));
+
+    expect(timer.restart(fromShake: true), isTrue);
+    expect(timer.shakeRestartCount, 1);
+    timer.scheduleEndOfTrack();
+    expect(timer.restart(fromShake: true), isFalse);
+    expect(timer.shakeRestartCount, 1);
+    timer.dispose();
+  });
 }

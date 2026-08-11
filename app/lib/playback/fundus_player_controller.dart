@@ -38,7 +38,17 @@ final class FundusPlayerController extends ChangeNotifier {
         if (_ready && !value) unawaited(persist());
       }),
       _player.stream.position.listen((value) {
+        final previousChapter = _lastChapterIndex;
         _position = value;
+        final chapter = currentChapterIndex;
+        if (_ready &&
+            _playing &&
+            previousChapter != null &&
+            chapter != null &&
+            chapter != previousChapter) {
+          unawaited(_sleepTimer.chapterEnded());
+        }
+        _lastChapterIndex = chapter;
         notifyListeners();
         if (_ready && _playing && _lastPersistedAt != null) {
           final elapsed = DateTime.now().difference(_lastPersistedAt!);
@@ -52,6 +62,7 @@ final class FundusPlayerController extends ChangeNotifier {
       _player.stream.playlist.listen(_onPlaylist),
       _player.stream.completed.listen((completed) {
         if (!completed) return;
+        unawaited(_sleepTimer.chapterEnded());
         if (_currentIndex == _tracks.length - 1) {
           unawaited(_finishLastTrack());
         } else {
@@ -76,6 +87,7 @@ final class FundusPlayerController extends ChangeNotifier {
   List<LibraryPlaybackTrack> _tracks = [];
   List<LibraryPlaybackChapter> _chapters = [];
   int _currentIndex = 0;
+  int? _lastChapterIndex;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   DateTime? _lastPersistedAt;
@@ -139,6 +151,7 @@ final class FundusPlayerController extends ChangeNotifier {
     _chapters = await library.playbackChapters(work.id);
     _currentIndex = 0;
     _position = Duration.zero;
+    _lastChapterIndex = null;
     notifyListeners();
     if (_tracks.isEmpty) {
       _loading = false;
@@ -448,6 +461,7 @@ final class FundusPlayerController extends ChangeNotifier {
 
   void _onPlaylist(Playlist playlist) {
     if (_tracks.isEmpty || playlist.index == _currentIndex) return;
+    unawaited(_sleepTimer.chapterEnded());
     if (_skipNextTrackTransition) {
       _skipNextTrackTransition = false;
     } else {
@@ -455,6 +469,7 @@ final class FundusPlayerController extends ChangeNotifier {
     }
     _currentIndex = playlist.index.clamp(0, _tracks.length - 1);
     _position = Duration.zero;
+    _lastChapterIndex = null;
     notifyListeners();
     if (_ready) unawaited(persist());
   }

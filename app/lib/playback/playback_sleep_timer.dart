@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
-enum PlaybackSleepTimerMode { off, duration, endOfTrack }
+enum PlaybackSleepTimerMode { off, duration, atTime, endOfChapter, endOfTrack }
 
 final class PlaybackSleepTimer extends ChangeNotifier {
   PlaybackSleepTimer({required Future<void> Function() onElapsed})
@@ -15,12 +15,14 @@ final class PlaybackSleepTimer extends ChangeNotifier {
   PlaybackSleepTimerMode _mode = PlaybackSleepTimerMode.off;
   DateTime? _endsAt;
   Duration? _configuredDuration;
+  int _shakeRestartCount = 0;
   bool _disposed = false;
 
   PlaybackSleepTimerMode get mode => _mode;
   bool get active => _mode != PlaybackSleepTimerMode.off;
   DateTime? get endsAt => _endsAt;
   Duration? get configuredDuration => _configuredDuration;
+  int get shakeRestartCount => _shakeRestartCount;
   Duration? get remaining {
     final end = _endsAt;
     if (end == null) return null;
@@ -37,9 +39,29 @@ final class PlaybackSleepTimer extends ChangeNotifier {
     _configuredDuration = duration;
     _endsAt = DateTime.now().add(duration);
     _elapsedTimer = Timer(duration, () => unawaited(_elapse()));
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!_disposed) notifyListeners();
-    });
+    _startTicker();
+    notifyListeners();
+  }
+
+  void scheduleAt(DateTime time) {
+    final duration = time.difference(DateTime.now());
+    if (duration <= Duration.zero) {
+      throw ArgumentError.value(time, 'time', 'Muss in der Zukunft liegen.');
+    }
+    _cancelTimers();
+    _mode = PlaybackSleepTimerMode.atTime;
+    _configuredDuration = null;
+    _endsAt = time;
+    _elapsedTimer = Timer(duration, () => unawaited(_elapse()));
+    _startTicker();
+    notifyListeners();
+  }
+
+  void scheduleEndOfChapter() {
+    _cancelTimers();
+    _mode = PlaybackSleepTimerMode.endOfChapter;
+    _configuredDuration = null;
+    _endsAt = null;
     notifyListeners();
   }
 
@@ -53,12 +75,19 @@ final class PlaybackSleepTimer extends ChangeNotifier {
 
   /// Starts the configured fixed duration again. This is also the hook used by
   /// the optional mobile shake gesture later on.
-  bool restart() {
+  bool restart({bool fromShake = false}) {
     final duration = _configuredDuration;
     if (_mode != PlaybackSleepTimerMode.duration || duration == null) {
       return false;
     }
+    if (fromShake) _shakeRestartCount++;
     schedule(duration);
+    return true;
+  }
+
+  Future<bool> chapterEnded() async {
+    if (_mode != PlaybackSleepTimerMode.endOfChapter) return false;
+    await _elapse();
     return true;
   }
 
@@ -91,6 +120,12 @@ final class PlaybackSleepTimer extends ChangeNotifier {
     _elapsedTimer = null;
     _ticker?.cancel();
     _ticker = null;
+  }
+
+  void _startTicker() {
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!_disposed) notifyListeners();
+    });
   }
 
   @override
