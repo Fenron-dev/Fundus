@@ -302,6 +302,39 @@ final class FundusLibrary {
 
   List<String> listTags() => _database.listTags();
 
+  Future<LibraryWorkSummary> updateWorkMetadata({
+    required String workId,
+    required String title,
+    required List<String> authors,
+    String? subtitle,
+    String? series,
+    double? seriesSequence,
+    List<String> narrators = const [],
+    String? language,
+    String? description,
+    String? publisher,
+    int? publishedYear,
+  }) async {
+    _ensureWritable();
+    _database.updateWorkMetadata(
+      workId: workId,
+      title: title,
+      authors: authors,
+      subtitle: subtitle,
+      series: series,
+      seriesSequence: seriesSequence,
+      narrators: narrators,
+      language: language,
+      description: description,
+      publisher: publisher,
+      publishedYear: publishedYear,
+    );
+    await _writeMetadataSidecar(workId);
+    return listWorks(
+      includeMissing: true,
+    ).firstWhere((work) => work.id == workId);
+  }
+
   Future<WorkAnnotations> replaceWorkTags(
     String workId,
     Iterable<String> tags,
@@ -736,7 +769,7 @@ final class FundusLibrary {
     final work = listWorks().where((work) => work.id == workId).firstOrNull;
     if (work == null) return;
     await File(p.join(directory.path, 'meta.yaml')).writeAsString(
-      '${const JsonEncoder.withIndent('  ').convert({'format_version': 2, 'work_id': workId, 'base_kind': 'audiobook', 'custom_type': null, 'title': work.title, 'author': work.author, 'series': work.series, 'series_sequence': work.seriesSequence, 'language': _database.workLanguage(workId), 'tags': annotations.tags})}\n',
+      '${const JsonEncoder.withIndent('  ').convert({'format_version': 2, 'work_id': workId, 'base_kind': 'audiobook', 'custom_type': null, 'title': work.title, 'author': work.author, 'authors': work.authors, 'subtitle': work.subtitle, 'series': work.series, 'series_sequence': work.seriesSequence, 'narrators': work.narrators, 'language': work.language, 'description': work.description, 'publisher': work.publisher, 'published_year': work.publishedYear, 'tags': annotations.tags})}\n',
       flush: true,
     );
   }
@@ -771,13 +804,39 @@ final class FundusLibrary {
       }
     }
     final metaFile = File(p.join(sidecarDirectory.path, 'meta.yaml'));
-    if (annotations.tags.isEmpty && await metaFile.exists()) {
+    if (await metaFile.exists()) {
       final value = loadYaml(await metaFile.readAsString());
-      if (value is Map && value['tags'] is List) {
-        _database.replaceWorkTags(
-          workId,
-          (value['tags'] as List).whereType<String>(),
-        );
+      if (value is Map) {
+        if (annotations.tags.isEmpty && value['tags'] is List) {
+          _database.replaceWorkTags(
+            workId,
+            (value['tags'] as List).whereType<String>(),
+          );
+        }
+        final title = value['title'];
+        final author = value['author'];
+        final authors = value['authors'];
+        if (title is String &&
+            title.trim().isNotEmpty &&
+            (author is String || authors is List)) {
+          _database.updateWorkMetadata(
+            workId: workId,
+            title: title,
+            authors: authors is List && authors.whereType<String>().isNotEmpty
+                ? authors.whereType<String>().toList(growable: false)
+                : [author as String],
+            subtitle: value['subtitle'] as String?,
+            series: value['series'] as String?,
+            seriesSequence: (value['series_sequence'] as num?)?.toDouble(),
+            narrators: (value['narrators'] as List? ?? const [])
+                .whereType<String>()
+                .toList(growable: false),
+            language: value['language'] as String?,
+            description: value['description'] as String?,
+            publisher: value['publisher'] as String?,
+            publishedYear: (value['published_year'] as num?)?.round(),
+          );
+        }
       }
     }
     annotations = loadAnnotations(workId);

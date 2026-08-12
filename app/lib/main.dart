@@ -33,6 +33,7 @@ typedef WorkPlaybackCallback =
 typedef PlaylistPlaybackCallback = Future<void> Function(String playlistId);
 typedef MissingWorkDeleteCallback =
     Future<void> Function(LibraryWorkSummary work);
+typedef WorkMetadataChangedCallback = void Function(LibraryWorkSummary work);
 
 final class _RemoteLibraryChoice {
   const _RemoteLibraryChoice({
@@ -183,6 +184,9 @@ class _FundusAppState extends State<FundusApp> {
               onPlay: _library == null ? null : _startPlayback,
               onPlayPlaylist: _library == null ? null : _startPlaylist,
               onDeleteMissingWork: _library == null ? null : _deleteMissingWork,
+              onMetadataChanged: (work) => setState(() {
+                _works = _library?.listWorks(includeMissing: true) ?? _works;
+              }),
               onExportDiagnostics: _library == null ? null : _exportDiagnostics,
               onToggleTheme: _toggleTheme,
               peerServer: _peerServer,
@@ -1009,6 +1013,7 @@ class LibraryShell extends StatefulWidget {
     this.onPlay,
     this.onPlayPlaylist,
     this.onDeleteMissingWork,
+    this.onMetadataChanged,
     this.onExportDiagnostics,
     this.peerServer,
     this.offlineStore,
@@ -1027,6 +1032,7 @@ class LibraryShell extends StatefulWidget {
   final WorkPlaybackCallback? onPlay;
   final PlaylistPlaybackCallback? onPlayPlaylist;
   final MissingWorkDeleteCallback? onDeleteMissingWork;
+  final WorkMetadataChangedCallback? onMetadataChanged;
   final VoidCallback? onExportDiagnostics;
   final FundusPeerServerController? peerServer;
   final FundusOfflineStore? offlineStore;
@@ -1201,6 +1207,7 @@ class _LibraryShellState extends State<LibraryShell> {
                         player: widget.player,
                         onPlay: widget.onPlay,
                         onDeleteMissingWork: _deleteMissingWork,
+                        onMetadataChanged: _metadataChanged,
                         onSelectAuthor: _showAuthor,
                         onSelectNarrator: _showNarrator,
                       ),
@@ -2210,6 +2217,7 @@ class _LibraryShellState extends State<LibraryShell> {
               player: widget.player,
               onPlay: widget.onPlay,
               onDeleteMissingWork: _deleteMissingWork,
+              onMetadataChanged: _metadataChanged,
               onSelectAuthor: _showAuthor,
               onSelectNarrator: _showNarrator,
             ),
@@ -2236,6 +2244,7 @@ class _LibraryShellState extends State<LibraryShell> {
           player: widget.player,
           onPlay: widget.onPlay,
           onDeleteMissingWork: _deleteMissingWork,
+          onMetadataChanged: _metadataChanged,
           onSelectAuthor: _showAuthor,
           onSelectNarrator: _showNarrator,
         ),
@@ -2251,6 +2260,14 @@ class _LibraryShellState extends State<LibraryShell> {
     setState(() {
       if (_inlineDetailWork?.id == work.id) _inlineDetailWork = null;
       _selectedIndex = 0;
+    });
+  }
+
+  void _metadataChanged(LibraryWorkSummary work) {
+    widget.onMetadataChanged?.call(work);
+    if (!mounted) return;
+    setState(() {
+      if (_inlineDetailWork?.id == work.id) _inlineDetailWork = work;
     });
   }
 
@@ -3026,6 +3043,7 @@ class _DetailPanel extends StatefulWidget {
     this.player,
     this.onPlay,
     this.onDeleteMissingWork,
+    this.onMetadataChanged,
     this.onSelectAuthor,
     this.onSelectNarrator,
   });
@@ -3035,6 +3053,7 @@ class _DetailPanel extends StatefulWidget {
   final FundusPlayerController? player;
   final WorkPlaybackCallback? onPlay;
   final MissingWorkDeleteCallback? onDeleteMissingWork;
+  final WorkMetadataChangedCallback? onMetadataChanged;
   final ValueChanged<String>? onSelectAuthor;
   final ValueChanged<String>? onSelectNarrator;
 
@@ -3050,6 +3069,7 @@ class _DetailPanelState extends State<_DetailPanel> {
   bool _workIsCurrent = false;
   bool _workIsPlaying = false;
   bool _workIsQueued = false;
+  LibraryWorkSummary? _editedWork;
 
   @override
   void initState() {
@@ -3063,6 +3083,7 @@ class _DetailPanelState extends State<_DetailPanel> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.work?.id != widget.work?.id ||
         oldWidget.library != widget.library) {
+      _editedWork = null;
       _load();
     }
     if (oldWidget.player != widget.player) {
@@ -3134,7 +3155,7 @@ class _DetailPanelState extends State<_DetailPanel> {
   @override
   Widget build(BuildContext context) {
     if (widget.work == null) return const _EmptyLibrary();
-    final selectedWork = widget.work!;
+    final selectedWork = _editedWork ?? widget.work!;
     final canBookmark = _bookmarkAvailable;
     final directoryPath = widget.library?.workDirectoryPath(selectedWork.id);
     final technicalTracks = selectedWork.available
@@ -3155,6 +3176,18 @@ class _DetailPanelState extends State<_DetailPanel> {
           onTogglePlayback: () => _togglePlayback(selectedWork),
           onSelectAuthor: widget.onSelectAuthor,
           onSelectNarrator: widget.onSelectNarrator,
+        ),
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerRight,
+          child: OutlinedButton.icon(
+            onPressed:
+                widget.library == null || widget.library!.isReadOnly || _saving
+                ? null
+                : () => _editMetadata(selectedWork),
+            icon: const Icon(Icons.edit_outlined),
+            label: const Text('Metadaten bearbeiten'),
+          ),
         ),
         if (!selectedWork.available) ...[
           const SizedBox(height: 16),
@@ -3342,6 +3375,64 @@ class _DetailPanelState extends State<_DetailPanel> {
         ),
       ],
     );
+  }
+
+  Future<void> _editMetadata(LibraryWorkSummary work) async {
+    final library = widget.library;
+    if (library == null || library.isReadOnly) return;
+    final input = await showDialog<_WorkMetadataInput>(
+      context: context,
+      builder: (context) => _WorkMetadataDialog(work: work),
+    );
+    if (input == null || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      final updated = await library.updateWorkMetadata(
+        workId: work.id,
+        title: input.title,
+        subtitle: input.subtitle,
+        authors: input.authors,
+        series: input.series,
+        seriesSequence: input.seriesSequence,
+        narrators: input.narrators,
+        language: input.language,
+        description: input.description,
+        publisher: input.publisher,
+        publishedYear: input.publishedYear,
+      );
+      if (!mounted) return;
+      setState(() => _editedWork = updated);
+      widget.onMetadataChanged?.call(updated);
+      unawaited(
+        FundusDiagnostics.instance.record('library.metadata_updated', {
+          'work_id': work.id,
+          'author_count': updated.authors.length,
+          'narrator_count': updated.narrators.length,
+          'has_series': updated.series != null,
+          'has_description': updated.description != null,
+        }),
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Metadaten gespeichert und portabel gespiegelt.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Metadaten konnten nicht gespeichert werden: $error'),
+        ),
+      );
+      unawaited(
+        FundusDiagnostics.instance.record('library.metadata_update_failed', {
+          'work_id': work.id,
+          'error': error.runtimeType.toString(),
+        }),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _confirmDeleteMissingWork(LibraryWorkSummary work) async {
@@ -3641,6 +3732,235 @@ class _DetailPanelState extends State<_DetailPanel> {
         '${local.hour.toString().padLeft(2, '0')}:'
         '${local.minute.toString().padLeft(2, '0')} Uhr';
   }
+}
+
+final class _WorkMetadataInput {
+  const _WorkMetadataInput({
+    required this.title,
+    required this.authors,
+    required this.narrators,
+    this.subtitle,
+    this.series,
+    this.seriesSequence,
+    this.language,
+    this.description,
+    this.publisher,
+    this.publishedYear,
+  });
+
+  final String title;
+  final List<String> authors;
+  final String? subtitle;
+  final String? series;
+  final double? seriesSequence;
+  final List<String> narrators;
+  final String? language;
+  final String? description;
+  final String? publisher;
+  final int? publishedYear;
+}
+
+class _WorkMetadataDialog extends StatefulWidget {
+  const _WorkMetadataDialog({required this.work});
+
+  final LibraryWorkSummary work;
+
+  @override
+  State<_WorkMetadataDialog> createState() => _WorkMetadataDialogState();
+}
+
+class _WorkMetadataDialogState extends State<_WorkMetadataDialog> {
+  late final TextEditingController _title;
+  late final TextEditingController _subtitle;
+  late final TextEditingController _authors;
+  late final TextEditingController _series;
+  late final TextEditingController _sequence;
+  late final TextEditingController _narrators;
+  late final TextEditingController _language;
+  late final TextEditingController _publisher;
+  late final TextEditingController _year;
+  late final TextEditingController _description;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final work = widget.work;
+    _title = TextEditingController(text: work.title);
+    _subtitle = TextEditingController(text: work.subtitle ?? '');
+    _authors = TextEditingController(text: work.authors.join(', '));
+    _series = TextEditingController(text: work.series ?? '');
+    _sequence = TextEditingController(
+      text: work.seriesSequence == null
+          ? ''
+          : _formatSequence(work.seriesSequence!),
+    );
+    _narrators = TextEditingController(text: work.narrators.join(', '));
+    _language = TextEditingController(text: work.language ?? '');
+    _publisher = TextEditingController(text: work.publisher ?? '');
+    _year = TextEditingController(text: work.publishedYear?.toString() ?? '');
+    _description = TextEditingController(text: work.description ?? '');
+  }
+
+  @override
+  void dispose() {
+    for (final controller in [
+      _title,
+      _subtitle,
+      _authors,
+      _series,
+      _sequence,
+      _narrators,
+      _language,
+      _publisher,
+      _year,
+      _description,
+    ]) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Hörbuch-Metadaten bearbeiten'),
+    content: SizedBox(
+      width: 620,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _field(_title, 'Titel', required: true),
+            _field(_subtitle, 'Untertitel'),
+            _field(
+              _authors,
+              'Autor(en)',
+              required: true,
+              hint: 'Mehrere mit Komma oder neuer Zeile trennen',
+            ),
+            Row(
+              children: [
+                Expanded(child: _field(_series, 'Serie')),
+                const SizedBox(width: 12),
+                SizedBox(width: 120, child: _field(_sequence, 'Band')),
+              ],
+            ),
+            _field(
+              _narrators,
+              'Sprecher',
+              hint: 'Mehrere mit Komma oder neuer Zeile trennen',
+            ),
+            Row(
+              children: [
+                Expanded(child: _field(_language, 'Sprache')),
+                const SizedBox(width: 12),
+                Expanded(child: _field(_publisher, 'Verlag')),
+                const SizedBox(width: 12),
+                SizedBox(width: 110, child: _field(_year, 'Jahr')),
+              ],
+            ),
+            _field(_description, 'Beschreibung', minLines: 4, maxLines: 10),
+            if (_error case final error?) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  error,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Abbrechen'),
+      ),
+      FilledButton.icon(
+        onPressed: _submit,
+        icon: const Icon(Icons.save_outlined),
+        label: const Text('Speichern'),
+      ),
+    ],
+  );
+
+  Widget _field(
+    TextEditingController controller,
+    String label, {
+    bool required = false,
+    String? hint,
+    int minLines = 1,
+    int maxLines = 1,
+  }) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: TextField(
+      controller: controller,
+      minLines: minLines,
+      maxLines: maxLines,
+      decoration: InputDecoration(
+        labelText: required ? '$label *' : label,
+        hintText: hint,
+        border: const OutlineInputBorder(),
+      ),
+    ),
+  );
+
+  void _submit() {
+    final authors = _splitPeople(_authors.text);
+    final sequence = _nullableDouble(_sequence.text);
+    final year = _nullableInt(_year.text);
+    if (_title.text.trim().isEmpty || authors.isEmpty) {
+      setState(
+        () => _error = 'Titel und mindestens ein Autor sind erforderlich.',
+      );
+      return;
+    }
+    if (_sequence.text.trim().isNotEmpty && sequence == null) {
+      setState(() => _error = 'Die Bandnummer muss eine Zahl sein.');
+      return;
+    }
+    if (_year.text.trim().isNotEmpty && year == null) {
+      setState(
+        () => _error = 'Das Erscheinungsjahr muss eine ganze Zahl sein.',
+      );
+      return;
+    }
+    Navigator.pop(
+      context,
+      _WorkMetadataInput(
+        title: _title.text.trim(),
+        subtitle: _nullable(_subtitle.text),
+        authors: authors,
+        series: _nullable(_series.text),
+        seriesSequence: sequence,
+        narrators: _splitPeople(_narrators.text),
+        language: _nullable(_language.text),
+        description: _nullable(_description.text),
+        publisher: _nullable(_publisher.text),
+        publishedYear: year,
+      ),
+    );
+  }
+
+  static List<String> _splitPeople(String value) => value
+      .split(RegExp(r'[,;\n]+'))
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty)
+      .toSet()
+      .toList(growable: false);
+
+  static String? _nullable(String value) =>
+      value.trim().isEmpty ? null : value.trim();
+
+  static double? _nullableDouble(String value) => value.trim().isEmpty
+      ? null
+      : double.tryParse(value.trim().replaceAll(',', '.'));
+
+  static int? _nullableInt(String value) =>
+      value.trim().isEmpty ? null : int.tryParse(value.trim());
 }
 
 enum _BookmarkJumpAction { jumpDirectly, rememberAndJump }

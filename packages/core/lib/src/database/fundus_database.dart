@@ -328,6 +328,99 @@ final class FundusDatabase {
     );
   }
 
+  void updateWorkMetadata({
+    required String workId,
+    required String title,
+    required List<String> authors,
+    String? subtitle,
+    String? series,
+    double? seriesSequence,
+    List<String> narrators = const [],
+    String? language,
+    String? description,
+    String? publisher,
+    int? publishedYear,
+  }) {
+    final normalizedTitle = title.trim();
+    final normalizedAuthors = authors
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (normalizedTitle.isEmpty || normalizedAuthors.isEmpty) {
+      throw ArgumentError('Titel und mindestens ein Autor sind erforderlich.');
+    }
+    final rows = _database.select(
+      'SELECT metadata_json FROM works WHERE id = ?',
+      [workId],
+    );
+    if (rows.isEmpty) throw StateError('Werk wurde nicht gefunden.');
+    final decoded = jsonDecode(rows.first['metadata_json'] as String);
+    final metadata = decoded is Map<String, dynamic>
+        ? Map<String, Object?>.from(decoded)
+        : <String, Object?>{};
+    void write(String key, Object? value) {
+      if (value == null || value is String && value.trim().isEmpty) {
+        metadata.remove(key);
+      } else {
+        metadata[key] = value is String ? value.trim() : value;
+      }
+    }
+
+    metadata['author'] = normalizedAuthors.first;
+    metadata['authors'] = normalizedAuthors;
+    write('subtitle', subtitle);
+    metadata['narrators'] = narrators
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    write('language', language);
+    write('description', description);
+    write('publisher', publisher);
+    write('published_year', publishedYear);
+    final normalizedSeries = series?.trim();
+    _database.execute(
+      '''
+      UPDATE works SET title = ?, sort_title = ?, series_name = ?,
+        series_sequence = ?, metadata_json = ?
+      WHERE id = ?
+      ''',
+      [
+        normalizedTitle,
+        normalizedTitle.toLowerCase(),
+        normalizedSeries?.isEmpty ?? true ? null : normalizedSeries,
+        seriesSequence,
+        jsonEncode(metadata),
+        workId,
+      ],
+    );
+    final searchBody = [
+      ...normalizedAuthors,
+      ?normalizedSeries,
+      ...narrators,
+      ?subtitle,
+      ?description,
+    ].join(' ');
+    final searchRows = _database.select(
+      'SELECT 1 FROM search_index WHERE entity_type = ? AND entity_id = ?',
+      ['work', workId],
+    );
+    if (searchRows.isEmpty) {
+      _database.execute(
+        'INSERT INTO search_index (entity_type, entity_id, title, body, tags) '
+        'VALUES (?, ?, ?, ?, ?)',
+        ['work', workId, normalizedTitle, searchBody, ''],
+      );
+    } else {
+      _database.execute(
+        'UPDATE search_index SET title = ?, body = ? '
+        'WHERE entity_type = ? AND entity_id = ?',
+        [normalizedTitle, searchBody, 'work', workId],
+      );
+    }
+  }
+
   List<LibraryWorkSummary> listWorks({bool includeMissing = false}) {
     final rows = _database.select('''
       SELECT w.id, w.kind, w.title, w.series_name, w.series_sequence, w.added_at,

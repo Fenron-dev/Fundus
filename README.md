@@ -54,6 +54,9 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - sicherer Metadatenimport per Positivliste: Titel, Album, Autor, Serie,
   Bandnummer und Sprache aus M4B/M4A- sowie MP3-Tags; portable Sidecars haben
   Vorrang vor veränderten Dateitags
+- manueller Hörbuch-Metadateneditor für Titel, mehrere Autoren und Sprecher,
+  Serie/Band, Sprache, Verlag/Jahr und Beschreibung; Änderungen werden ohne
+  Eingriff in die Mediendatei portabel in `_fundus/meta.yaml` gespiegelt
 - portabler Sidecar-Spiegel unter `_fundus/`, der einen Index-Neuaufbau überlebt
 - stabile `work_id` und `base_kind` im Sidecar; Verschieben und Index-Neuaufbau
   erhalten Werkidentität, Resume, Tags, Notizen und Lesezeichen

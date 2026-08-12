@@ -342,6 +342,61 @@ void main() {
     expect(library.listWorks().single.title, 'Titel aus Tags');
   });
 
+  test(
+    'manual audiobook metadata survives rescans and index rebuilds',
+    () async {
+      final root = await Directory.systemTemp.createTemp('fundus-edited-meta-');
+      addTearDown(() => root.delete(recursive: true));
+      final book = Directory('${root.path}/Unbekannt/Alte Serie/01 - Rohdaten');
+      await book.create(recursive: true);
+      await File('${book.path}/audio.mp3').writeAsBytes([1, 2, 3]);
+
+      final library = await FundusLibrary.create(root);
+      await library.index().drain<void>();
+      final original = library.listWorks().single;
+      final edited = await library.updateWorkMetadata(
+        workId: original.id,
+        title: 'Manuell korrigierter Titel',
+        subtitle: 'Eine Unterzeile',
+        authors: const ['Erste Autorin', 'Zweiter Autor'],
+        series: 'Neue Serie',
+        seriesSequence: 2.5,
+        narrators: const ['Sprecher Eins', 'Sprecher Zwei'],
+        language: 'de',
+        description: 'Eine portable Beschreibung.',
+        publisher: 'Testverlag',
+        publishedYear: 2026,
+      );
+
+      expect(edited.title, 'Manuell korrigierter Titel');
+      expect(edited.authors, ['Erste Autorin', 'Zweiter Autor']);
+      expect(edited.series, 'Neue Serie');
+      expect(edited.seriesSequence, 2.5);
+      expect(edited.narrators, ['Sprecher Eins', 'Sprecher Zwei']);
+      expect(edited.language, 'de');
+      expect(edited.description, 'Eine portable Beschreibung.');
+
+      await library.index().drain<void>();
+      expect(library.listWorks().single.title, 'Manuell korrigierter Titel');
+      library.close();
+
+      await File('${root.path}/.library/index.db').delete();
+      final rebuilt = await FundusLibrary.open(root);
+      addTearDown(rebuilt.close);
+      await rebuilt.index().drain<void>();
+      final restored = rebuilt.listWorks().single;
+      expect(restored.id, original.id);
+      expect(restored.title, 'Manuell korrigierter Titel');
+      expect(restored.subtitle, 'Eine Unterzeile');
+      expect(restored.authors, ['Erste Autorin', 'Zweiter Autor']);
+      expect(restored.series, 'Neue Serie');
+      expect(restored.seriesSequence, 2.5);
+      expect(restored.narrators, ['Sprecher Eins', 'Sprecher Zwei']);
+      expect(restored.publisher, 'Testverlag');
+      expect(restored.publishedYear, 2026);
+    },
+  );
+
   test('restores tags notes and bookmarks from portable sidecars', () async {
     final root = await Directory.systemTemp.createTemp('fundus-sidecars-');
     addTearDown(() => root.delete(recursive: true));
