@@ -1044,6 +1044,7 @@ class LibraryShell extends StatefulWidget {
 }
 
 class _LibraryShellState extends State<LibraryShell> {
+  final _searchController = SearchController();
   _LibrarySection _section = _LibrarySection.library;
   int _selectedIndex = 0;
   int _mobileDestination = 0;
@@ -1059,6 +1060,25 @@ class _LibraryShellState extends State<LibraryShell> {
   double _leftPaneWidth = 236;
   double _detailPaneWidth = 368;
   String? _playlistTypeFilter;
+  List<LibrarySavedView> _savedViews = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadSavedViews());
+  }
+
+  @override
+  void didUpdateWidget(covariant LibraryShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.library != widget.library) unawaited(_loadSavedViews());
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   List<LibraryWorkSummary> get _visibleWorks =>
       LibraryWorkSearch.apply(widget.works, _query);
@@ -1136,6 +1156,7 @@ class _LibraryShellState extends State<LibraryShell> {
               onRescan: widget.onRescan,
               onClose: widget.onClose,
               onSearch: _setSearch,
+              searchController: _searchController,
               onExportDiagnostics: widget.onExportDiagnostics,
               onOpenSettings: widget.peerServer == null
                   ? null
@@ -1240,6 +1261,7 @@ class _LibraryShellState extends State<LibraryShell> {
               onRescan: widget.onRescan,
               onClose: widget.onClose,
               onSearch: _setSearch,
+              searchController: _searchController,
               onExportDiagnostics: widget.onExportDiagnostics,
               onOpenSettings: widget.peerServer == null
                   ? null
@@ -1875,7 +1897,44 @@ class _LibraryShellState extends State<LibraryShell> {
   Widget _libraryControls() => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      _MediaFilterButton(selectedKinds: _query.kinds, onChanged: _setKinds),
+      _AdvancedFilterButton(
+        query: _query,
+        works: widget.works,
+        onChanged: (query) => setState(() {
+          _query = query;
+          _selectedIndex = 0;
+        }),
+      ),
+      const SizedBox(width: 4),
+      MenuAnchor(
+        builder: (context, controller, child) => IconButton(
+          onPressed: controller.isOpen ? controller.close : controller.open,
+          tooltip: 'Gespeicherte Ansichten',
+          icon: const Icon(Icons.bookmarks_outlined),
+        ),
+        menuChildren: [
+          MenuItemButton(
+            onPressed: widget.library?.isReadOnly == false
+                ? _saveCurrentView
+                : null,
+            leadingIcon: const Icon(Icons.bookmark_add_outlined),
+            child: const Text('Aktuelle Ansicht speichern'),
+          ),
+          if (_savedViews.isNotEmpty) const Divider(),
+          for (final view in _savedViews)
+            MenuItemButton(
+              onPressed: () => _applySavedView(view),
+              leadingIcon: const Icon(Icons.bookmark_outline),
+              child: Text(view.name),
+            ),
+          if (_savedViews.isNotEmpty)
+            MenuItemButton(
+              onPressed: _manageSavedViews,
+              leadingIcon: const Icon(Icons.edit_outlined),
+              child: const Text('Ansichten verwalten'),
+            ),
+        ],
+      ),
       PopupMenuButton<_LibraryGrouping>(
         tooltip: 'Gliederung wählen',
         initialValue: _grouping,
@@ -2328,10 +2387,103 @@ class _LibraryShellState extends State<LibraryShell> {
     _query = _query.copyWith(text: value);
   });
 
-  void _setKinds(Set<String> value) => setState(() {
+  Future<void> _loadSavedViews() async {
+    final library = widget.library;
+    final views = library == null
+        ? const <LibrarySavedView>[]
+        : await library.loadSavedViews();
+    if (mounted && library == widget.library) {
+      setState(() => _savedViews = views);
+    }
+  }
+
+  Future<void> _saveCurrentView() async {
+    final library = widget.library;
+    if (library == null || library.isReadOnly) return;
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Ansicht speichern'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Name',
+            hintText: 'Zum Beispiel: Angefangene deutsche Hörbücher',
+          ),
+          onSubmitted: (value) => Navigator.pop(context, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Speichern'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.isEmpty || !mounted) return;
+    final views = await library.saveView(name, _query);
+    if (mounted) setState(() => _savedViews = views);
+  }
+
+  void _applySavedView(LibrarySavedView view) => setState(() {
+    _query = view.query;
+    _searchController.text = view.query.text;
     _selectedIndex = 0;
-    _query = _query.copyWith(kinds: value);
+    _selectedAuthor = null;
+    _selectedNarrator = null;
+    _selectedSeries = null;
   });
+
+  Future<void> _manageSavedViews() async {
+    final library = widget.library;
+    if (library == null || library.isReadOnly) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Gespeicherte Ansichten'),
+          content: SizedBox(
+            width: 460,
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                for (final view in _savedViews)
+                  ListTile(
+                    title: Text(view.name),
+                    subtitle: Text(
+                      '${view.query.hasFilters ? 'Mit Filtern' : 'Ohne Filter'} · ${_sortLabel(view.query.sort)}',
+                    ),
+                    trailing: IconButton(
+                      tooltip: 'Ansicht löschen',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () async {
+                        final views = await library.deleteSavedView(view.id);
+                        if (!mounted) return;
+                        setState(() => _savedViews = views);
+                        setDialogState(() {});
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Fertig'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   void _setSort(LibraryWorkSort value) => setState(() {
     _selectedIndex = 0;
@@ -2341,9 +2493,12 @@ class _LibraryShellState extends State<LibraryShell> {
   static String _sortLabel(LibraryWorkSort sort) => switch (sort) {
     LibraryWorkSort.relevance => 'Relevanz',
     LibraryWorkSort.recentlyAdded => 'Zuletzt hinzugefügt',
+    LibraryWorkSort.recentlyListened => 'Zuletzt gehört',
     LibraryWorkSort.title => 'Titel A–Z',
     LibraryWorkSort.author => 'Autor A–Z',
     LibraryWorkSort.series => 'Serie & Reihenfolge',
+    LibraryWorkSort.progress => 'Fortschritt',
+    LibraryWorkSort.duration => 'Dauer',
   };
 }
 
@@ -2379,6 +2534,7 @@ class _TopBar extends StatelessWidget {
     this.onRescan,
     this.onClose,
     required this.onSearch,
+    required this.searchController,
     this.onExportDiagnostics,
     this.detailPaneVisible,
     this.onToggleDetails,
@@ -2391,6 +2547,7 @@ class _TopBar extends StatelessWidget {
   final VoidCallback? onRescan;
   final VoidCallback? onClose;
   final ValueChanged<String> onSearch;
+  final SearchController searchController;
   final VoidCallback? onExportDiagnostics;
   final bool? detailPaneVisible;
   final VoidCallback? onToggleDetails;
@@ -2414,6 +2571,7 @@ class _TopBar extends StatelessWidget {
             SizedBox(
               width: 320,
               child: SearchBar(
+                controller: searchController,
                 leading: const Icon(Icons.search),
                 hintText: 'Suchen und filtern …',
                 onChanged: onSearch,
@@ -2468,6 +2626,207 @@ class _TopBar extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _AdvancedFilterButton extends StatelessWidget {
+  const _AdvancedFilterButton({
+    required this.query,
+    required this.works,
+    required this.onChanged,
+  });
+
+  final LibraryWorkQuery query;
+  final List<LibraryWorkSummary> works;
+  final ValueChanged<LibraryWorkQuery> onChanged;
+
+  int get _filterCount =>
+      query.kinds.length +
+      query.languages.length +
+      query.authors.length +
+      query.narrators.length +
+      query.series.length +
+      query.tags.length +
+      (query.progress == LibraryProgressFilter.any ? 0 : 1) +
+      (query.offlineOnly ? 1 : 0);
+
+  @override
+  Widget build(BuildContext context) => IconButton.filledTonal(
+    onPressed: () => _show(context),
+    tooltip: 'Filter kombinieren',
+    icon: Badge(
+      isLabelVisible: _filterCount > 0,
+      label: Text('$_filterCount'),
+      child: const Icon(Icons.filter_list),
+    ),
+  );
+
+  Future<void> _show(BuildContext context) async {
+    var kinds = {...query.kinds};
+    var languages = {...query.languages};
+    var authors = {...query.authors};
+    var narrators = {...query.narrators};
+    var series = {...query.series};
+    var tags = {...query.tags};
+    var progress = query.progress;
+    var offlineOnly = query.offlineOnly;
+    final result = await showDialog<LibraryWorkQuery>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          Set<String> values(Iterable<String?> source) => source
+              .whereType<String>()
+              .map((value) => value.trim())
+              .where((value) => value.isNotEmpty)
+              .toSet();
+          final availableAuthors = values(
+            works.expand(
+              (work) => work.authors.isEmpty ? [work.author] : work.authors,
+            ),
+          );
+          final availableNarrators = values(
+            works.expand((work) => work.narrators),
+          );
+          final availableLanguages = values(works.map((work) => work.language));
+          final availableSeries = values(works.map((work) => work.series));
+          final availableTags = values(works.expand((work) => work.tags));
+          Widget choices(
+            String title,
+            Set<String> available,
+            Set<String> selected,
+          ) {
+            final sorted = available.toList()
+              ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+            if (sorted.isEmpty) return const SizedBox.shrink();
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: [
+                      for (final value in sorted)
+                        FilterChip(
+                          label: Text(value),
+                          selected: selected.contains(value),
+                          onSelected: (_) => setState(() {
+                            selected.contains(value)
+                                ? selected.remove(value)
+                                : selected.add(value);
+                          }),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          }
+
+          return AlertDialog(
+            title: const Text('Medien filtern'),
+            content: SizedBox(
+              width: 680,
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    DropdownButtonFormField<LibraryProgressFilter>(
+                      initialValue: progress,
+                      decoration: const InputDecoration(
+                        labelText: 'Hörstatus',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: LibraryProgressFilter.any,
+                          child: Text('Alle'),
+                        ),
+                        DropdownMenuItem(
+                          value: LibraryProgressFilter.notStarted,
+                          child: Text('Nicht begonnen'),
+                        ),
+                        DropdownMenuItem(
+                          value: LibraryProgressFilter.inProgress,
+                          child: Text('Begonnen'),
+                        ),
+                        DropdownMenuItem(
+                          value: LibraryProgressFilter.finished,
+                          child: Text('Beendet'),
+                        ),
+                      ],
+                      onChanged: (value) => setState(() => progress = value!),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Nur offline verfügbare Medien'),
+                      value: offlineOnly,
+                      onChanged: (value) => setState(() => offlineOnly = value),
+                    ),
+                    choices(
+                      'Medientyp',
+                      _MediaFilterButton.kinds.keys.toSet(),
+                      kinds,
+                    ),
+                    choices('Sprache', availableLanguages, languages),
+                    choices('Autor', availableAuthors, authors),
+                    choices('Sprecher', availableNarrators, narrators),
+                    choices('Serie', availableSeries, series),
+                    choices(
+                      'Tags (alle gewählten müssen passen)',
+                      availableTags,
+                      tags,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(
+                  context,
+                  query.copyWith(
+                    kinds: {},
+                    progress: LibraryProgressFilter.any,
+                    offlineOnly: false,
+                    languages: {},
+                    authors: {},
+                    narrators: {},
+                    series: {},
+                    tags: {},
+                  ),
+                ),
+                child: const Text('Zurücksetzen'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Abbrechen'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(
+                  context,
+                  query.copyWith(
+                    kinds: kinds,
+                    progress: progress,
+                    offlineOnly: offlineOnly,
+                    languages: languages,
+                    authors: authors,
+                    narrators: narrators,
+                    series: series,
+                    tags: tags,
+                  ),
+                ),
+                child: const Text('Anwenden'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (result != null) onChanged(result);
   }
 }
 

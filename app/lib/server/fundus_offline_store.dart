@@ -46,6 +46,7 @@ final class FundusOfflineWork {
     this.publisher,
     this.publishedYear,
     this.coverPath,
+    this.tags = const [],
   });
 
   final String serverId;
@@ -66,6 +67,7 @@ final class FundusOfflineWork {
   final String? publisher;
   final int? publishedYear;
   final String? coverPath;
+  final List<String> tags;
 
   String get directoryPath => p.dirname(tracks.first.path);
 
@@ -228,6 +230,9 @@ final class FundusOfflineStore {
         publishedYear: value['published_year'] is int
             ? value['published_year'] as int
             : null,
+        tags: (value['tags'] as List? ?? const []).whereType<String>().toList(
+          growable: false,
+        ),
         downloadedAt:
             DateTime.tryParse('${value['downloaded_at'] ?? ''}') ??
             DateTime.fromMillisecondsSinceEpoch(0),
@@ -303,6 +308,7 @@ final class FundusOfflineStore {
         ..['description'] = work.description
         ..['publisher'] = work.publisher
         ..['published_year'] = work.publishedYear;
+      value['tags'] = work.tags;
       final partial = File('${manifest.path}.part');
       await partial.writeAsString(
         const JsonEncoder.withIndent('  ').convert(value),
@@ -442,6 +448,7 @@ final class FundusOfflineStore {
           if (work.description != null) 'description': work.description,
           if (work.publisher != null) 'publisher': work.publisher,
           if (work.publishedYear != null) 'published_year': work.publishedYear,
+          'tags': work.tags,
           'downloaded_at': downloadedAt.toIso8601String(),
           if (coverPath != null) 'cover_path': p.basename(coverPath),
           'tracks': [

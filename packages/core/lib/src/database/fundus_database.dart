@@ -42,6 +42,9 @@ final class LibraryWorkSummary {
     this.progressFinished = false,
     this.status = 'available',
     this.metadataOrigins = const {},
+    this.tags = const [],
+    this.lastListenedAt,
+    this.offline = false,
   });
 
   final String id;
@@ -71,6 +74,9 @@ final class LibraryWorkSummary {
   final bool progressFinished;
   final String status;
   final Map<String, WorkMetadataOrigin> metadataOrigins;
+  final List<String> tags;
+  final DateTime? lastListenedAt;
+  final bool offline;
 
   bool get available => status == 'available';
 }
@@ -465,7 +471,11 @@ final class FundusDatabase {
              progress.numeric_value AS progress_position,
              progress.total AS progress_total,
              progress.finished AS progress_finished,
-             progress_file.position AS progress_track_index
+             progress.updated_at AS progress_updated_at,
+             progress_file.position AS progress_track_index,
+             (SELECT json_group_array(t.name)
+                FROM work_tags wt JOIN tags t ON t.id = wt.tag_id
+               WHERE wt.work_id = w.id) AS tags_json
       FROM works w
       LEFT JOIN work_files wf ON wf.work_id = w.id AND wf.role = 'content'
       LEFT JOIN files content ON content.id = wf.file_id
@@ -520,6 +530,13 @@ final class FundusDatabase {
             progressFinished: (row['progress_finished'] as int?) == 1,
             status: row['status'] as String,
             metadataOrigins: _metadataOrigins(metadata),
+            tags: _metadataStrings(jsonDecode(row['tags_json'] as String)),
+            lastListenedAt: row['progress_updated_at'] is int
+                ? DateTime.fromMillisecondsSinceEpoch(
+                    row['progress_updated_at'] as int,
+                  )
+                : null,
+            offline: row['status'] == 'offline',
           );
         })
         .toList(growable: false);

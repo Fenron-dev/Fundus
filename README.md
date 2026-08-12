@@ -47,6 +47,11 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - anspringbare Zeit-Lesezeichen mit optionalem Rücksprung-Lesezeichen
 - bearbeitbare Tags mit fuzzy gefilterten Vorschlägen und Markdown-Notizen
 - Kachel-/Tabellenansicht und Navigation nach Autor, Serie und Buch
+- kombinierbare Filter für Medientyp, Hörstatus, Offline-Verfügbarkeit,
+  Sprache, Autor, Sprecher, Serie und Tags sowie Sortierung nach Titel,
+  Datum, letzter Wiedergabe, Fortschritt und Dauer
+- benannte gespeicherte Ansichten: portabel pro lokaler Bibliothek und getrennt
+  nach Server/Bibliothek für Remote- und Offline-Bestände
 - bis zu zehn zuletzt verwendete Bibliotheken mit Verfügbarkeitsstatus
 - dauerhafte macOS-Freigabe zuletzt verwendeter Bibliotheken über
   Security-Scoped Bookmarks

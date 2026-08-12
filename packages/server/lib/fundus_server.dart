@@ -797,6 +797,9 @@ final class FundusServerHandler {
     'publisher': work.publisher,
     'published_year': work.publishedYear,
     'file_count': work.fileCount,
+    'tags': work.tags,
+    'added_at': work.addedAt.toUtc().toIso8601String(),
+    'last_listened_at': work.lastListenedAt?.toUtc().toIso8601String(),
     'has_cover': work.coverPath != null,
     'progress': {
       'position_seconds': work.progressPosition?.inMilliseconds == null

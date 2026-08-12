@@ -112,6 +112,37 @@ void main() {
     expect(resumed.revision, 3);
   });
 
+  test('persists named library views portably', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-views-');
+    addTearDown(() => root.delete(recursive: true));
+    final library = await FundusLibrary.create(root);
+    addTearDown(library.close);
+
+    final saved = await library.saveView(
+      'Begonnene deutsche Hörbücher',
+      const LibraryWorkQuery(
+        kinds: {'audiobook'},
+        progress: LibraryProgressFilter.inProgress,
+        languages: {'de'},
+        sort: LibraryWorkSort.recentlyListened,
+      ),
+    );
+    expect(saved, hasLength(1));
+
+    final loaded = await library.loadSavedViews();
+    expect(loaded.single.name, 'Begonnene deutsche Hörbücher');
+    expect(loaded.single.query.kinds, {'audiobook'});
+    expect(loaded.single.query.progress, LibraryProgressFilter.inProgress);
+    expect(loaded.single.query.languages, {'de'});
+    expect(loaded.single.query.sort, LibraryWorkSort.recentlyListened);
+    expect(
+      await File('${root.path}/.library/saved_views.json').exists(),
+      isTrue,
+    );
+
+    expect(await library.deleteSavedView(loaded.single.id), isEmpty);
+  });
+
   test('caches and resolves embedded M4B artwork', () async {
     final root = await Directory.systemTemp.createTemp('fundus-artwork-');
     addTearDown(() => root.delete(recursive: true));

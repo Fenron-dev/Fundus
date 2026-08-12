@@ -15,10 +15,9 @@ import 'fundus_remote_player_controller.dart';
 import 'fundus_offline_store.dart';
 import 'fundus_peer_discovery.dart';
 import 'peer_server_identity_store.dart';
+import 'remote_saved_view_store.dart';
 
 enum _RemoteLayout { grid, list }
-
-enum _RemoteSort { title, author, series }
 
 enum _RemoteGrouping { books, authors, series, narrators }
 
@@ -63,6 +62,8 @@ class FundusRemoteServersView extends StatefulWidget {
 class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   final _store = FundusRemoteServerStore();
   final _client = const FundusRemoteClient();
+  final _savedViewStore = const RemoteSavedViewStore();
+  final _searchController = SearchController();
   late final FundusOfflineStore _offlineStore;
   final _peerDiscovery = FundusPeerDiscovery();
   List<FundusRemoteServer> _servers = const [];
@@ -73,10 +74,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   List<FundusRemoteWork> _works = const [];
   List<FundusRemotePlaylist> _playlists = const [];
   _RemoteLibrarySection _librarySection = _RemoteLibrarySection.media;
-  String? _selectedKind;
-  String _search = '';
+  LibraryWorkQuery _query = const LibraryWorkQuery(sort: LibraryWorkSort.title);
+  List<LibrarySavedView> _savedViews = const [];
   _RemoteLayout _layout = _RemoteLayout.grid;
-  _RemoteSort _sort = _RemoteSort.title;
   _RemoteGrouping _grouping = _RemoteGrouping.books;
   String? _selectedGroup;
   bool _busy = true;
@@ -109,6 +109,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   @override
   void dispose() {
     _lifecycleListener.dispose();
+    _searchController.dispose();
     _remotePlayer?.dispose();
     super.dispose();
   }
@@ -311,7 +312,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       _busy = true;
       _error = null;
       _selectedLibrary = library;
-      _selectedKind = null;
+      _query = const LibraryWorkQuery(sort: LibraryWorkSort.title);
+      _searchController.clear();
       _librarySection = _RemoteLibrarySection.media;
     });
     try {
@@ -320,11 +322,13 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         (active) async => (
           works: await _client.works(active, library.id),
           playlists: await _client.playlists(active, library.id),
+          views: await _savedViewStore.load(active.id, library.id),
         ),
       );
       final activeServer = result.server;
       final works = result.value.works;
       final playlists = result.value.playlists;
+      final views = result.value.views;
       final offline = await Future.wait([
         for (final work in works)
           _offlineStore.refreshMetadata(
@@ -338,6 +342,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         _selectedServer = activeServer;
         _works = works;
         _playlists = playlists;
+        _savedViews = views;
         _offlineKeys
           ..removeWhere(
             (key) => key.startsWith('${activeServer.id}/${library.id}/'),
@@ -709,18 +714,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     }
     final server = _selectedServer!;
     final kinds = _works.map((work) => work.kind).toSet().toList()..sort();
-    var works = _selectedKind == null
-        ? _works
-        : _works.where((work) => work.kind == _selectedKind).toList();
-    if (_search.trim().isNotEmpty) {
-      works = works.where((work) => _remoteMatches(work, _search)).toList();
-    }
+    final byId = {for (final work in _works) work.id: work};
+    var works = LibraryWorkSearch.apply(
+      _works.map(_remoteSummary),
+      _query,
+    ).map((work) => byId[work.id]!).toList();
     if (_selectedGroup case final group?) {
       works = works
           .where((work) => _remoteGroupValues(work).contains(group))
           .toList();
     }
-    works = [...works]..sort(_compareRemoteWorks);
     final groups = _remoteGroups(works);
     return CustomScrollView(
       slivers: [
@@ -744,9 +747,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
             child: SearchBar(
+              controller: _searchController,
               leading: const Icon(Icons.search),
               hintText: 'Titel, Person oder Serie …',
-              onChanged: (value) => setState(() => _search = value),
+              onChanged: (value) =>
+                  setState(() => _query = _query.copyWith(text: value)),
             ),
           ),
         ),
@@ -771,6 +776,44 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                   selected: {_layout},
                   onSelectionChanged: (value) =>
                       setState(() => _layout = value.first),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filledTonal(
+                  onPressed: _showRemoteFilters,
+                  tooltip: 'Filter kombinieren',
+                  icon: Badge(
+                    isLabelVisible: _query.hasFilters,
+                    child: const Icon(Icons.filter_list),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                MenuAnchor(
+                  builder: (context, controller, child) => IconButton(
+                    onPressed: controller.isOpen
+                        ? controller.close
+                        : controller.open,
+                    tooltip: 'Gespeicherte Ansichten',
+                    icon: const Icon(Icons.bookmarks_outlined),
+                  ),
+                  menuChildren: [
+                    MenuItemButton(
+                      onPressed: _saveRemoteView,
+                      leadingIcon: const Icon(Icons.bookmark_add_outlined),
+                      child: const Text('Aktuelle Ansicht speichern'),
+                    ),
+                    for (final view in _savedViews)
+                      MenuItemButton(
+                        onPressed: () => _applyRemoteView(view),
+                        leadingIcon: const Icon(Icons.bookmark_outline),
+                        child: Text(view.name),
+                      ),
+                    if (_savedViews.isNotEmpty)
+                      MenuItemButton(
+                        onPressed: _manageRemoteViews,
+                        leadingIcon: const Icon(Icons.edit_outlined),
+                        child: const Text('Ansichten verwalten'),
+                      ),
+                  ],
                 ),
                 const SizedBox(width: 8),
                 DropdownButton<_RemoteGrouping>(
@@ -799,21 +842,38 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                   ],
                 ),
                 const SizedBox(width: 8),
-                DropdownButton<_RemoteSort>(
-                  value: _sort,
-                  onChanged: (value) => setState(() => _sort = value!),
+                DropdownButton<LibraryWorkSort>(
+                  value: _query.sort,
+                  onChanged: (value) =>
+                      setState(() => _query = _query.copyWith(sort: value!)),
                   items: const [
                     DropdownMenuItem(
-                      value: _RemoteSort.title,
+                      value: LibraryWorkSort.title,
                       child: Text('Titel A–Z'),
                     ),
                     DropdownMenuItem(
-                      value: _RemoteSort.author,
+                      value: LibraryWorkSort.author,
                       child: Text('Autor A–Z'),
                     ),
                     DropdownMenuItem(
-                      value: _RemoteSort.series,
+                      value: LibraryWorkSort.series,
                       child: Text('Serie'),
+                    ),
+                    DropdownMenuItem(
+                      value: LibraryWorkSort.recentlyAdded,
+                      child: Text('Zuletzt hinzugefügt'),
+                    ),
+                    DropdownMenuItem(
+                      value: LibraryWorkSort.recentlyListened,
+                      child: Text('Zuletzt gehört'),
+                    ),
+                    DropdownMenuItem(
+                      value: LibraryWorkSort.progress,
+                      child: Text('Fortschritt'),
+                    ),
+                    DropdownMenuItem(
+                      value: LibraryWorkSort.duration,
+                      child: Text('Dauer'),
                     ),
                   ],
                 ),
@@ -830,15 +890,18 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 children: [
                   ChoiceChip(
                     label: const Text('Alle'),
-                    selected: _selectedKind == null,
-                    onSelected: (_) => setState(() => _selectedKind = null),
+                    selected: _query.kinds.isEmpty,
+                    onSelected: (_) =>
+                        setState(() => _query = _query.copyWith(kinds: {})),
                   ),
                   const SizedBox(width: 8),
                   for (final kind in kinds) ...[
                     ChoiceChip(
                       label: Text(_kindLabel(kind)),
-                      selected: _selectedKind == kind,
-                      onSelected: (_) => setState(() => _selectedKind = kind),
+                      selected: _query.kinds.contains(kind),
+                      onSelected: (_) => setState(
+                        () => _query = _query.copyWith(kinds: {kind}),
+                      ),
                     ),
                     const SizedBox(width: 8),
                   ],
@@ -1086,41 +1149,288 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     }
   }
 
-  bool _remoteMatches(FundusRemoteWork work, String query) {
-    final needle = _normalized(query);
-    final haystack = _normalized(
-      [
-        work.title,
-        ...work.authors,
-        ...work.narrators,
-        if (work.series != null) work.series!,
-      ].join(' '),
+  LibraryWorkSummary _remoteSummary(FundusRemoteWork work) {
+    final server = _selectedServer;
+    final library = _selectedLibrary;
+    final offline =
+        server != null &&
+        library != null &&
+        _offlineKeys.contains(_offlineKey(server, library, work));
+    return LibraryWorkSummary(
+      id: work.id,
+      kind: work.kind,
+      title: work.title,
+      author: work.authors.firstOrNull ?? 'Unbekannt',
+      authors: work.authors,
+      fileCount: work.fileCount,
+      addedAt: work.addedAt ?? DateTime.fromMillisecondsSinceEpoch(0),
+      series: work.series,
+      seriesSequence: work.seriesSequence?.toDouble(),
+      language: work.language,
+      subtitle: work.subtitle,
+      description: work.description,
+      narrators: work.narrators,
+      publisher: work.publisher,
+      publishedYear: work.publishedYear,
+      progressPosition: work.progressPosition,
+      progressDuration: work.progressDuration,
+      progressTrackIndex: work.progressTrackIndex,
+      progressFinished: work.progressFinished,
+      tags: work.tags,
+      lastListenedAt: work.lastListenedAt,
+      offline: offline,
     );
-    if (haystack.contains(needle)) return true;
-    var index = 0;
-    for (final unit in haystack.codeUnits) {
-      if (index < needle.length && unit == needle.codeUnitAt(index)) index++;
-    }
-    return index == needle.length;
   }
 
-  static String _normalized(String value) =>
-      value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9äöüß]+'), ' ').trim();
+  Future<void> _showRemoteFilters() async {
+    var progress = _query.progress;
+    var offlineOnly = _query.offlineOnly;
+    var languages = {..._query.languages};
+    var authors = {..._query.authors};
+    var narrators = {..._query.narrators};
+    var series = {..._query.series};
+    var tags = {..._query.tags};
+    final result = await showDialog<LibraryWorkQuery>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          Set<String> values(Iterable<String?> source) => source
+              .whereType<String>()
+              .map((value) => value.trim())
+              .where((value) => value.isNotEmpty)
+              .toSet();
+          Widget choices(
+            String title,
+            Set<String> available,
+            Set<String> selected,
+          ) {
+            final sorted = available.toList()
+              ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+            if (sorted.isEmpty) return const SizedBox.shrink();
+            return Padding(
+              padding: const EdgeInsets.only(top: 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    children: [
+                      for (final value in sorted)
+                        FilterChip(
+                          label: Text(value),
+                          selected: selected.contains(value),
+                          onSelected: (_) => setDialogState(() {
+                            selected.contains(value)
+                                ? selected.remove(value)
+                                : selected.add(value);
+                          }),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          }
 
-  int _compareRemoteWorks(FundusRemoteWork left, FundusRemoteWork right) {
-    String value(FundusRemoteWork work) => switch (_sort) {
-      _RemoteSort.title => work.title,
-      _RemoteSort.author => work.authors.firstOrNull ?? work.title,
-      _RemoteSort.series => work.series ?? work.title,
-    };
-    final compared = value(
-      left,
-    ).toLowerCase().compareTo(value(right).toLowerCase());
-    if (compared != 0) return compared;
-    final sequence = (left.seriesSequence ?? double.infinity).compareTo(
-      right.seriesSequence ?? double.infinity,
+          return AlertDialog(
+            title: const Text('Netzwerkbibliothek filtern'),
+            content: SizedBox(
+              width: 620,
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    DropdownButtonFormField<LibraryProgressFilter>(
+                      initialValue: progress,
+                      decoration: const InputDecoration(
+                        labelText: 'Hörstatus',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: LibraryProgressFilter.any,
+                          child: Text('Alle'),
+                        ),
+                        DropdownMenuItem(
+                          value: LibraryProgressFilter.notStarted,
+                          child: Text('Nicht begonnen'),
+                        ),
+                        DropdownMenuItem(
+                          value: LibraryProgressFilter.inProgress,
+                          child: Text('Begonnen'),
+                        ),
+                        DropdownMenuItem(
+                          value: LibraryProgressFilter.finished,
+                          child: Text('Beendet'),
+                        ),
+                      ],
+                      onChanged: (value) =>
+                          setDialogState(() => progress = value!),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Nur heruntergeladene Medien'),
+                      value: offlineOnly,
+                      onChanged: (value) =>
+                          setDialogState(() => offlineOnly = value),
+                    ),
+                    choices(
+                      'Sprache',
+                      values(_works.map((work) => work.language)),
+                      languages,
+                    ),
+                    choices(
+                      'Autor',
+                      values(_works.expand((work) => work.authors)),
+                      authors,
+                    ),
+                    choices(
+                      'Sprecher',
+                      values(_works.expand((work) => work.narrators)),
+                      narrators,
+                    ),
+                    choices(
+                      'Serie',
+                      values(_works.map((work) => work.series)),
+                      series,
+                    ),
+                    choices(
+                      'Tags',
+                      values(_works.expand((work) => work.tags)),
+                      tags,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(
+                  context,
+                  _query.copyWith(
+                    progress: LibraryProgressFilter.any,
+                    offlineOnly: false,
+                    languages: {},
+                    authors: {},
+                    narrators: {},
+                    series: {},
+                    tags: {},
+                  ),
+                ),
+                child: const Text('Zurücksetzen'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(
+                  context,
+                  _query.copyWith(
+                    progress: progress,
+                    offlineOnly: offlineOnly,
+                    languages: languages,
+                    authors: authors,
+                    narrators: narrators,
+                    series: series,
+                    tags: tags,
+                  ),
+                ),
+                child: const Text('Anwenden'),
+              ),
+            ],
+          );
+        },
+      ),
     );
-    return sequence != 0 ? sequence : left.title.compareTo(right.title);
+    if (result != null && mounted) setState(() => _query = result);
+  }
+
+  Future<void> _saveRemoteView() async {
+    final server = _selectedServer;
+    final library = _selectedLibrary;
+    if (server == null || library == null) return;
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Ansicht speichern'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Name'),
+          onSubmitted: (value) => Navigator.pop(context, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Speichern'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.isEmpty || !mounted) return;
+    final views = await _savedViewStore.save(
+      server.id,
+      library.id,
+      name,
+      _query,
+    );
+    if (mounted) setState(() => _savedViews = views);
+  }
+
+  void _applyRemoteView(LibrarySavedView view) => setState(() {
+    _query = view.query;
+    _searchController.text = view.query.text;
+    _selectedGroup = null;
+  });
+
+  Future<void> _manageRemoteViews() async {
+    final server = _selectedServer;
+    final library = _selectedLibrary;
+    if (server == null || library == null) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Gespeicherte Ansichten'),
+          content: SizedBox(
+            width: 460,
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                for (final view in _savedViews)
+                  ListTile(
+                    title: Text(view.name),
+                    trailing: IconButton(
+                      tooltip: 'Ansicht löschen',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () async {
+                        final views = await _savedViewStore.delete(
+                          server.id,
+                          library.id,
+                          view.id,
+                        );
+                        if (!mounted) return;
+                        setState(() => _savedViews = views);
+                        setDialogState(() {});
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Fertig'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   List<String> _remoteGroupValues(FundusRemoteWork work) => switch (_grouping) {

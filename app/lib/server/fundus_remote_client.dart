@@ -249,6 +249,9 @@ final class FundusRemoteWork {
     this.progressDuration,
     this.progressTrackIndex,
     this.progressFinished = false,
+    this.tags = const [],
+    this.addedAt,
+    this.lastListenedAt,
   });
 
   final String id;
@@ -269,6 +272,9 @@ final class FundusRemoteWork {
   final Duration? progressDuration;
   final int? progressTrackIndex;
   final bool progressFinished;
+  final List<String> tags;
+  final DateTime? addedAt;
+  final DateTime? lastListenedAt;
 }
 
 final class FundusRemoteTrack {
@@ -613,6 +619,13 @@ final class FundusRemoteClient {
                 ? (item['progress'] as Map)['track_index'] as int
                 : null,
             progressFinished: (item['progress'] as Map?)?['finished'] == true,
+            tags: (item['tags'] as List? ?? const [])
+                .whereType<String>()
+                .toList(growable: false),
+            addedAt: DateTime.tryParse('${item['added_at'] ?? ''}'),
+            lastListenedAt: DateTime.tryParse(
+              '${item['last_listened_at'] ?? ''}',
+            ),
           ),
     ];
   }

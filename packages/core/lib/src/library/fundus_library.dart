@@ -12,6 +12,7 @@ import '../model/fundus_id.dart';
 import '../model/library_configuration.dart';
 import '../model/library_manifest.dart';
 import '../model/library_playlist.dart';
+import '../model/library_saved_view.dart';
 import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
 import '../scan/library_scanner.dart';
@@ -129,6 +130,78 @@ final class FundusLibrary {
   List<LibraryWorkSummary> searchWorks([
     LibraryWorkQuery query = const LibraryWorkQuery(),
   ]) => LibraryWorkSearch.apply(listWorks(), query);
+
+  Future<List<LibrarySavedView>> loadSavedViews() async {
+    final file = File(
+      p.join(root.path, metadataDirectoryName, 'saved_views.json'),
+    );
+    if (!await file.exists()) return const [];
+    try {
+      final value = jsonDecode(await file.readAsString());
+      if (value is! List) return const [];
+      final views = value
+          .map(LibrarySavedView.fromJson)
+          .whereType<LibrarySavedView>()
+          .toList();
+      views.sort(
+        (left, right) =>
+            left.name.toLowerCase().compareTo(right.name.toLowerCase()),
+      );
+      return views;
+    } on FileSystemException {
+      return const [];
+    } on FormatException {
+      return const [];
+    }
+  }
+
+  Future<List<LibrarySavedView>> saveView(
+    String name,
+    LibraryWorkQuery query,
+  ) async {
+    _ensureWritable();
+    final normalized = name.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError('Der Name darf nicht leer sein.');
+    }
+    final views = await loadSavedViews();
+    final existing = views
+        .where((view) => view.name.toLowerCase() == normalized.toLowerCase())
+        .firstOrNull;
+    final saved = LibrarySavedView(
+      id: existing?.id ?? FundusId.generate(),
+      name: normalized,
+      query: query,
+      updatedAt: DateTime.now().toUtc(),
+    );
+    final updated = [...views.where((view) => view.id != saved.id), saved]
+      ..sort(
+        (left, right) =>
+            left.name.toLowerCase().compareTo(right.name.toLowerCase()),
+      );
+    await _writeSavedViews(updated);
+    return updated;
+  }
+
+  Future<List<LibrarySavedView>> deleteSavedView(String id) async {
+    _ensureWritable();
+    final updated = (await loadSavedViews())
+        .where((view) => view.id != id)
+        .toList(growable: false);
+    await _writeSavedViews(updated);
+    return updated;
+  }
+
+  Future<void> _writeSavedViews(List<LibrarySavedView> views) async {
+    final file = File(
+      p.join(root.path, metadataDirectoryName, 'saved_views.json'),
+    );
+    await file.parent.create(recursive: true);
+    await file.writeAsString(
+      '${const JsonEncoder.withIndent('  ').convert(views.map((view) => view.toJson()).toList())}\n',
+      flush: true,
+    );
+  }
 
   void deleteMissingWork(String workId) {
     _ensureWritable();
@@ -611,6 +684,9 @@ final class FundusLibrary {
       progressFinished: work.progressFinished,
       status: work.status,
       metadataOrigins: work.metadataOrigins,
+      tags: work.tags,
+      lastListenedAt: work.lastListenedAt,
+      offline: work.offline,
     );
   }
 

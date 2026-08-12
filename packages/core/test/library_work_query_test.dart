@@ -12,6 +12,12 @@ void main() {
       seriesSequence: 1,
       fileCount: 2,
       addedAt: DateTime(2026, 1, 1),
+      language: 'de',
+      narrators: const ['Christian Brückner'],
+      tags: const ['Abenteuer', 'Western'],
+      progressPosition: const Duration(hours: 2),
+      progressDuration: const Duration(hours: 10),
+      lastListenedAt: DateTime(2026, 3, 1),
     ),
     LibraryWorkSummary(
       id: '2',
@@ -20,6 +26,12 @@ void main() {
       author: 'Karl May',
       fileCount: 1,
       addedAt: DateTime(2026, 2, 1),
+      language: 'en',
+      tags: const ['Abenteuer'],
+      progressFinished: true,
+      progressPosition: const Duration(hours: 4),
+      progressDuration: const Duration(hours: 4),
+      lastListenedAt: DateTime(2026, 2, 1),
     ),
   ];
 
@@ -63,5 +75,64 @@ void main() {
     );
 
     expect(result.map((work) => work.id), ['1']);
+  });
+
+  test('combines progress, language, narrator, series and tags', () {
+    final result = LibraryWorkSearch.apply(
+      works,
+      const LibraryWorkQuery(
+        progress: LibraryProgressFilter.inProgress,
+        languages: {'de'},
+        narrators: {'Christian Brückner'},
+        series: {'Winnetou'},
+        tags: {'Abenteuer', 'Western'},
+      ),
+    );
+
+    expect(result.map((work) => work.id), ['1']);
+  });
+
+  test('sorts by latest playback and progress', () {
+    expect(
+      LibraryWorkSearch.apply(
+        works,
+        const LibraryWorkQuery(sort: LibraryWorkSort.recentlyListened),
+      ).map((work) => work.id),
+      ['1', '2'],
+    );
+    expect(
+      LibraryWorkSearch.apply(
+        works,
+        const LibraryWorkQuery(sort: LibraryWorkSort.progress),
+      ).map((work) => work.id),
+      ['2', '1'],
+    );
+  });
+
+  test('query round-trips as a saved view', () {
+    const query = LibraryWorkQuery(
+      text: 'Karl',
+      kinds: {'audiobook'},
+      sort: LibraryWorkSort.duration,
+      progress: LibraryProgressFilter.finished,
+      offlineOnly: true,
+      languages: {'de'},
+      authors: {'Karl May'},
+      narrators: {'Christian Brückner'},
+      series: {'Winnetou'},
+      tags: {'Abenteuer'},
+    );
+
+    final restored = LibraryWorkQuery.fromJson(query.toJson());
+    expect(restored.text, query.text);
+    expect(restored.kinds, query.kinds);
+    expect(restored.sort, query.sort);
+    expect(restored.progress, query.progress);
+    expect(restored.offlineOnly, isTrue);
+    expect(restored.languages, query.languages);
+    expect(restored.authors, query.authors);
+    expect(restored.narrators, query.narrators);
+    expect(restored.series, query.series);
+    expect(restored.tags, query.tags);
   });
 }
