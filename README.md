@@ -57,6 +57,8 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - manueller Hörbuch-Metadateneditor für Titel, mehrere Autoren und Sprecher,
   Serie/Band, Sprache, Verlag/Jahr und Beschreibung; Änderungen werden ohne
   Eingriff in die Mediendatei portabel in `_fundus/meta.yaml` gespiegelt
+- Quelle und Änderungszeit pro Metadatenfeld; manuelle Angaben bleiben bei
+  späteren Scans vor ABS-, Sidecar-, Datei- und Ordnerwerten geschützt
 - portabler Sidecar-Spiegel unter `_fundus/`, der einen Index-Neuaufbau überlebt
 - stabile `work_id` und `base_kind` im Sidecar; Verschieben und Index-Neuaufbau
   erhalten Werkidentität, Resume, Tags, Notizen und Lesezeichen

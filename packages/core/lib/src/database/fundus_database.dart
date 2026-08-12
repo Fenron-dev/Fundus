@@ -41,6 +41,7 @@ final class LibraryWorkSummary {
     this.progressTrackIndex,
     this.progressFinished = false,
     this.status = 'available',
+    this.metadataOrigins = const {},
   });
 
   final String id;
@@ -69,8 +70,16 @@ final class LibraryWorkSummary {
   final int? progressTrackIndex;
   final bool progressFinished;
   final String status;
+  final Map<String, WorkMetadataOrigin> metadataOrigins;
 
   bool get available => status == 'available';
+}
+
+final class WorkMetadataOrigin {
+  const WorkMetadataOrigin({required this.source, required this.updatedAt});
+
+  final WorkMetadataSource source;
+  final DateTime updatedAt;
 }
 
 final class FundusDatabase {
@@ -210,6 +219,7 @@ final class FundusDatabase {
         sourcePath: '${identity.author}/$series',
         title: series,
         metadata: {'author': identity.author},
+        source: candidate.metadataSource,
       );
     }
     final workId = _upsertWork(
@@ -223,6 +233,7 @@ final class FundusDatabase {
         'author': identity.author,
         ...?candidate.absMetadata?.toDatabaseMetadata(),
       },
+      source: candidate.metadataSource,
       preferredId: preferredWorkId,
     );
     final previousTracks = _database.select(
@@ -340,6 +351,9 @@ final class FundusDatabase {
     String? description,
     String? publisher,
     int? publishedYear,
+    WorkMetadataSource source = WorkMetadataSource.user,
+    DateTime? updatedAt,
+    Map<String, WorkMetadataOrigin> fieldOrigins = const {},
   }) {
     final normalizedTitle = title.trim();
     final normalizedAuthors = authors
@@ -359,27 +373,49 @@ final class FundusDatabase {
     final metadata = decoded is Map<String, dynamic>
         ? Map<String, Object?>.from(decoded)
         : <String, Object?>{};
+    final origins = _metadataOrigins(metadata);
+    final changedAt = updatedAt ?? DateTime.now().toUtc();
+    bool accepts(String key) {
+      final incoming = fieldOrigins[key]?.source ?? source;
+      final current = origins[key]?.source;
+      return current == null ||
+          _metadataPriority(incoming) >= _metadataPriority(current);
+    }
+
     void write(String key, Object? value) {
+      if (!accepts(key)) return;
       if (value == null || value is String && value.trim().isEmpty) {
         metadata.remove(key);
       } else {
         metadata[key] = value is String ? value.trim() : value;
       }
+      origins[key] =
+          fieldOrigins[key] ??
+          WorkMetadataOrigin(source: source, updatedAt: changedAt);
     }
 
-    metadata['author'] = normalizedAuthors.first;
-    metadata['authors'] = normalizedAuthors;
+    write('author', normalizedAuthors.first);
+    write('authors', normalizedAuthors);
     write('subtitle', subtitle);
-    metadata['narrators'] = narrators
-        .map((value) => value.trim())
-        .where((value) => value.isNotEmpty)
-        .toSet()
-        .toList(growable: false);
+    write(
+      'narrators',
+      narrators
+          .map((value) => value.trim())
+          .where((value) => value.isNotEmpty)
+          .toSet()
+          .toList(growable: false),
+    );
     write('language', language);
     write('description', description);
     write('publisher', publisher);
     write('published_year', publishedYear);
-    final normalizedSeries = series?.trim();
+    write('title', normalizedTitle);
+    write('series', series);
+    write('series_sequence', seriesSequence);
+    metadata['_field_sources'] = _encodeMetadataOrigins(origins);
+    final storedTitle = metadata['title'] as String? ?? normalizedTitle;
+    final storedSeries = metadata['series'] as String?;
+    final storedSequence = (metadata['series_sequence'] as num?)?.toDouble();
     _database.execute(
       '''
       UPDATE works SET title = ?, sort_title = ?, series_name = ?,
@@ -387,20 +423,20 @@ final class FundusDatabase {
       WHERE id = ?
       ''',
       [
-        normalizedTitle,
-        normalizedTitle.toLowerCase(),
-        normalizedSeries?.isEmpty ?? true ? null : normalizedSeries,
-        seriesSequence,
+        storedTitle,
+        storedTitle.toLowerCase(),
+        storedSeries,
+        storedSequence,
         jsonEncode(metadata),
         workId,
       ],
     );
     final searchBody = [
-      ...normalizedAuthors,
-      ?normalizedSeries,
-      ...narrators,
-      ?subtitle,
-      ?description,
+      ..._metadataStrings(metadata['authors']),
+      ?storedSeries,
+      ..._metadataStrings(metadata['narrators']),
+      ?metadata['subtitle'] as String?,
+      ?metadata['description'] as String?,
     ].join(' ');
     final searchRows = _database.select(
       'SELECT 1 FROM search_index WHERE entity_type = ? AND entity_id = ?',
@@ -410,13 +446,13 @@ final class FundusDatabase {
       _database.execute(
         'INSERT INTO search_index (entity_type, entity_id, title, body, tags) '
         'VALUES (?, ?, ?, ?, ?)',
-        ['work', workId, normalizedTitle, searchBody, ''],
+        ['work', workId, storedTitle, searchBody, ''],
       );
     } else {
       _database.execute(
         'UPDATE search_index SET title = ?, body = ? '
         'WHERE entity_type = ? AND entity_id = ?',
-        [normalizedTitle, searchBody, 'work', workId],
+        [storedTitle, searchBody, 'work', workId],
       );
     }
   }
@@ -483,6 +519,7 @@ final class FundusDatabase {
             progressTrackIndex: row['progress_track_index'] as int?,
             progressFinished: (row['progress_finished'] as int?) == 1,
             status: row['status'] as String,
+            metadataOrigins: _metadataOrigins(metadata),
           );
         })
         .toList(growable: false);
@@ -491,6 +528,50 @@ final class FundusDatabase {
   static List<String> _metadataStrings(Object? value) => value is List
       ? value.whereType<String>().toList(growable: false)
       : const [];
+
+  static int _metadataPriority(WorkMetadataSource source) => switch (source) {
+    WorkMetadataSource.filename => 1,
+    WorkMetadataSource.embedded => 2,
+    WorkMetadataSource.sidecar => 3,
+    WorkMetadataSource.abs => 3,
+    WorkMetadataSource.online => 4,
+    WorkMetadataSource.user => 5,
+  };
+
+  static Map<String, WorkMetadataOrigin> _metadataOrigins(
+    Map<String, Object?> metadata,
+  ) {
+    final raw = metadata['_field_sources'];
+    if (raw is! Map) return {};
+    final result = <String, WorkMetadataOrigin>{};
+    for (final entry in raw.entries) {
+      if (entry.key is! String || entry.value is! Map) continue;
+      final value = entry.value as Map;
+      final source = WorkMetadataSource.values
+          .where((candidate) => candidate.name == value['source'])
+          .firstOrNull;
+      final updatedAt = DateTime.tryParse(
+        value['updated_at']?.toString() ?? '',
+      );
+      if (source != null && updatedAt != null) {
+        result[entry.key as String] = WorkMetadataOrigin(
+          source: source,
+          updatedAt: updatedAt.toUtc(),
+        );
+      }
+    }
+    return result;
+  }
+
+  static Map<String, Object?> _encodeMetadataOrigins(
+    Map<String, WorkMetadataOrigin> origins,
+  ) => {
+    for (final entry in origins.entries)
+      entry.key: {
+        'source': entry.value.source.name,
+        'updated_at': entry.value.updatedAt.toUtc().toIso8601String(),
+      },
+  };
 
   static Duration? _seconds(Object? value) {
     if (value is! num || !value.isFinite || value < 0) return null;
@@ -979,7 +1060,12 @@ final class FundusDatabase {
     return metadata['language'] as String?;
   }
 
-  void setWorkLanguage(String workId, String? language) {
+  void setWorkLanguage(
+    String workId,
+    String? language, {
+    required WorkMetadataSource source,
+    DateTime? updatedAt,
+  }) {
     final rows = _database.select(
       'SELECT metadata_json FROM works WHERE id = ?',
       [workId],
@@ -988,12 +1074,23 @@ final class FundusDatabase {
     final metadata =
         jsonDecode(rows.first['metadata_json'] as String)
             as Map<String, dynamic>;
+    final origins = _metadataOrigins(metadata);
+    final current = origins['language']?.source;
+    if (current != null &&
+        _metadataPriority(current) > _metadataPriority(source)) {
+      return;
+    }
     final normalized = language?.trim();
     if (normalized == null || normalized.isEmpty) {
       metadata.remove('language');
     } else {
       metadata['language'] = normalized;
     }
+    origins['language'] = WorkMetadataOrigin(
+      source: source,
+      updatedAt: (updatedAt ?? DateTime.now()).toUtc(),
+    );
+    metadata['_field_sources'] = _encodeMetadataOrigins(origins);
     _database.execute('UPDATE works SET metadata_json = ? WHERE id = ?', [
       jsonEncode(metadata),
       workId,
@@ -1277,6 +1374,7 @@ final class FundusDatabase {
     String? seriesName,
     double? seriesSequence,
     String? preferredId,
+    WorkMetadataSource source = WorkMetadataSource.filename,
   }) {
     final existing = _database.select(
       'SELECT id FROM works WHERE source_path = ?',
@@ -1293,15 +1391,49 @@ final class FundusDatabase {
     final mergedMetadata = <String, Object?>{};
     if (targetId != null) {
       final previous = _database.select(
-        'SELECT metadata_json FROM works WHERE id = ?',
+        'SELECT title, series_name, series_sequence, metadata_json '
+        'FROM works WHERE id = ?',
         [targetId],
       );
       if (previous.isNotEmpty) {
         final decoded = jsonDecode(previous.first['metadata_json'] as String);
         if (decoded is Map<String, dynamic>) mergedMetadata.addAll(decoded);
+        mergedMetadata.putIfAbsent('title', () => previous.first['title']);
+        mergedMetadata.putIfAbsent(
+          'series',
+          () => previous.first['series_name'],
+        );
+        mergedMetadata.putIfAbsent(
+          'series_sequence',
+          () => previous.first['series_sequence'],
+        );
       }
     }
-    mergedMetadata.addAll(metadata);
+    final origins = _metadataOrigins(mergedMetadata);
+    final changedAt = DateTime.now().toUtc();
+    final incoming = <String, Object?>{
+      ...metadata,
+      'title': title,
+      'series': ?seriesName,
+      'series_sequence': ?seriesSequence,
+    };
+    for (final entry in incoming.entries) {
+      final current = origins[entry.key]?.source;
+      if (current != null &&
+          _metadataPriority(current) > _metadataPriority(source)) {
+        continue;
+      }
+      mergedMetadata[entry.key] = entry.value;
+      origins[entry.key] = WorkMetadataOrigin(
+        source: source,
+        updatedAt: changedAt,
+      );
+    }
+    mergedMetadata['_field_sources'] = _encodeMetadataOrigins(origins);
+    final resolvedTitle = mergedMetadata['title'] as String? ?? title;
+    final resolvedSeries = mergedMetadata['series'] as String?;
+    final resolvedSequence = (mergedMetadata['series_sequence'] as num?)
+        ?.toDouble();
     if (preferred?.isNotEmpty ?? false) {
       if (existing.isNotEmpty && existing.first['id'] != preferredId) {
         _mergeWorkIntoPreferred(existing.first['id'] as String, preferredId!);
@@ -1317,10 +1449,10 @@ final class FundusDatabase {
           kind,
           sourcePath,
           parentId,
-          title,
-          title.toLowerCase(),
-          seriesName,
-          seriesSequence,
+          resolvedTitle,
+          resolvedTitle.toLowerCase(),
+          resolvedSeries,
+          resolvedSequence,
           jsonEncode(mergedMetadata),
           preferredId,
         ],
@@ -1351,10 +1483,10 @@ final class FundusDatabase {
         kind,
         sourcePath,
         parentId,
-        title,
-        title.toLowerCase(),
-        seriesName,
-        seriesSequence,
+        resolvedTitle,
+        resolvedTitle.toLowerCase(),
+        resolvedSeries,
+        resolvedSequence,
         jsonEncode(mergedMetadata),
         DateTime.now().millisecondsSinceEpoch,
       ],

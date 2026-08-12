@@ -3,6 +3,8 @@ import 'package:path/path.dart' as p;
 import 'abs_metadata.dart';
 import '../scan/library_scanner.dart';
 
+enum WorkMetadataSource { filename, embedded, abs, sidecar, online, user }
+
 final class AbsBookIdentity {
   const AbsBookIdentity({
     required this.author,
@@ -25,6 +27,7 @@ final class AudiobookImportCandidate {
     required this.coverFiles,
     this.usesFallbackIdentity = false,
     this.absMetadata,
+    this.metadataSource = WorkMetadataSource.filename,
   });
 
   final AbsBookIdentity identity;
@@ -33,10 +36,12 @@ final class AudiobookImportCandidate {
   final List<ScannedFile> coverFiles;
   final bool usesFallbackIdentity;
   final AbsAudiobookMetadata? absMetadata;
+  final WorkMetadataSource metadataSource;
 
   AudiobookImportCandidate copyWith({
     AbsBookIdentity? identity,
     AbsAudiobookMetadata? absMetadata,
+    WorkMetadataSource? metadataSource,
   }) => AudiobookImportCandidate(
     identity: identity ?? this.identity,
     directory: directory,
@@ -44,6 +49,7 @@ final class AudiobookImportCandidate {
     coverFiles: coverFiles,
     usesFallbackIdentity: usesFallbackIdentity,
     absMetadata: absMetadata ?? this.absMetadata,
+    metadataSource: metadataSource ?? this.metadataSource,
   );
 }
 

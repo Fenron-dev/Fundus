@@ -3830,36 +3830,58 @@ class _WorkMetadataDialogState extends State<_WorkMetadataDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _field(_title, 'Titel', required: true),
-            _field(_subtitle, 'Untertitel'),
+            _field(_title, 'Titel', required: true, originKey: 'title'),
+            _field(_subtitle, 'Untertitel', originKey: 'subtitle'),
             _field(
               _authors,
               'Autor(en)',
               required: true,
+              originKey: 'authors',
               hint: 'Mehrere mit Komma oder neuer Zeile trennen',
             ),
             Row(
               children: [
-                Expanded(child: _field(_series, 'Serie')),
+                Expanded(child: _field(_series, 'Serie', originKey: 'series')),
                 const SizedBox(width: 12),
-                SizedBox(width: 120, child: _field(_sequence, 'Band')),
+                SizedBox(
+                  width: 120,
+                  child: _field(
+                    _sequence,
+                    'Band',
+                    originKey: 'series_sequence',
+                  ),
+                ),
               ],
             ),
             _field(
               _narrators,
               'Sprecher',
+              originKey: 'narrators',
               hint: 'Mehrere mit Komma oder neuer Zeile trennen',
             ),
             Row(
               children: [
-                Expanded(child: _field(_language, 'Sprache')),
+                Expanded(
+                  child: _field(_language, 'Sprache', originKey: 'language'),
+                ),
                 const SizedBox(width: 12),
-                Expanded(child: _field(_publisher, 'Verlag')),
+                Expanded(
+                  child: _field(_publisher, 'Verlag', originKey: 'publisher'),
+                ),
                 const SizedBox(width: 12),
-                SizedBox(width: 110, child: _field(_year, 'Jahr')),
+                SizedBox(
+                  width: 110,
+                  child: _field(_year, 'Jahr', originKey: 'published_year'),
+                ),
               ],
             ),
-            _field(_description, 'Beschreibung', minLines: 4, maxLines: 10),
+            _field(
+              _description,
+              'Beschreibung',
+              originKey: 'description',
+              minLines: 4,
+              maxLines: 10,
+            ),
             if (_error case final error?) ...[
               const SizedBox(height: 8),
               Align(
@@ -3892,6 +3914,7 @@ class _WorkMetadataDialogState extends State<_WorkMetadataDialog> {
     String label, {
     bool required = false,
     String? hint,
+    String? originKey,
     int minLines = 1,
     int maxLines = 1,
   }) => Padding(
@@ -3903,10 +3926,32 @@ class _WorkMetadataDialogState extends State<_WorkMetadataDialog> {
       decoration: InputDecoration(
         labelText: required ? '$label *' : label,
         hintText: hint,
+        helperText: originKey == null ? null : _originLabel(originKey),
         border: const OutlineInputBorder(),
       ),
     ),
   );
+
+  String? _originLabel(String key) {
+    final origin = widget.work.metadataOrigins[key];
+    if (origin == null) return 'Quelle: bisher nicht erfasst';
+    final source = switch (origin.source) {
+      WorkMetadataSource.user => 'manuell',
+      WorkMetadataSource.online => 'Online-Abgleich',
+      WorkMetadataSource.sidecar => 'Fundus-Sidecar',
+      WorkMetadataSource.abs => 'Audiobookshelf',
+      WorkMetadataSource.embedded => 'Datei-Tags',
+      WorkMetadataSource.filename => 'Datei-/Ordnername',
+    };
+    final local = origin.updatedAt.toLocal();
+    final date =
+        '${local.day.toString().padLeft(2, '0')}.'
+        '${local.month.toString().padLeft(2, '0')}.'
+        '${local.year} '
+        '${local.hour.toString().padLeft(2, '0')}:'
+        '${local.minute.toString().padLeft(2, '0')}';
+    return 'Quelle: $source · $date';
+  }
 
   void _submit() {
     final authors = _splitPeople(_authors.text);

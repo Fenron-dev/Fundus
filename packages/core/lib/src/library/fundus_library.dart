@@ -427,7 +427,12 @@ final class FundusLibrary {
       portableIdentities[grouped.directory] = portable;
       final withAbsMetadata = await _withAbsMetadata(grouped);
       if (portable.identity case final identity?) {
-        candidates.add(withAbsMetadata.copyWith(identity: identity));
+        candidates.add(
+          withAbsMetadata.copyWith(
+            identity: identity,
+            metadataSource: WorkMetadataSource.sidecar,
+          ),
+        );
       } else if (withAbsMetadata.absMetadata == null &&
           grouped.usesFallbackIdentity) {
         candidates.add(await _withEmbeddedIdentity(withAbsMetadata));
@@ -504,6 +509,7 @@ final class FundusLibrary {
       if (metadata == null) return candidate;
       return candidate.copyWith(
         absMetadata: metadata,
+        metadataSource: WorkMetadataSource.abs,
         identity: AbsBookIdentity(
           author: metadata.author ?? candidate.identity.author,
           title: metadata.title ?? candidate.identity.title,
@@ -544,6 +550,7 @@ final class FundusLibrary {
           ? metadata.album ?? candidate.identity.title
           : metadata.title ?? metadata.album ?? candidate.identity.title;
       return candidate.copyWith(
+        metadataSource: WorkMetadataSource.embedded,
         identity: AbsBookIdentity(
           author:
               metadata.albumArtist ??
@@ -603,6 +610,7 @@ final class FundusLibrary {
       progressTrackIndex: work.progressTrackIndex,
       progressFinished: work.progressFinished,
       status: work.status,
+      metadataOrigins: work.metadataOrigins,
     );
   }
 
@@ -769,7 +777,27 @@ final class FundusLibrary {
     final work = listWorks().where((work) => work.id == workId).firstOrNull;
     if (work == null) return;
     await File(p.join(directory.path, 'meta.yaml')).writeAsString(
-      '${const JsonEncoder.withIndent('  ').convert({'format_version': 2, 'work_id': workId, 'base_kind': 'audiobook', 'custom_type': null, 'title': work.title, 'author': work.author, 'authors': work.authors, 'subtitle': work.subtitle, 'series': work.series, 'series_sequence': work.seriesSequence, 'narrators': work.narrators, 'language': work.language, 'description': work.description, 'publisher': work.publisher, 'published_year': work.publishedYear, 'tags': annotations.tags})}\n',
+      '${const JsonEncoder.withIndent('  ').convert({
+        'format_version': 3,
+        'work_id': workId,
+        'base_kind': 'audiobook',
+        'custom_type': null,
+        'title': work.title,
+        'author': work.author,
+        'authors': work.authors,
+        'subtitle': work.subtitle,
+        'series': work.series,
+        'series_sequence': work.seriesSequence,
+        'narrators': work.narrators,
+        'language': work.language,
+        'description': work.description,
+        'publisher': work.publisher,
+        'published_year': work.publishedYear,
+        'field_sources': {
+          for (final entry in work.metadataOrigins.entries) entry.key: {'source': entry.value.source.name, 'updated_at': entry.value.updatedAt.toUtc().toIso8601String()},
+        },
+        'tags': annotations.tags,
+      })}\n',
       flush: true,
     );
   }
@@ -819,6 +847,7 @@ final class FundusLibrary {
         if (title is String &&
             title.trim().isNotEmpty &&
             (author is String || authors is List)) {
+          final fieldOrigins = _readFieldOrigins(value['field_sources']);
           _database.updateWorkMetadata(
             workId: workId,
             title: title,
@@ -835,6 +864,9 @@ final class FundusLibrary {
             description: value['description'] as String?,
             publisher: value['publisher'] as String?,
             publishedYear: (value['published_year'] as num?)?.round(),
+            source: WorkMetadataSource.sidecar,
+            updatedAt: await metaFile.lastModified(),
+            fieldOrigins: fieldOrigins,
           );
         }
       }
@@ -873,6 +905,28 @@ final class FundusLibrary {
     }
   }
 
+  static Map<String, WorkMetadataOrigin> _readFieldOrigins(Object? value) {
+    if (value is! Map) return const {};
+    final result = <String, WorkMetadataOrigin>{};
+    for (final entry in value.entries) {
+      if (entry.key is! String || entry.value is! Map) continue;
+      final raw = entry.value as Map;
+      final sourceName = raw['source']?.toString();
+      WorkMetadataSource? source;
+      for (final candidate in WorkMetadataSource.values) {
+        if (candidate.name == sourceName) source = candidate;
+      }
+      final updatedAt = DateTime.tryParse(raw['updated_at']?.toString() ?? '');
+      if (source != null && updatedAt != null) {
+        result[entry.key as String] = WorkMetadataOrigin(
+          source: source,
+          updatedAt: updatedAt.toUtc(),
+        );
+      }
+    }
+    return result;
+  }
+
   Future<void> _importLanguage(
     AudiobookImportCandidate candidate,
     String workId,
@@ -882,14 +936,23 @@ final class FundusLibrary {
     if (await fundusMeta.exists()) {
       final value = loadYaml(await fundusMeta.readAsString());
       if (value is Map && value['language'] is String) {
-        _database.setWorkLanguage(workId, value['language'] as String);
+        _database.setWorkLanguage(
+          workId,
+          value['language'] as String,
+          source: WorkMetadataSource.sidecar,
+          updatedAt: await fundusMeta.lastModified(),
+        );
         return;
       }
     }
 
     final absLanguage = candidate.absMetadata?.language;
     if (absLanguage != null && absLanguage.trim().isNotEmpty) {
-      _database.setWorkLanguage(workId, absLanguage);
+      _database.setWorkLanguage(
+        workId,
+        absLanguage,
+        source: WorkMetadataSource.abs,
+      );
       return;
     }
 
@@ -906,7 +969,12 @@ final class FundusLibrary {
             ? nested
             : null;
         if (language != null && language.trim().isNotEmpty) {
-          _database.setWorkLanguage(workId, language);
+          _database.setWorkLanguage(
+            workId,
+            language,
+            source: WorkMetadataSource.sidecar,
+            updatedAt: await sourceFile.lastModified(),
+          );
           return;
         }
       }
@@ -919,7 +987,11 @@ final class FundusLibrary {
       final language =
           metadata.language ?? await extractor.extractLanguage(file);
       if (language == null || language.trim().isEmpty) continue;
-      _database.setWorkLanguage(workId, language);
+      _database.setWorkLanguage(
+        workId,
+        language,
+        source: WorkMetadataSource.embedded,
+      );
       return;
     }
   }

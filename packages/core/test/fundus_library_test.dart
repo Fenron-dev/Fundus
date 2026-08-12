@@ -375,9 +375,29 @@ void main() {
       expect(edited.narrators, ['Sprecher Eins', 'Sprecher Zwei']);
       expect(edited.language, 'de');
       expect(edited.description, 'Eine portable Beschreibung.');
+      expect(edited.metadataOrigins['title']?.source, WorkMetadataSource.user);
+      expect(
+        edited.metadataOrigins['narrators']?.source,
+        WorkMetadataSource.user,
+      );
+
+      await File('${book.path}/metadata.json').writeAsString(
+        jsonEncode({
+          'title': 'Späterer ABS-Titel',
+          'authors': ['Anderer ABS-Autor'],
+          'series': ['Andere ABS-Serie #9'],
+          'language': 'en',
+        }),
+      );
 
       await library.index().drain<void>();
       expect(library.listWorks().single.title, 'Manuell korrigierter Titel');
+      expect(library.listWorks().single.authors, [
+        'Erste Autorin',
+        'Zweiter Autor',
+      ]);
+      expect(library.listWorks().single.series, 'Neue Serie');
+      expect(library.listWorks().single.language, 'de');
       library.close();
 
       await File('${root.path}/.library/index.db').delete();
@@ -394,6 +414,15 @@ void main() {
       expect(restored.narrators, ['Sprecher Eins', 'Sprecher Zwei']);
       expect(restored.publisher, 'Testverlag');
       expect(restored.publishedYear, 2026);
+      expect(
+        restored.metadataOrigins['title']?.source,
+        WorkMetadataSource.user,
+      );
+      final sidecar = await File(
+        '${book.path}/_fundus/meta.yaml',
+      ).readAsString();
+      expect(sidecar, contains('"field_sources"'));
+      expect(sidecar, contains('"source": "user"'));
     },
   );
 
@@ -492,7 +521,7 @@ void main() {
       final metadata = await File(
         '${original.path}/_fundus/meta.yaml',
       ).readAsString();
-      expect(metadata, contains('"format_version": 2'));
+      expect(metadata, contains('"format_version": 3'));
       expect(metadata, contains('"work_id": "${originalWork.id}"'));
       expect(metadata, contains('"base_kind": "audiobook"'));
 
