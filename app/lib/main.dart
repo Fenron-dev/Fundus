@@ -10,6 +10,7 @@ import 'package:media_kit/media_kit.dart';
 
 import 'diagnostics/fundus_diagnostics.dart';
 import 'library/android_storage_access.dart';
+import 'library/document_file_opener.dart';
 import 'library/recent_library_store.dart';
 import 'library/security_scoped_bookmarks.dart';
 import 'playback/fundus_player_controller.dart';
@@ -3437,9 +3438,10 @@ class _DocumentHero extends StatelessWidget {
 }
 
 class _DocumentFilesPanel extends StatelessWidget {
-  const _DocumentFilesPanel({required this.files});
+  const _DocumentFilesPanel({required this.files, required this.onOpen});
 
   final List<LibraryPlaybackTrack> files;
+  final ValueChanged<LibraryPlaybackTrack> onOpen;
 
   @override
   Widget build(BuildContext context) => Card(
@@ -3456,6 +3458,8 @@ class _DocumentFilesPanel extends StatelessWidget {
             leading: Icon(_fileIcon(file.title)),
             title: Text(file.title),
             subtitle: Text(file.relativePath),
+            trailing: const Icon(Icons.open_in_new),
+            onTap: () => onOpen(file),
           ),
       ],
     ),
@@ -3799,8 +3803,20 @@ class _DetailPanelState extends State<_DetailPanel> {
           const SizedBox(height: 16),
           if (selectedWork.kind == 'audiobook')
             _AudioCompatibilityPanel(tracks: workFiles)
-          else
-            _DocumentFilesPanel(files: workFiles),
+          else ...[
+            if (workFiles.length == 1) ...[
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () => _openDocument(workFiles.single),
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('Datei öffnen'),
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
+            _DocumentFilesPanel(files: workFiles, onOpen: _openDocument),
+          ],
         ],
         if (selectedWork.kind == 'audiobook' &&
             widget.library != null &&
@@ -3944,6 +3960,17 @@ class _DetailPanelState extends State<_DetailPanel> {
         ),
       ],
     );
+  }
+
+  Future<void> _openDocument(LibraryPlaybackTrack file) async {
+    try {
+      await const DocumentFileOpener().open(file.absolutePath);
+    } on DocumentOpenException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
   }
 
   Future<void> _editMetadata(LibraryWorkSummary work) async {

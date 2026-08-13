@@ -64,6 +64,30 @@ class MainFlutterWindow: NSWindow {
       }
     }
 
+    let fileOpener = FlutterMethodChannel(
+      name: "dev.fundus/file_opener",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+    fileOpener.setMethodCallHandler { call, result in
+      guard call.method == "open" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard
+        let arguments = call.arguments as? [String: Any],
+        let path = arguments["path"] as? String,
+        FileManager.default.fileExists(atPath: path)
+      else {
+        result(FlutterError(
+          code: "missing_file",
+          message: "Die Datei ist nicht mehr vorhanden.",
+          details: nil
+        ))
+        return
+      }
+      result(NSWorkspace.shared.open(URL(fileURLWithPath: path)))
+    }
+
     super.awakeFromNib()
   }
 }

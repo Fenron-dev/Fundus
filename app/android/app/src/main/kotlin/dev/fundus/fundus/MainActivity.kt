@@ -7,9 +7,12 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
+import android.webkit.MimeTypeMap
+import androidx.core.content.FileProvider
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import com.ryanheise.audioservice.AudioServiceActivity
+import java.io.File
 
 class MainActivity : AudioServiceActivity() {
     private var pendingStorageResult: MethodChannel.Result? = null
@@ -28,6 +31,54 @@ class MainActivity : AudioServiceActivity() {
                 )
                 else -> result.notImplemented()
             }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            FILE_OPENER_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "open" -> openFile(call.argument<String>("path"), result)
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun openFile(path: String?, result: MethodChannel.Result) {
+        if (path.isNullOrBlank()) {
+            result.error("invalid_path", "Der Dateipfad fehlt.", null)
+            return
+        }
+        val file = File(path)
+        if (!file.isFile) {
+            result.error("missing_file", "Die Datei ist nicht mehr vorhanden.", null)
+            return
+        }
+        try {
+            val uri = FileProvider.getUriForFile(
+                this,
+                "$packageName.fileprovider",
+                file,
+            )
+            val extension = file.extension.lowercase()
+            val mimeType = MimeTypeMap.getSingleton()
+                .getMimeTypeFromExtension(extension) ?: "application/octet-stream"
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mimeType)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
+            }
+            if (intent.resolveActivity(packageManager) == null) {
+                result.success(false)
+                return
+            }
+            startActivity(intent)
+            result.success(true)
+        } catch (error: Exception) {
+            result.error(
+                "open_failed",
+                error.localizedMessage ?: "Die Datei konnte nicht geöffnet werden.",
+                null,
+            )
         }
     }
 
@@ -105,6 +156,7 @@ class MainActivity : AudioServiceActivity() {
 
     companion object {
         private const val STORAGE_CHANNEL = "dev.fundus/android_storage_access"
+        private const val FILE_OPENER_CHANNEL = "dev.fundus/file_opener"
         private const val REQUEST_MANAGE_STORAGE = 7301
         private const val REQUEST_LEGACY_STORAGE = 7302
     }
