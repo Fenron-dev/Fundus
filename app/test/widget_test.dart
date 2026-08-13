@@ -363,6 +363,8 @@ void main() {
     expect(find.text('Audio-Kompatibilität'), findsOneWidget);
     await tester.tap(find.text('Audio-Kompatibilität'));
     await tester.pumpAndSettle();
+    expect(find.text('Kapitel.mp3'), findsOneWidget);
+    expect(find.textContaining('MP3 · MP3'), findsOneWidget);
     expect(find.text('Desktop: geeignet'), findsOneWidget);
     expect(find.text('Android: geeignet'), findsOneWidget);
     await tester.tap(find.text('Audio-Kompatibilität'));

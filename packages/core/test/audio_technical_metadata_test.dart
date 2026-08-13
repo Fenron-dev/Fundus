@@ -121,4 +121,51 @@ void main() {
       expect(metadata?.sampleRateHz, 44100);
     },
   );
+
+  test('prefers the real AAC configuration over the MP4 header', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'fundus-m4b-aac-config-probe-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+
+    List<int> atom(String type, List<int> payload) {
+      final size = payload.length + 8;
+      return [
+        (size >> 24) & 0xff,
+        (size >> 16) & 0xff,
+        (size >> 8) & 0xff,
+        size & 0xff,
+        ...type.codeUnits,
+        ...payload,
+      ];
+    }
+
+    final sampleEntry = List<int>.filled(43, 0);
+    sampleEntry.setAll(0, [0, 0, 0, 43, ...'mp4a'.codeUnits]);
+    sampleEntry.setAll(24, [0, 2]);
+    sampleEntry.setAll(32, [0xac, 0x44, 0, 0]);
+    // AAC-LC, 22.05 kHz, stereo. Some encoders keep 44.1 kHz in the
+    // surrounding MP4 sample entry, so AudioSpecificConfig must win.
+    sampleEntry.setAll(36, [0x05, 0x80, 0x80, 0x80, 0x02, 0x13, 0x90]);
+    final file = File('${directory.path}/book.m4b');
+    await file.writeAsBytes([
+      ...atom('ftyp', 'M4B '.codeUnits),
+      ...atom('moov', sampleEntry),
+    ]);
+
+    final metadata = await AudioTechnicalMetadataProbe.inspect(
+      file,
+      'm4b',
+      await file.length(),
+    );
+
+    expect(metadata?.codec, 'AAC');
+    expect(metadata?.profile, 'AAC-LC');
+    expect(metadata?.channels, 2);
+    expect(metadata?.sampleRateHz, 22050);
+    expect(
+      metadata?.assess(AudioPlaybackTarget.android).status,
+      AudioCompatibilityStatus.compatible,
+    );
+  });
 }

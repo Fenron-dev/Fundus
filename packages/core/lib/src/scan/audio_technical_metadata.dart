@@ -176,12 +176,18 @@ abstract final class AudioTechnicalMetadataProbe {
       final boxStart = index - 4;
       final channels = _u16be(bytes, boxStart + 24);
       final sampleRate = _u32be(bytes, boxStart + 32) >> 16;
+      final aacConfiguration = codec == 'AAC'
+          ? _aacConfiguration(bytes, index)
+          : null;
       return AudioTechnicalMetadata(
         container: extension == 'm4b' ? 'M4B' : 'MP4',
         codec: codec,
-        profile: codec == 'AAC' ? _aacProfile(bytes, index) : codec,
-        channels: channels == 0 ? null : channels,
-        sampleRateHz: sampleRate == 0 ? null : sampleRate,
+        profile: aacConfiguration?.profile ?? (codec == 'AAC' ? null : codec),
+        channels:
+            aacConfiguration?.channels ?? (channels == 0 ? null : channels),
+        sampleRateHz:
+            aacConfiguration?.sampleRateHz ??
+            (sampleRate == 0 ? null : sampleRate),
       );
     }
     return null;
@@ -232,7 +238,7 @@ abstract final class AudioTechnicalMetadataProbe {
     }
   }
 
-  static String? _aacProfile(Uint8List bytes, int start) {
+  static _AacConfiguration? _aacConfiguration(Uint8List bytes, int start) {
     final end = (start + 4096).clamp(0, bytes.length);
     for (var index = start; index + 2 < end; index++) {
       if (bytes[index] != 0x05) continue;
@@ -246,15 +252,61 @@ abstract final class AudioTechnicalMetadataProbe {
         if ((value & 0x80) == 0) break;
       }
       if (length == 0 || cursor + length > end) continue;
-      final objectType = bytes[cursor] >> 3;
-      return switch (objectType) {
+      final configuration = _parseAudioSpecificConfig(
+        Uint8List.sublistView(bytes, cursor, cursor + length),
+      );
+      if (configuration != null) return configuration;
+    }
+    return null;
+  }
+
+  static _AacConfiguration? _parseAudioSpecificConfig(Uint8List bytes) {
+    if (bytes.length < 2) return null;
+    final reader = _BitReader(bytes);
+    var objectType = reader.read(5);
+    if (objectType == 31) objectType = 32 + reader.read(6);
+    var sampleRate = _aacSampleRate(reader);
+    final channelConfiguration = reader.read(4);
+    if (objectType == 5 || objectType == 29) {
+      final extensionSampleRate = _aacSampleRate(reader);
+      if (extensionSampleRate != null) sampleRate = extensionSampleRate;
+    }
+    return _AacConfiguration(
+      profile: switch (objectType) {
         2 => 'AAC-LC',
         5 => 'HE-AAC',
         29 => 'HE-AAC v2',
         _ => 'AAC Object Type $objectType',
-      };
-    }
-    return null;
+      },
+      channels: switch (channelConfiguration) {
+        1 => 1,
+        >= 2 && <= 6 => channelConfiguration,
+        7 => 8,
+        _ => null,
+      },
+      sampleRateHz: sampleRate,
+    );
+  }
+
+  static int? _aacSampleRate(_BitReader reader) {
+    const rates = [
+      96000,
+      88200,
+      64000,
+      48000,
+      44100,
+      32000,
+      24000,
+      22050,
+      16000,
+      12000,
+      11025,
+      8000,
+      7350,
+    ];
+    final index = reader.read(4);
+    if (index == 15) return reader.read(24);
+    return index < rates.length ? rates[index] : null;
   }
 
   static AudioTechnicalMetadata? _wav(Uint8List bytes) {
@@ -396,6 +448,38 @@ abstract final class AudioTechnicalMetadataProbe {
       if (matches) return index;
     }
     return -1;
+  }
+}
+
+final class _AacConfiguration {
+  const _AacConfiguration({
+    required this.profile,
+    required this.channels,
+    required this.sampleRateHz,
+  });
+
+  final String profile;
+  final int? channels;
+  final int? sampleRateHz;
+}
+
+final class _BitReader {
+  _BitReader(this.bytes);
+
+  final Uint8List bytes;
+  int _offset = 0;
+
+  int read(int count) {
+    var value = 0;
+    for (var index = 0; index < count; index++) {
+      value <<= 1;
+      final byteOffset = _offset >> 3;
+      if (byteOffset < bytes.length) {
+        value |= (bytes[byteOffset] >> (7 - (_offset & 7))) & 1;
+      }
+      _offset++;
+    }
+    return value;
   }
 }
 
