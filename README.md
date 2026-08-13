@@ -66,7 +66,8 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
   konfigurierten Medienwurzeln werden getrennt von Hörbüchern indexiert;
   Produktordner bündeln PDFs, Karten und Handouts zu einem gemeinsamen Werk;
   lokale Dateien lassen sich über die registrierte macOS- oder Android-App
-  öffnen
+  öffnen; ZIP-Archive können ohne vollständiges Entpacken schreibgeschützt
+  durchlaufen und einzelne Einträge sicher temporär geöffnet werden
 - manueller Hörbuch-Metadateneditor für Titel, mehrere Autoren und Sprecher,
   Serie/Band, Sprache, Verlag/Jahr und Beschreibung; Änderungen werden ohne
   Eingriff in die Mediendatei portabel in `_fundus/meta.yaml` gespiegelt

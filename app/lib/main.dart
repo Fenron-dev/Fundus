@@ -7,12 +7,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:path/path.dart' as p;
 
 import 'diagnostics/fundus_diagnostics.dart';
 import 'library/android_storage_access.dart';
 import 'library/document_file_opener.dart';
 import 'library/recent_library_store.dart';
 import 'library/security_scoped_bookmarks.dart';
+import 'library/zip_archive_browser.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/playback_conflict_settings.dart';
 import 'playback/playlist_session_conflict.dart';
@@ -3963,8 +3965,20 @@ class _DetailPanelState extends State<_DetailPanel> {
   }
 
   Future<void> _openDocument(LibraryPlaybackTrack file) async {
+    if (p.extension(file.absolutePath).toLowerCase() == '.zip') {
+      await showZipArchiveBrowser(
+        context,
+        archivePath: file.absolutePath,
+        onOpenExtracted: _openFileWithSystemApp,
+      );
+      return;
+    }
+    await _openFileWithSystemApp(file.absolutePath);
+  }
+
+  Future<void> _openFileWithSystemApp(String path) async {
     try {
-      await const DocumentFileOpener().open(file.absolutePath);
+      await const DocumentFileOpener().open(path);
     } on DocumentOpenException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(

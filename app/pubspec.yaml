@@ -9,6 +9,7 @@ environment:
 resolution: workspace
 
 dependencies:
+  archive: ^4.0.9
   audio_service: ^0.18.19
   basic_utils: ^5.8.2
   bonsoir: ^7.1.4
