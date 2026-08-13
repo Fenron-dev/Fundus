@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:sqlite3/sqlite3.dart';
 
 import '../import/abs_importer.dart';
+import '../import/document_importer.dart';
 import '../library/work_annotations.dart';
 import '../model/fundus_id.dart';
 import '../model/library_playlist.dart';
@@ -300,6 +301,40 @@ final class FundusDatabase {
         '',
       ],
     );
+    return workId;
+  }
+
+  String upsertDocumentCandidate(
+    DocumentImportCandidate candidate,
+    Map<String, String> fileIds,
+  ) {
+    final workId = _upsertWork(
+      kind: candidate.kind,
+      sourcePath: candidate.directory,
+      title: candidate.title,
+      metadata: const {'author': 'Unbekannt'},
+    );
+    _database.execute('UPDATE works SET cover_file_id = NULL WHERE id = ?', [
+      workId,
+    ]);
+    _database.execute('DELETE FROM work_files WHERE work_id = ?', [workId]);
+    for (var index = 0; index < candidate.files.length; index++) {
+      final fileId = fileIds[candidate.files[index].relativePath];
+      if (fileId == null) continue;
+      _database.execute(
+        'INSERT INTO work_files (work_id, file_id, position, role) VALUES (?, ?, ?, ?)',
+        [workId, fileId, index, 'content'],
+      );
+    }
+    final coverId = candidate.coverFile == null
+        ? null
+        : fileIds[candidate.coverFile!.relativePath];
+    if (coverId != null) {
+      _database.execute('UPDATE works SET cover_file_id = ? WHERE id = ?', [
+        coverId,
+        workId,
+      ]);
+    }
     return workId;
   }
 

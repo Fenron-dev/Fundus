@@ -1089,16 +1089,36 @@ class _LibraryShellState extends State<LibraryShell> {
     super.dispose();
   }
 
-  List<LibraryWorkSummary> get _visibleWorks =>
-      LibraryWorkSearch.apply(widget.works, _query);
+  List<LibraryWorkSummary> get _visibleWorks {
+    final works = LibraryWorkSearch.apply(widget.works, _query);
+    return switch (_section) {
+      _LibrarySection.library =>
+        works.where((work) => work.kind == 'audiobook').toList(growable: false),
+      _LibrarySection.documents =>
+        works
+            .where(
+              (work) => const {
+                'ebook',
+                'image',
+                'document',
+                'ttrpg_product',
+                'archive',
+              }.contains(work.kind),
+            )
+            .toList(growable: false),
+      _LibrarySection.playlists => works,
+    };
+  }
 
-  bool get _showingGroups => switch (_grouping) {
-    _LibraryGrouping.books => false,
-    _LibraryGrouping.authors =>
-      _selectedAuthor == null || _selectedSeries == null,
-    _LibraryGrouping.narrators => _selectedNarrator == null,
-    _LibraryGrouping.series => _selectedSeries == null,
-  };
+  bool get _showingGroups => _section == _LibrarySection.documents
+      ? false
+      : switch (_grouping) {
+          _LibraryGrouping.books => false,
+          _LibraryGrouping.authors =>
+            _selectedAuthor == null || _selectedSeries == null,
+          _LibraryGrouping.narrators => _selectedNarrator == null,
+          _LibraryGrouping.series => _selectedSeries == null,
+        };
 
   List<LibraryWorkSummary> get _displayedWorks {
     var works = _visibleWorks;
@@ -1185,6 +1205,9 @@ class _LibraryShellState extends State<LibraryShell> {
                       selectedSection: _section,
                       onSelectSection: (section) => setState(() {
                         _section = section;
+                        if (section == _LibrarySection.documents) {
+                          _grouping = _LibraryGrouping.books;
+                        }
                         _inlineDetailWork = null;
                         _playerExpanded = false;
                       }),
@@ -1221,7 +1244,8 @@ class _LibraryShellState extends State<LibraryShell> {
                   ),
                   if (_detailPaneVisible &&
                       !_playerExpanded &&
-                      _section == _LibrarySection.library) ...[
+                      (_section == _LibrarySection.library ||
+                          _section == _LibrarySection.documents)) ...[
                     _ResizeHandle(
                       onDrag: (delta) => setState(
                         () => _detailPaneWidth = (_detailPaneWidth - delta)
@@ -1283,6 +1307,9 @@ class _LibraryShellState extends State<LibraryShell> {
                     selectedIndex: _section.index,
                     onDestinationSelected: (value) => setState(() {
                       _section = _LibrarySection.values[value];
+                      if (_section == _LibrarySection.documents) {
+                        _grouping = _LibraryGrouping.books;
+                      }
                       _inlineDetailWork = null;
                       _playerExpanded = false;
                     }),
@@ -1292,6 +1319,11 @@ class _LibraryShellState extends State<LibraryShell> {
                         icon: Icon(Icons.headphones_outlined),
                         selectedIcon: Icon(Icons.headphones),
                         label: Text('Hörbücher'),
+                      ),
+                      NavigationRailDestination(
+                        icon: Icon(Icons.collections_bookmark_outlined),
+                        selectedIcon: Icon(Icons.collections_bookmark),
+                        label: Text('Dokumente'),
                       ),
                       NavigationRailDestination(
                         icon: Icon(Icons.queue_music_outlined),
@@ -1359,14 +1391,40 @@ class _LibraryShellState extends State<LibraryShell> {
                   ),
               ],
             ),
-      Center(
-        child: FilledButton.icon(
-          onPressed: widget.peerServer == null
-              ? null
-              : () => _openServerSettings(context),
-          icon: const Icon(Icons.lan_outlined),
-          label: const Text('Server & Freigaben'),
-        ),
+      ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const Text('Medienbereiche', style: TextStyle(fontSize: 18)),
+          const SizedBox(height: 8),
+          ListTile(
+            leading: const Icon(Icons.headphones_outlined),
+            title: const Text('Hörbücher & Hörspiele'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => setState(() {
+              _section = _LibrarySection.library;
+              _mobileDestination = 0;
+            }),
+          ),
+          ListTile(
+            leading: const Icon(Icons.description_outlined),
+            title: const Text('Dokumente & TTRPG'),
+            subtitle: const Text('PDFs, E-Books, Bilder und Archive'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => setState(() {
+              _section = _LibrarySection.documents;
+              _grouping = _LibraryGrouping.books;
+              _mobileDestination = 0;
+            }),
+          ),
+          const Divider(height: 32),
+          FilledButton.icon(
+            onPressed: widget.peerServer == null
+                ? null
+                : () => _openServerSettings(context),
+            icon: const Icon(Icons.lan_outlined),
+            label: const Text('Server & Freigaben'),
+          ),
+        ],
       ),
     ];
     return Scaffold(
@@ -1376,7 +1434,11 @@ class _LibraryShellState extends State<LibraryShell> {
               ? widget.player?.work?.title ?? 'Player'
               : _mobileDestination == 2
               ? 'Playlists'
-              : 'Hörbücher & Hörspiele',
+              : _mobileDestination == 3
+              ? 'Downloads'
+              : _mobileDestination == 4
+              ? 'Mehr'
+              : _browserTitle,
         ),
         actions: [
           if (_playerExpanded)
@@ -1947,34 +2009,35 @@ class _LibraryShellState extends State<LibraryShell> {
             ),
         ],
       ),
-      PopupMenuButton<_LibraryGrouping>(
-        tooltip: 'Gliederung wählen',
-        initialValue: _grouping,
-        onSelected: _setGrouping,
-        itemBuilder: (context) => const [
-          PopupMenuItem(
-            value: _LibraryGrouping.books,
-            child: Text('Nach Büchern'),
+      if (_section == _LibrarySection.library)
+        PopupMenuButton<_LibraryGrouping>(
+          tooltip: 'Gliederung wählen',
+          initialValue: _grouping,
+          onSelected: _setGrouping,
+          itemBuilder: (context) => const [
+            PopupMenuItem(
+              value: _LibraryGrouping.books,
+              child: Text('Nach Büchern'),
+            ),
+            PopupMenuItem(
+              value: _LibraryGrouping.authors,
+              child: Text('Nach Autoren'),
+            ),
+            PopupMenuItem(
+              value: _LibraryGrouping.series,
+              child: Text('Nach Serien'),
+            ),
+            PopupMenuItem(
+              value: _LibraryGrouping.narrators,
+              child: Text('Nach Sprechern'),
+            ),
+          ],
+          child: Chip(
+            avatar: const Icon(Icons.account_tree_outlined, size: 18),
+            label: Text(_groupingLabel),
           ),
-          PopupMenuItem(
-            value: _LibraryGrouping.authors,
-            child: Text('Nach Autoren'),
-          ),
-          PopupMenuItem(
-            value: _LibraryGrouping.series,
-            child: Text('Nach Serien'),
-          ),
-          PopupMenuItem(
-            value: _LibraryGrouping.narrators,
-            child: Text('Nach Sprechern'),
-          ),
-        ],
-        child: Chip(
-          avatar: const Icon(Icons.account_tree_outlined, size: 18),
-          label: Text(_groupingLabel),
         ),
-      ),
-      const SizedBox(width: 8),
+      if (_section == _LibrarySection.library) const SizedBox(width: 8),
       SegmentedButton<_LibraryLayout>(
         showSelectedIcon: false,
         segments: const [
@@ -2019,7 +2082,9 @@ class _LibraryShellState extends State<LibraryShell> {
     }
     if (_selectedAuthor != null) return _selectedAuthor!;
     if (_selectedNarrator != null) return 'Gesprochen von $_selectedNarrator';
-    return 'Hörbücher & Hörspiele';
+    return _section == _LibrarySection.documents
+        ? 'Dokumente, Bilder & TTRPG'
+        : 'Hörbücher & Hörspiele';
   }
 
   String get _groupingLabel => switch (_grouping) {
@@ -2514,7 +2579,7 @@ class _LibraryShellState extends State<LibraryShell> {
   };
 }
 
-enum _LibrarySection { library, playlists }
+enum _LibrarySection { library, documents, playlists }
 
 enum _LibraryLayout { grid, table }
 
@@ -2924,9 +2989,12 @@ class _Sidebar extends StatelessWidget {
           leading: Icon(Icons.movie_outlined),
           title: Text('Filme & Serien'),
         ),
-        const ListTile(
-          leading: Icon(Icons.menu_book_outlined),
-          title: Text('E-Books & PDFs'),
+        ListTile(
+          leading: const Icon(Icons.collections_bookmark_outlined),
+          title: const Text('Dokumente & TTRPG'),
+          subtitle: const Text('PDFs, Bilder und Archive'),
+          selected: selectedSection == _LibrarySection.documents,
+          onTap: () => onSelectSection(_LibrarySection.documents),
         ),
         const SizedBox(height: 12),
         const _SectionLabel('Entdecken'),
@@ -3083,7 +3151,9 @@ class _WorkCard extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text(work.title, maxLines: 2, overflow: TextOverflow.ellipsis),
                 Text(
-                  work.series == null
+                  work.kind != 'audiobook'
+                      ? '${_workKindLabel(work.kind)} · ${work.fileCount} Datei(en)'
+                      : work.series == null
                       ? work.author
                       : '${work.author} · ${work.series}'
                             '${work.seriesSequence == null ? '' : ' · Band ${_formatSequence(work.seriesSequence!)}'}',
@@ -3281,6 +3351,123 @@ class _AudiobookHero extends StatelessWidget {
       ],
     );
   }
+}
+
+class _DocumentHero extends StatelessWidget {
+  const _DocumentHero({required this.work, required this.directoryPath});
+
+  final LibraryWorkSummary work;
+  final String? directoryPath;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            scheme.secondaryContainer.withValues(alpha: .42),
+            scheme.surfaceContainer.withValues(alpha: .55),
+          ],
+        ),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox.square(
+              dimension: 112,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: _WorkCover(work: work, iconSize: 58),
+              ),
+            ),
+            const SizedBox(width: 24),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    work.title,
+                    style: Theme.of(context).textTheme.headlineMedium,
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      Chip(
+                        avatar: Icon(_workKindIcon(work.kind), size: 18),
+                        label: Text(_workKindLabel(work.kind)),
+                      ),
+                      Chip(label: Text('${work.fileCount} Datei(en)')),
+                      if (!work.available)
+                        const Chip(label: Text('Dateien fehlen')),
+                    ],
+                  ),
+                  if (directoryPath case final path?) ...[
+                    const SizedBox(height: 18),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.folder_outlined, size: 18),
+                        const SizedBox(width: 7),
+                        Expanded(
+                          child: SelectableText(
+                            path,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DocumentFilesPanel extends StatelessWidget {
+  const _DocumentFilesPanel({required this.files});
+
+  final List<LibraryPlaybackTrack> files;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    clipBehavior: Clip.antiAlias,
+    child: ExpansionTile(
+      initiallyExpanded: true,
+      leading: const Icon(Icons.folder_copy_outlined),
+      title: const Text('Enthaltene Dateien'),
+      subtitle: Text('${files.length} Datei(en) in diesem Werk'),
+      children: [
+        for (final file in files)
+          ListTile(
+            dense: true,
+            leading: Icon(_fileIcon(file.title)),
+            title: Text(file.title),
+            subtitle: Text(file.relativePath),
+          ),
+      ],
+    ),
+  );
+
+  static IconData _fileIcon(String filename) =>
+      switch (filename.toLowerCase().split('.').last) {
+        'pdf' => Icons.picture_as_pdf_outlined,
+        'jpg' || 'jpeg' || 'png' || 'webp' || 'gif' => Icons.image_outlined,
+        'zip' || '7z' || 'rar' || 'tar' || 'gz' => Icons.archive_outlined,
+        _ => Icons.insert_drive_file_outlined,
+      };
 }
 
 class _AudioCompatibilityPanel extends StatelessWidget {
@@ -3529,37 +3716,43 @@ class _DetailPanelState extends State<_DetailPanel> {
     final selectedWork = _editedWork ?? widget.work!;
     final canBookmark = _bookmarkAvailable;
     final directoryPath = widget.library?.workDirectoryPath(selectedWork.id);
-    final technicalTracks = selectedWork.available
+    final workFiles = selectedWork.available
         ? widget.library?.playbackTracks(selectedWork.id)
         : null;
     return ListView(
       key: const ValueKey('detail-panel-scroll'),
       padding: const EdgeInsets.all(20),
       children: [
-        _AudiobookHero(
-          work: selectedWork,
-          player: widget.player,
-          directoryPath: directoryPath,
-          playing: _workIsPlaying,
-          playbackEnabled:
-              selectedWork.available &&
-              (widget.onPlay != null || _workIsCurrent),
-          onTogglePlayback: () => _togglePlayback(selectedWork),
-          onSelectAuthor: widget.onSelectAuthor,
-          onSelectNarrator: widget.onSelectNarrator,
-        ),
+        if (selectedWork.kind == 'audiobook')
+          _AudiobookHero(
+            work: selectedWork,
+            player: widget.player,
+            directoryPath: directoryPath,
+            playing: _workIsPlaying,
+            playbackEnabled:
+                selectedWork.available &&
+                (widget.onPlay != null || _workIsCurrent),
+            onTogglePlayback: () => _togglePlayback(selectedWork),
+            onSelectAuthor: widget.onSelectAuthor,
+            onSelectNarrator: widget.onSelectNarrator,
+          )
+        else
+          _DocumentHero(work: selectedWork, directoryPath: directoryPath),
         const SizedBox(height: 10),
-        Align(
-          alignment: Alignment.centerRight,
-          child: OutlinedButton.icon(
-            onPressed:
-                widget.library == null || widget.library!.isReadOnly || _saving
-                ? null
-                : () => _editMetadata(selectedWork),
-            icon: const Icon(Icons.edit_outlined),
-            label: const Text('Metadaten bearbeiten'),
+        if (selectedWork.kind == 'audiobook')
+          Align(
+            alignment: Alignment.centerRight,
+            child: OutlinedButton.icon(
+              onPressed:
+                  widget.library == null ||
+                      widget.library!.isReadOnly ||
+                      _saving
+                  ? null
+                  : () => _editMetadata(selectedWork),
+              icon: const Icon(Icons.edit_outlined),
+              label: const Text('Metadaten bearbeiten'),
+            ),
           ),
-        ),
         if (!selectedWork.available) ...[
           const SizedBox(height: 16),
           Card(
@@ -3602,11 +3795,16 @@ class _DetailPanelState extends State<_DetailPanel> {
             ),
           ),
         ],
-        if (technicalTracks != null && technicalTracks.isNotEmpty) ...[
+        if (workFiles != null && workFiles.isNotEmpty) ...[
           const SizedBox(height: 16),
-          _AudioCompatibilityPanel(tracks: technicalTracks),
+          if (selectedWork.kind == 'audiobook')
+            _AudioCompatibilityPanel(tracks: workFiles)
+          else
+            _DocumentFilesPanel(files: workFiles),
         ],
-        if (widget.library != null && widget.player != null) ...[
+        if (selectedWork.kind == 'audiobook' &&
+            widget.library != null &&
+            widget.player != null) ...[
           const SizedBox(height: 12),
           Align(
             alignment: Alignment.centerLeft,
@@ -4461,8 +4659,28 @@ class _WorkCover extends StatelessWidget {
   }
 
   Widget _placeholder() =>
-      Center(child: Icon(Icons.music_note, size: iconSize));
+      Center(child: Icon(_workKindIcon(work.kind), size: iconSize));
 }
+
+String _workKindLabel(String kind) => switch (kind) {
+  'audiobook' => 'Hörbuch',
+  'ebook' => 'E-Book/PDF',
+  'image' => 'Bildsammlung',
+  'document' => 'Dokument',
+  'ttrpg_product' => 'TTRPG-Produkt',
+  'archive' => 'Archiv',
+  _ => kind,
+};
+
+IconData _workKindIcon(String kind) => switch (kind) {
+  'audiobook' => Icons.music_note,
+  'ebook' => Icons.menu_book_outlined,
+  'image' => Icons.image_outlined,
+  'document' => Icons.description_outlined,
+  'ttrpg_product' => Icons.casino_outlined,
+  'archive' => Icons.archive_outlined,
+  _ => Icons.insert_drive_file_outlined,
+};
 
 class _ProgressLabel extends StatelessWidget {
   const _ProgressLabel({required this.work, this.player});

@@ -4,6 +4,7 @@ export 'src/database/fundus_database.dart';
 export 'src/import/abs_importer.dart';
 export 'src/import/abs_metadata.dart';
 export 'src/import/embedded_cover.dart';
+export 'src/import/document_importer.dart';
 export 'src/library/fundus_library.dart';
 export 'src/library/work_annotations.dart';
 export 'src/model/fundus_id.dart';

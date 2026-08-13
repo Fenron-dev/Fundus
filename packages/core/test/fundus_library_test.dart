@@ -840,6 +840,58 @@ void main() {
     expect(library.loadAnnotations(work.id).tags, isEmpty);
   });
 
+  test('indexes a mixed TTRPG product as one non-audio work', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-ttrpg-');
+    addTearDown(() => root.delete(recursive: true));
+    final product = Directory('${root.path}/TTRPG/Dragonlance');
+    await Directory('${product.path}/Maps').create(recursive: true);
+    await Directory('${product.path}/Handouts').create(recursive: true);
+    await File('${product.path}/Regelwerk.pdf').writeAsBytes([1, 2, 3]);
+    await File('${product.path}/Maps/Ansalon.jpg').writeAsBytes([4, 5]);
+    await File('${product.path}/Handouts/Brief.png').writeAsBytes([6]);
+    await File('${product.path}/cover.jpg').writeAsBytes([7]);
+
+    final library = await FundusLibrary.create(root);
+    addTearDown(library.close);
+    final events = await library.index().toList();
+    final work = library.listWorks().single;
+
+    expect(events.last.workCount, 1);
+    expect(work.kind, 'ttrpg_product');
+    expect(work.title, 'Dragonlance');
+    expect(work.fileCount, 4);
+    expect(work.coverPath, endsWith('cover.jpg'));
+    expect(library.workDirectoryPath(work.id), product.path);
+    expect(
+      library.playbackTracks(work.id).map((file) => file.title),
+      containsAll(['Regelwerk.pdf', 'Ansalon.jpg', 'Brief.png', 'cover.jpg']),
+    );
+  });
+
+  test(
+    'loose document annotations do not treat the file as a directory',
+    () async {
+      final root = await Directory.systemTemp.createTemp('fundus-document-');
+      addTearDown(() => root.delete(recursive: true));
+      final documents = Directory('${root.path}/Documents');
+      await documents.create(recursive: true);
+      final file = File('${documents.path}/Wichtige Datei.pdf');
+      await file.writeAsBytes([1, 2, 3]);
+
+      final library = await FundusLibrary.create(root);
+      addTearDown(library.close);
+      await library.index().drain<void>();
+      final work = library.listWorks().single;
+      final annotations = await library.replaceWorkTags(work.id, ['Wichtig']);
+
+      expect(work.kind, 'document');
+      expect(library.workDirectoryPath(work.id), documents.path);
+      expect(annotations.tags, ['Wichtig']);
+      expect(await file.exists(), isTrue);
+      expect(await Directory('${file.path}/_fundus').exists(), isFalse);
+    },
+  );
+
   test('open rejects a directory without a manifest', () async {
     final root = await Directory.systemTemp.createTemp('fundus-empty-');
     addTearDown(() => root.delete(recursive: true));

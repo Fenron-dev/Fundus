@@ -7,6 +7,7 @@ import 'package:yaml/yaml.dart';
 import '../database/fundus_database.dart';
 import '../import/abs_importer.dart';
 import '../import/abs_metadata.dart';
+import '../import/document_importer.dart';
 import '../import/embedded_cover.dart';
 import '../model/fundus_id.dart';
 import '../model/library_configuration.dart';
@@ -282,7 +283,11 @@ final class FundusLibrary {
 
   String? workDirectoryPath(String workId) {
     final sourcePath = _database.workSourcePath(workId);
-    return sourcePath == null ? null : _safeWorkDirectory(sourcePath).path;
+    if (sourcePath == null) return null;
+    final target = _safeWorkDirectory(sourcePath);
+    return FileSystemEntity.isFileSync(target.path)
+        ? target.parent.path
+        : target.path;
   }
 
   LibraryPlaybackProgress? loadProgress(String workId) =>
@@ -414,7 +419,9 @@ final class FundusLibrary {
   ) async {
     _ensureWritable();
     _database.replaceWorkTags(workId, tags);
-    await _writeAnnotationSidecars(workId);
+    if (_usesAudiobookSidecars(workId)) {
+      await _writeAnnotationSidecars(workId);
+    }
     return loadAnnotations(workId);
   }
 
@@ -423,7 +430,9 @@ final class FundusLibrary {
     final normalized = markdown.trim();
     if (normalized.isEmpty) return loadAnnotations(workId);
     _database.saveWorkNote(workId, normalized);
-    await _writeAnnotationSidecars(workId);
+    if (_usesAudiobookSidecars(workId)) {
+      await _writeAnnotationSidecars(workId);
+    }
     return loadAnnotations(workId);
   }
 
@@ -442,7 +451,9 @@ final class FundusLibrary {
       label: label,
       note: note,
     );
-    await _writeAnnotationSidecars(workId);
+    if (_usesAudiobookSidecars(workId)) {
+      await _writeAnnotationSidecars(workId);
+    }
     return loadAnnotations(workId);
   }
 
@@ -452,7 +463,9 @@ final class FundusLibrary {
   ) async {
     _ensureWritable();
     _database.deleteBookmark(bookmarkId);
-    await _writeAnnotationSidecars(workId);
+    if (_usesAudiobookSidecars(workId)) {
+      await _writeAnnotationSidecars(workId);
+    }
     return loadAnnotations(workId);
   }
 
@@ -493,6 +506,9 @@ final class FundusLibrary {
                   mediaRootNames: configuration.rootsFor('audiobook'),
                 ))
             .group(files);
+    final documentCandidates = DocumentImporter(
+      mediaRoots: configuration.mediaRoots,
+    ).group(files);
     final candidates = <AudiobookImportCandidate>[];
     final portableIdentities = <String, _PortableWorkIdentity>{};
     for (final grouped in groupedCandidates) {
@@ -516,7 +532,7 @@ final class FundusLibrary {
     yield LibraryIndexEvent(
       phase: LibraryIndexPhase.importing,
       fileCount: files.length,
-      workCount: candidates.length,
+      workCount: candidates.length + documentCandidates.length,
     );
     final indexedCandidates = _database.transaction(() {
       final ids = <String, String>{};
@@ -536,6 +552,9 @@ final class FundusLibrary {
                 portableId ?? _database.findMovedAudiobookWorkId(candidate),
           ),
         ));
+      }
+      for (final candidate in documentCandidates) {
+        _database.upsertDocumentCandidate(candidate, ids);
       }
       _database.markWorksWithoutAvailableContentMissing();
       return indexed;
@@ -566,7 +585,7 @@ final class FundusLibrary {
     yield LibraryIndexEvent(
       phase: LibraryIndexPhase.completed,
       fileCount: files.length,
-      workCount: candidates.length,
+      workCount: candidates.length + documentCandidates.length,
     );
   }
 
@@ -1117,6 +1136,10 @@ final class FundusLibrary {
     }
     return Directory(path);
   }
+
+  bool _usesAudiobookSidecars(String workId) => listWorks(
+    includeMissing: true,
+  ).any((work) => work.id == workId && work.kind == 'audiobook');
 
   static File _manifestFile(Directory root) =>
       File('${root.path}/$metadataDirectoryName/$manifestFileName');

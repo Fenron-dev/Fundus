@@ -43,6 +43,64 @@ void main() {
     expect(find.text('Weiterhören'), findsOneWidget);
   });
 
+  testWidgets('desktop browses document and TTRPG works separately', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final document = LibraryWorkSummary(
+      id: 'ttrpg-1',
+      kind: 'ttrpg_product',
+      title: 'Dragonlance Kampagnenband',
+      author: 'Unbekannt',
+      fileCount: 4,
+      addedAt: DateTime(2026),
+    );
+
+    await tester.pumpWidget(FundusApp(initialWorks: [...testWorks, document]));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Dragonlance Kampagnenband'), findsNothing);
+    await tester.tap(find.text('Dokumente & TTRPG'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Dokumente, Bilder & TTRPG'), findsOneWidget);
+    expect(find.text('Dragonlance Kampagnenband'), findsWidgets);
+    expect(find.textContaining('TTRPG-Produkt'), findsWidgets);
+    expect(find.text('Weiterhören'), findsNothing);
+  });
+
+  testWidgets('mobile opens document and TTRPG works from More', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final document = LibraryWorkSummary(
+      id: 'mobile-ttrpg-1',
+      kind: 'ttrpg_product',
+      title: 'Mobile Kampagnenbox',
+      author: 'Unbekannt',
+      fileCount: 3,
+      addedAt: DateTime(2026),
+    );
+
+    await tester.pumpWidget(FundusApp(initialWorks: [...testWorks, document]));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Mobile Kampagnenbox'), findsNothing);
+    await tester.tap(find.text('Mehr'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dokumente & TTRPG'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Dokumente, Bilder & TTRPG'), findsWidgets);
+    expect(find.text('Mobile Kampagnenbox'), findsOneWidget);
+  });
+
   testWidgets('missing media stays visible and cannot be played', (
     tester,
   ) async {

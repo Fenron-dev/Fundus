@@ -62,6 +62,9 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - dateibezogenes Audio-Kompatibilitätsprofil für Desktop und Android mit
   Container, Codec, Profil, Kanälen und Abtastrate; die AAC-Konfiguration in
   M4B/M4A hat Vorrang vor ungenauen MP4-Headerwerten
+- erster Dokument-/TTRPG-Schnitt: PDF-, E-Book-, Bild- und Archivdateien unter
+  konfigurierten Medienwurzeln werden getrennt von Hörbüchern indexiert;
+  Produktordner bündeln PDFs, Karten und Handouts zu einem gemeinsamen Werk
 - manueller Hörbuch-Metadateneditor für Titel, mehrere Autoren und Sprecher,
   Serie/Band, Sprache, Verlag/Jahr und Beschreibung; Änderungen werden ohne
   Eingriff in die Mediendatei portabel in `_fundus/meta.yaml` gespiegelt
