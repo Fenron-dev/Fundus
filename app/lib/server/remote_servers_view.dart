@@ -7,9 +7,13 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../diagnostics/fundus_diagnostics.dart';
+import '../library/document_file_opener.dart';
+import '../library/document_preview.dart';
+import '../library/zip_archive_browser.dart';
 import '../playback/playback_sleep_timer_button.dart';
 import '../playback/playback_conflict_settings.dart';
 import 'fundus_remote_client.dart';
+import 'fundus_remote_document_cache.dart';
 import 'fundus_peer_server_controller.dart';
 import 'fundus_remote_player_controller.dart';
 import 'fundus_offline_store.dart';
@@ -63,6 +67,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   final _store = FundusRemoteServerStore();
   final _client = const FundusRemoteClient();
   final _savedViewStore = const RemoteSavedViewStore();
+  final _documentCache = FundusRemoteDocumentCache();
   final _searchController = SearchController();
   late final FundusOfflineStore _offlineStore;
   final _peerDiscovery = FundusPeerDiscovery();
@@ -1461,15 +1466,17 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   ) async {
     final key = _offlineKey(server, library, work);
     final isOffline = _offlineKeys.contains(key);
+    final isDocument = _isDocumentKind(work.kind);
     var detailTracks = <FundusRemoteTrack>[];
+    FundusOfflineWork? offlineWork;
     if (isOffline) {
-      final offline = await _offlineStore.lookup(
+      offlineWork = await _offlineStore.lookup(
         serverId: server.id,
         libraryId: library.id,
         workId: work.id,
       );
       detailTracks = [
-        for (final track in offline?.tracks ?? const <FundusOfflineTrack>[])
+        for (final track in offlineWork?.tracks ?? const <FundusOfflineTrack>[])
           FundusRemoteTrack(
             id: track.id,
             title: track.title,
@@ -1592,13 +1599,18 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                     leading: Text('${index + 1}'),
                     title: Text(detailTracks[index].title),
                     subtitle: _remoteTechnicalSubtitle(detailTracks[index]),
-                    trailing: detailTracks[index].duration == null
+                    trailing: isDocument
+                        ? const Icon(Icons.open_in_new)
+                        : detailTracks[index].duration == null
                         ? null
                         : Text(
                             _formatRemoteDuration(
                               detailTracks[index].duration!,
                             ),
                           ),
+                    onTap: isDocument
+                        ? () => Navigator.pop(context, 'open:$index')
+                        : null,
                   ),
               ],
               const SizedBox(height: 24),
@@ -1606,9 +1618,22 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 children: [
                   Expanded(
                     child: FilledButton.icon(
-                      onPressed: () => Navigator.pop(context, 'play'),
-                      icon: const Icon(Icons.play_arrow),
-                      label: const Text('Abspielen / fortsetzen'),
+                      onPressed: detailTracks.isEmpty
+                          ? null
+                          : () => Navigator.pop(
+                              context,
+                              isDocument ? 'open:0' : 'play',
+                            ),
+                      icon: Icon(
+                        isDocument
+                            ? Icons.visibility_outlined
+                            : Icons.play_arrow,
+                      ),
+                      label: Text(
+                        isDocument
+                            ? 'Erste Datei anzeigen'
+                            : 'Abspielen / fortsetzen',
+                      ),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -1656,6 +1681,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       }
       return;
     }
+    if (action?.startsWith('open:') ?? false) {
+      final index = int.tryParse(action!.substring(5));
+      if (index == null || index < 0 || index >= detailTracks.length) return;
+      if (offlineWork != null && index < offlineWork.tracks.length) {
+        await _openDocumentPath(offlineWork.tracks[index].path);
+      } else {
+        await _openRemoteDocument(server, library, detailTracks[index]);
+      }
+      return;
+    }
     if (action != 'play' || !mounted) return;
     final player =
         _remotePlayer ??
@@ -1669,13 +1704,6 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     if (_remotePlayer == null && mounted) {
       setState(() => _remotePlayer = player);
     }
-    final offlineWork = isOffline
-        ? await _offlineStore.lookup(
-            serverId: server.id,
-            libraryId: library.id,
-            workId: work.id,
-          )
-        : null;
     if (offlineWork != null) {
       await player.open(server, library, work, offlineWork: offlineWork);
       return;
@@ -1961,6 +1989,119 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     _ => Icons.audiotrack,
   };
 
+  static bool _isDocumentKind(String kind) => const {
+    'ebook',
+    'image',
+    'document',
+    'ttrpg_product',
+    'archive',
+  }.contains(kind);
+
+  static IconData _documentFileIcon(String filename) {
+    final lower = filename.toLowerCase();
+    if (lower.endsWith('.pdf')) return Icons.picture_as_pdf_outlined;
+    if ({
+      '.jpg',
+      '.jpeg',
+      '.png',
+      '.webp',
+      '.gif',
+      '.bmp',
+    }.any(lower.endsWith)) {
+      return Icons.image_outlined;
+    }
+    if (lower.endsWith('.zip')) return Icons.archive_outlined;
+    return Icons.description_outlined;
+  }
+
+  Future<void> _openRemoteDocument(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteTrack track,
+  ) async {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(minutes: 2),
+        content: Text('„${track.title}“ wird für die Vorschau geladen …'),
+      ),
+    );
+    try {
+      final file = await _documentCache.obtain(
+        cacheKey: '${server.id}/${library.id}/${track.id}',
+        filename: track.title,
+        open: () async {
+          final result = await _runWithReconnect(
+            server,
+            (active) => _client.openContent(
+              active,
+              libraryId: library.id,
+              fileId: track.id,
+            ),
+          );
+          final remote = result.value;
+          return FundusRemoteDocumentSource(
+            bytes: remote.response,
+            contentLength: remote.response.contentLength > 0
+                ? remote.response.contentLength
+                : null,
+            close: remote.close,
+          );
+        },
+      );
+      messenger.hideCurrentSnackBar();
+      await _openDocumentPath(file.path);
+    } catch (error) {
+      messenger.hideCurrentSnackBar();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            error is FundusRemoteDocumentException
+                ? error.message
+                : 'Die Datei konnte nicht vom Server geladen werden.',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _openDocumentPath(String path) async {
+    try {
+      if (path.toLowerCase().endsWith('.zip')) {
+        await showZipArchiveBrowser(
+          context,
+          archivePath: path,
+          onOpenExtracted: _openDocumentPath,
+        );
+      } else if (supportsInternalDocumentPreview(path)) {
+        await showDocumentPreview(
+          context,
+          path: path,
+          onOpenExternal: (value) => const DocumentFileOpener().open(value),
+        );
+      } else {
+        await const DocumentFileOpener().open(path);
+      }
+    } on DocumentPreviewException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } on DocumentOpenException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } on ZipArchiveException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+
   static String _offlineSubtitle(FundusOfflineWork work) {
     final values = <String>[
       if (work.authors.isNotEmpty) work.authors.join(', '),
@@ -1989,6 +2130,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   }
 
   Future<void> _showOfflineWork(FundusOfflineWork offline) async {
+    final isDocument = _isDocumentKind(offline.kind);
     final progress = await _offlineStore.loadProgress(
       serverId: offline.serverId,
       libraryId: offline.libraryId,
@@ -2106,14 +2248,33 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
               ),
               const SizedBox(height: 6),
               SelectableText(offline.directoryPath),
+              if (isDocument) ...[
+                const SizedBox(height: 20),
+                Text('Dateien', style: Theme.of(context).textTheme.titleMedium),
+                for (var index = 0; index < offline.tracks.length; index++)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      _documentFileIcon(offline.tracks[index].title),
+                    ),
+                    title: Text(offline.tracks[index].title),
+                    trailing: const Icon(Icons.open_in_new),
+                    onTap: () => Navigator.pop(context, 'open:$index'),
+                  ),
+              ],
               const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
-                  onPressed: () => Navigator.pop(context, 'play'),
-                  icon: const Icon(Icons.play_arrow),
+                  onPressed: () =>
+                      Navigator.pop(context, isDocument ? 'open:0' : 'play'),
+                  icon: Icon(
+                    isDocument ? Icons.visibility_outlined : Icons.play_arrow,
+                  ),
                   label: Text(
-                    progress != null && progress.position > Duration.zero
+                    isDocument
+                        ? 'Erste Datei anzeigen'
+                        : progress != null && progress.position > Duration.zero
                         ? 'Weiterhören'
                         : 'Abspielen',
                   ),
@@ -2133,7 +2294,12 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         ),
       ),
     );
-    if (action == 'play') {
+    if (action?.startsWith('open:') ?? false) {
+      final index = int.tryParse(action!.substring(5));
+      if (index != null && index >= 0 && index < offline.tracks.length) {
+        await _openDocumentPath(offline.tracks[index].path);
+      }
+    } else if (action == 'play') {
       await _playOffline(offline);
     } else if (action == 'delete' && mounted) {
       final confirmed = await showDialog<bool>(
