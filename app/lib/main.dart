@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 import 'diagnostics/fundus_diagnostics.dart';
 import 'library/android_storage_access.dart';
 import 'library/document_file_opener.dart';
+import 'library/document_preview.dart';
 import 'library/recent_library_store.dart';
 import 'library/security_scoped_bookmarks.dart';
 import 'library/zip_archive_browser.dart';
@@ -3969,11 +3970,30 @@ class _DetailPanelState extends State<_DetailPanel> {
       await showZipArchiveBrowser(
         context,
         archivePath: file.absolutePath,
-        onOpenExtracted: _openFileWithSystemApp,
+        onOpenExtracted: _openDocumentPath,
       );
       return;
     }
-    await _openFileWithSystemApp(file.absolutePath);
+    await _openDocumentPath(file.absolutePath);
+  }
+
+  Future<void> _openDocumentPath(String path) async {
+    if (!supportsInternalDocumentPreview(path)) {
+      await _openFileWithSystemApp(path);
+      return;
+    }
+    try {
+      await showDocumentPreview(
+        context,
+        path: path,
+        onOpenExternal: _openFileWithSystemApp,
+      );
+    } on DocumentPreviewException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
   }
 
   Future<void> _openFileWithSystemApp(String path) async {

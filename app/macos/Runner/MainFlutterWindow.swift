@@ -1,5 +1,6 @@
 import Cocoa
 import FlutterMacOS
+import PDFKit
 
 class MainFlutterWindow: NSWindow {
   private var securityScopedURLs: [URL] = []
@@ -86,6 +87,65 @@ class MainFlutterWindow: NSWindow {
         return
       }
       result(NSWorkspace.shared.open(URL(fileURLWithPath: path)))
+    }
+
+    let pdfRenderer = FlutterMethodChannel(
+      name: "dev.fundus/pdf_renderer",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+    pdfRenderer.setMethodCallHandler { call, result in
+      guard
+        let arguments = call.arguments as? [String: Any],
+        let path = arguments["path"] as? String,
+        let document = PDFDocument(url: URL(fileURLWithPath: path))
+      else {
+        result(FlutterError(
+          code: "pdf_error",
+          message: "Die PDF-Datei konnte nicht gelesen werden.",
+          details: nil
+        ))
+        return
+      }
+      switch call.method {
+      case "pageCount":
+        result(document.pageCount)
+      case "renderPage":
+        guard
+          let pageIndex = arguments["page"] as? Int,
+          pageIndex >= 0,
+          let page = document.page(at: pageIndex)
+        else {
+          result(FlutterError(
+            code: "pdf_page_error",
+            message: "Die PDF-Seite existiert nicht.",
+            details: nil
+          ))
+          return
+        }
+        let requestedWidth = (arguments["maxWidth"] as? Int) ?? 1800
+        let width = CGFloat(min(max(requestedWidth, 600), 2400))
+        let bounds = page.bounds(for: .mediaBox)
+        let height = min(
+          CGFloat(3600),
+          max(CGFloat(1), width * bounds.height / max(bounds.width, CGFloat(1)))
+        )
+        let image = page.thumbnail(of: NSSize(width: width, height: height), for: .mediaBox)
+        guard
+          let tiff = image.tiffRepresentation,
+          let bitmap = NSBitmapImageRep(data: tiff),
+          let png = bitmap.representation(using: .png, properties: [:])
+        else {
+          result(FlutterError(
+            code: "pdf_render_error",
+            message: "Die PDF-Seite konnte nicht dargestellt werden.",
+            details: nil
+          ))
+          return
+        }
+        result(FlutterStandardTypedData(bytes: png))
+      default:
+        result(FlutterMethodNotImplemented)
+      }
     }
 
     super.awakeFromNib()
