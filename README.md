@@ -75,8 +75,13 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - TLS- und token-geschützter LAN-Mehrbibliotheks-Server mit Werkliste, Details,
   Cover, ID-basiertem `Range`-Streaming und idempotentem Fortschrittsabgleich;
   absolute Medienpfade verlassen das Gerät nicht
-- App-Einstellungsdialog für Serverstatus und gleichzeitig freigegebene
-  Bibliotheken, explizite LAN-Freigabe und fünf Minuten gültiges QR/PIN-Pairing
+- zentrales Einstellungsmenü für Wiedergabe, Darstellung, Bibliothek, Suche,
+  Server und Diagnose mit sichtbaren Geltungsbereichen für Gerät, Bibliothek,
+  Server und Nutzerprofil
+- validierter Einstellungs-Export und -Import mit Vorschau; Bibliothekspfade,
+  Zertifikate, private Schlüssel und Pairing-Tokens werden nicht übertragen
+- Serverstatus und gleichzeitig freigegebene Bibliotheken, explizite
+  LAN-Freigabe und fünf Minuten gültiges QR/PIN-Pairing
 - stabile Peer-Identität, Zertifikats-Pinning, nur als Hash gespeicherte
   Server-Tokens und widerrufbare Geräteberechtigungen
 - erster Remote-Client mit QR-Scanner, sicherem System-Schlüsselspeicher sowie

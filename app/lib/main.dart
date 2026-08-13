@@ -189,6 +189,8 @@ class _FundusAppState extends State<FundusApp> {
               }),
               onExportDiagnostics: _library == null ? null : _exportDiagnostics,
               onToggleTheme: _toggleTheme,
+              themeMode: _themeMode,
+              onThemeModeChanged: (mode) => setState(() => _themeMode = mode),
               peerServer: _peerServer,
               offlineStore: _offlineStore,
               offlineWorks: _offlineWorks,
@@ -527,6 +529,9 @@ class _FundusAppState extends State<FundusApp> {
       dialogContext,
       _peerServer,
       offlineStore: _offlineStore,
+      themeMode: _themeMode,
+      onThemeModeChanged: (mode) => setState(() => _themeMode = mode),
+      onExportDiagnostics: _library == null ? null : _exportDiagnostics,
     );
     await _loadRemoteLibraries();
   }
@@ -1004,6 +1009,8 @@ class LibraryShell extends StatefulWidget {
     super.key,
     required this.works,
     required this.onToggleTheme,
+    this.themeMode = ThemeMode.dark,
+    this.onThemeModeChanged,
     this.library,
     this.libraryName,
     this.indexEvent,
@@ -1024,6 +1031,8 @@ class LibraryShell extends StatefulWidget {
   final List<LibraryWorkSummary> works;
   final FundusLibrary? library;
   final VoidCallback onToggleTheme;
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode>? onThemeModeChanged;
   final String? libraryName;
   final LibraryIndexEvent? indexEvent;
   final VoidCallback? onRescan;
@@ -1870,6 +1879,9 @@ class _LibraryShellState extends State<LibraryShell> {
       context,
       controller,
       offlineStore: widget.offlineStore,
+      themeMode: widget.themeMode,
+      onThemeModeChanged: widget.onThemeModeChanged,
+      onExportDiagnostics: widget.onExportDiagnostics,
     );
   }
 

@@ -208,12 +208,27 @@ void main() {
     await tester.tap(find.byTooltip('Server & Freigaben').first);
     await tester.pumpAndSettle();
 
-    expect(find.text('Server & Freigaben'), findsWidgets);
+    expect(find.text('Einstellungen'), findsOneWidget);
+    expect(find.text('Wiedergabe'), findsWidgets);
+    expect(find.text('Darstellung'), findsOneWidget);
+    expect(find.text('Bibliothek'), findsWidgets);
+    expect(find.text('Suche'), findsWidgets);
+    expect(find.text('Diagnose'), findsOneWidget);
+    await tester.tap(find.widgetWithText(Tab, 'Server'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Server und Geräte'), findsOneWidget);
     expect(find.text('Server ist aus'), findsOneWidget);
-    expect(find.text('Freigegebene Bibliotheken'), findsOneWidget);
+    expect(find.text('Name dieses Geräts'), findsOneWidget);
     expect(find.textContaining('Ohne LAN-Freigabe'), findsOneWidget);
     expect(find.text('Im lokalen Netzwerk freigeben'), findsOneWidget);
-    expect(find.text('Bei abweichendem Hörstand nachfragen'), findsOneWidget);
+    expect(find.text('Server'), findsWidgets);
+
+    await tester.tap(find.widgetWithText(Tab, 'Diagnose'));
+    await tester.pumpAndSettle();
+    expect(find.text('Einstellungen exportieren'), findsOneWidget);
+    expect(find.text('Einstellungen importieren'), findsOneWidget);
+    expect(find.text('Gerät'), findsWidgets);
   });
 
   testWidgets('desktop search tolerates a misspelled title', (tester) async {
