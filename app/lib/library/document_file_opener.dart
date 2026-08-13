@@ -14,11 +14,6 @@ final class DocumentFileOpener {
         'Die Datei ist nicht mehr am gespeicherten Ort vorhanden.',
       );
     }
-    if (!Platform.isAndroid && !Platform.isMacOS) {
-      throw const DocumentOpenException(
-        'Das Öffnen von Dokumenten wird auf diesem System noch nicht unterstützt.',
-      );
-    }
     try {
       final opened = await _channel.invokeMethod<bool>('open', {'path': path});
       if (opened != true) {
