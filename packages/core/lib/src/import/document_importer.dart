@@ -56,6 +56,7 @@ final class DocumentImporter {
     'tiff',
     'svg',
     'zip',
+    'cbz',
     '7z',
     'rar',
     'tar',

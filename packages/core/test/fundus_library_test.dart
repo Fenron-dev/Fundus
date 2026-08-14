@@ -892,6 +892,42 @@ void main() {
     },
   );
 
+  test(
+    'stores generic comic page progress without converting it to time',
+    () async {
+      final root = await Directory.systemTemp.createTemp('fundus-comic-');
+      addTearDown(() => root.delete(recursive: true));
+      final documents = Directory('${root.path}/Documents');
+      await documents.create(recursive: true);
+      await File('${documents.path}/Comic.cbz').writeAsBytes([1, 2, 3]);
+
+      final library = await FundusLibrary.create(root);
+      addTearDown(library.close);
+      await library.index().drain<void>();
+      final work = library.listWorks().single;
+      final track = library.playbackTracks(work.id).single;
+
+      final saved = library.saveMediaProgress(
+        workId: work.id,
+        fileId: track.fileId,
+        position: MediaPosition(
+          kind: MediaPositionKind.imageIndex,
+          numericValue: 7,
+          total: 24,
+          fileId: track.fileId,
+          label: 'Seite 7',
+        ),
+        operationId: 'comic-page-7',
+      );
+
+      expect(saved.position.kind, MediaPositionKind.imageIndex);
+      expect(saved.position.numericValue, 7);
+      expect(saved.position.total, 24);
+      expect(saved.position.label, 'Seite 7');
+      expect(library.loadProgress(work.id)?.position.displayValue, 'Bild 7');
+    },
+  );
+
   test('open rejects a directory without a manifest', () async {
     final root = await Directory.systemTemp.createTemp('fundus-empty-');
     addTearDown(() => root.delete(recursive: true));

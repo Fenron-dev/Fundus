@@ -11,6 +11,7 @@ import 'package:path/path.dart' as p;
 
 import 'diagnostics/fundus_diagnostics.dart';
 import 'library/android_storage_access.dart';
+import 'library/comic_book_viewer.dart';
 import 'library/document_file_opener.dart';
 import 'library/document_preview.dart';
 import 'library/recent_library_store.dart';
@@ -3468,13 +3469,15 @@ class _DocumentFilesPanel extends StatelessWidget {
     ),
   );
 
-  static IconData _fileIcon(String filename) =>
-      switch (filename.toLowerCase().split('.').last) {
-        'pdf' => Icons.picture_as_pdf_outlined,
-        'jpg' || 'jpeg' || 'png' || 'webp' || 'gif' => Icons.image_outlined,
-        'zip' || '7z' || 'rar' || 'tar' || 'gz' => Icons.archive_outlined,
-        _ => Icons.insert_drive_file_outlined,
-      };
+  static IconData _fileIcon(String filename) => switch (filename
+      .toLowerCase()
+      .split('.')
+      .last) {
+    'pdf' => Icons.picture_as_pdf_outlined,
+    'jpg' || 'jpeg' || 'png' || 'webp' || 'gif' => Icons.image_outlined,
+    'zip' || 'cbz' || '7z' || 'rar' || 'tar' || 'gz' => Icons.archive_outlined,
+    _ => Icons.insert_drive_file_outlined,
+  };
 }
 
 class _AudioCompatibilityPanel extends StatelessWidget {
@@ -3966,7 +3969,12 @@ class _DetailPanelState extends State<_DetailPanel> {
   }
 
   Future<void> _openDocument(LibraryPlaybackTrack file) async {
-    if (p.extension(file.absolutePath).toLowerCase() == '.zip') {
+    final extension = p.extension(file.absolutePath).toLowerCase();
+    if (extension == '.cbz') {
+      await _openComic(file);
+      return;
+    }
+    if (extension == '.zip') {
       await showZipArchiveBrowser(
         context,
         archivePath: file.absolutePath,
@@ -3978,6 +3986,10 @@ class _DetailPanelState extends State<_DetailPanel> {
   }
 
   Future<void> _openDocumentPath(String path) async {
+    if (p.extension(path).toLowerCase() == '.cbz') {
+      await showComicBookViewer(context, archivePath: path);
+      return;
+    }
     if (!supportsInternalDocumentPreview(path)) {
       await _openFileWithSystemApp(path);
       return;
@@ -3993,6 +4005,48 @@ class _DetailPanelState extends State<_DetailPanel> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+
+  Future<void> _openComic(LibraryPlaybackTrack file) async {
+    final library = widget.library;
+    final work = widget.work;
+    final progress = work == null || library == null
+        ? null
+        : library.loadProgress(work.id);
+    final storedPosition = progress?.position;
+    final initialPage =
+        storedPosition?.kind == MediaPositionKind.imageIndex &&
+            storedPosition?.fileId == file.fileId
+        ? ((storedPosition!.numericValue ?? 1).round() - 1).clamp(0, 1 << 30)
+        : 0;
+    await showComicBookViewer(
+      context,
+      archivePath: file.absolutePath,
+      initialPage: initialPage,
+      onPageChanged: library == null || work == null || library.isReadOnly
+          ? null
+          : (page, total) {
+              library.saveMediaProgress(
+                workId: work.id,
+                fileId: file.fileId,
+                position: MediaPosition(
+                  kind: MediaPositionKind.imageIndex,
+                  numericValue: page + 1,
+                  total: total.toDouble(),
+                  fileId: file.fileId,
+                  label: 'Seite ${page + 1}',
+                ),
+                finished: page + 1 >= total,
+              );
+            },
+    );
+    if (library != null && work != null) {
+      final refreshed = library
+          .listWorks(includeMissing: true)
+          .where((candidate) => candidate.id == work.id)
+          .firstOrNull;
+      if (refreshed != null) widget.onMetadataChanged?.call(refreshed);
     }
   }
 
@@ -4768,6 +4822,21 @@ class _ProgressLabel extends StatelessWidget {
 ) {
   final current = player?.work?.id == work.id;
   final session = player?.progressForWork(work.id);
+  final mediaProgress = work.mediaProgress;
+  if (!current &&
+      session == null &&
+      mediaProgress != null &&
+      mediaProgress.kind != MediaPositionKind.time) {
+    final total = mediaProgress.total;
+    final value = mediaProgress.numericValue;
+    final label = mediaProgress.label ?? mediaProgress.displayValue;
+    return (
+      fraction: mediaProgress.fraction ?? 0,
+      label: total == null || value == null
+          ? label
+          : '$label von ${total.round()}',
+    );
+  }
   final position = current
       ? player!.position
       : session?.position ?? work.progressPosition;

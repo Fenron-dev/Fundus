@@ -14,6 +14,7 @@ import '../model/library_configuration.dart';
 import '../model/library_manifest.dart';
 import '../model/library_playlist.dart';
 import '../model/library_saved_view.dart';
+import '../model/media_position.dart';
 import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
 import '../scan/library_scanner.dart';
@@ -324,6 +325,22 @@ final class FundusLibrary {
     fileId: fileId,
     position: position,
     duration: duration,
+    finished: finished,
+    deviceId: deviceId,
+    operationId: operationId ?? FundusId.generate(),
+  );
+
+  LibraryPlaybackProgress saveMediaProgress({
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    bool finished = false,
+    String deviceId = 'desktop-local',
+    String? operationId,
+  }) => _database.saveMediaProgress(
+    workId: workId,
+    fileId: fileId,
+    position: position,
     finished: finished,
     deviceId: deviceId,
     operationId: operationId ?? FundusId.generate(),

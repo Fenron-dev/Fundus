@@ -39,6 +39,7 @@ final class LibraryWorkSummary {
     this.abridged,
     this.progressPosition,
     this.progressDuration,
+    this.mediaProgress,
     this.progressTrackIndex,
     this.progressFinished = false,
     this.status = 'available',
@@ -71,6 +72,7 @@ final class LibraryWorkSummary {
   final bool? abridged;
   final Duration? progressPosition;
   final Duration? progressDuration;
+  final MediaPosition? mediaProgress;
   final int? progressTrackIndex;
   final bool progressFinished;
   final String status;
@@ -504,6 +506,10 @@ final class FundusDatabase {
              w.metadata_json, w.status, COUNT(content.id) AS file_count,
              COALESCE(cover.path, w.generated_cover_path) AS cover_path,
              progress.numeric_value AS progress_position,
+             progress.position_kind AS progress_kind,
+             progress.position_key AS progress_key,
+             progress.position_label AS progress_label,
+             progress.file_id AS progress_file_id,
              progress.total AS progress_total,
              progress.finished AS progress_finished,
              progress.updated_at AS progress_updated_at,
@@ -559,8 +565,22 @@ final class FundusDatabase {
             asin: metadata['asin'] as String?,
             explicit: metadata['explicit'] as bool?,
             abridged: metadata['abridged'] as bool?,
-            progressPosition: _seconds(row['progress_position']),
-            progressDuration: _seconds(row['progress_total']),
+            progressPosition: row['progress_kind'] == 'time'
+                ? _seconds(row['progress_position'])
+                : null,
+            progressDuration: row['progress_kind'] == 'time'
+                ? _seconds(row['progress_total'])
+                : null,
+            mediaProgress: row['progress_kind'] is String
+                ? MediaPosition.fromJson({
+                    'kind': row['progress_kind'] as String,
+                    'numeric_value': row['progress_position'] as num?,
+                    'key': row['progress_key'] as String?,
+                    'label': row['progress_label'] as String?,
+                    'total': row['progress_total'] as num?,
+                    'file_id': row['progress_file_id'] as String?,
+                  })
+                : null,
             progressTrackIndex: row['progress_track_index'] as int?,
             progressFinished: (row['progress_finished'] as int?) == 1,
             status: row['status'] as String,
@@ -771,6 +791,27 @@ final class FundusDatabase {
     required bool finished,
     required String deviceId,
     required String operationId,
+  }) => saveMediaProgress(
+    workId: workId,
+    fileId: fileId,
+    position: MediaPosition(
+      kind: MediaPositionKind.time,
+      numericValue: position.inMilliseconds / 1000,
+      total: duration == null ? null : duration.inMilliseconds / 1000,
+      fileId: fileId,
+    ),
+    finished: finished,
+    deviceId: deviceId,
+    operationId: operationId,
+  );
+
+  LibraryPlaybackProgress saveMediaProgress({
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    required bool finished,
+    required String deviceId,
+    required String operationId,
   }) {
     return transaction(() {
       final processed = _database.select(
@@ -786,10 +827,12 @@ final class FundusDatabase {
       final revision = (loadProgress(workId)?.revision ?? 0) + 1;
       final now = DateTime.now().millisecondsSinceEpoch;
       final mediaPosition = MediaPosition(
-        kind: MediaPositionKind.time,
-        numericValue: position.inMilliseconds / 1000,
-        total: duration == null ? null : duration.inMilliseconds / 1000,
+        kind: position.kind,
+        numericValue: position.numericValue,
+        key: position.key,
+        total: position.total,
         fileId: fileId,
+        label: position.label,
       );
       final snapshot = jsonEncode({
         'work_id': workId,

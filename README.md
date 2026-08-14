@@ -70,7 +70,9 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
   durchlaufen und einzelne Einträge sicher temporär geöffnet werden; PDF- und
   Rasterbilddateien besitzen zusätzlich eine interne, zoombare Vorschau; auch
   Remote- und Offline-Dokumente nutzen dieselbe Dateiliste und Vorschau, wobei
-  Netzwerkdateien begrenzt und nur temporär zwischengespeichert werden
+  Netzwerkdateien begrenzt und nur temporär zwischengespeichert werden; CBZ-
+  Comics öffnen als natürlich sortierte, zoombare Seitenfolge und merken den
+  lokalen Lesefortschritt im generischen Fundus-Fortschrittsmodell
 - manueller Hörbuch-Metadateneditor für Titel, mehrere Autoren und Sprecher,
   Serie/Band, Sprache, Verlag/Jahr und Beschreibung; Änderungen werden ohne
   Eingriff in die Mediendatei portabel in `_fundus/meta.yaml` gespiegelt

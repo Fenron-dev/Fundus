@@ -7,6 +7,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../diagnostics/fundus_diagnostics.dart';
+import '../library/comic_book_viewer.dart';
 import '../library/document_file_opener.dart';
 import '../library/document_preview.dart';
 import '../library/zip_archive_browser.dart';
@@ -2010,7 +2011,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     }.any(lower.endsWith)) {
       return Icons.image_outlined;
     }
-    if (lower.endsWith('.zip')) return Icons.archive_outlined;
+    if (lower.endsWith('.zip') || lower.endsWith('.cbz')) {
+      return Icons.archive_outlined;
+    }
     return Icons.description_outlined;
   }
 
@@ -2069,7 +2072,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
 
   Future<void> _openDocumentPath(String path) async {
     try {
-      if (path.toLowerCase().endsWith('.zip')) {
+      if (path.toLowerCase().endsWith('.cbz')) {
+        await showComicBookViewer(context, archivePath: path);
+      } else if (path.toLowerCase().endsWith('.zip')) {
         await showZipArchiveBrowser(
           context,
           archivePath: path,

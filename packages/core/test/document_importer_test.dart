@@ -48,4 +48,18 @@ void main() {
       containsAll(['Wichtige Datei', 'Familie']),
     );
   });
+
+  test('indexes CBZ files below the document roots', () {
+    final importer = DocumentImporter(
+      mediaRoots: LibraryConfiguration.defaults,
+    );
+
+    final candidates = importer.group([
+      file('Documents/Comic 01.cbz', mimeType: 'application/vnd.comicbook+zip'),
+    ]);
+
+    expect(candidates, hasLength(1));
+    expect(candidates.single.kind, 'document');
+    expect(candidates.single.title, 'Comic 01');
+  });
 }
