@@ -1975,6 +1975,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     'podcast' => 'Podcast',
     'music' => 'Musik',
     'ebook' || 'book' => 'E-Book',
+    'manga' => 'Manga/Comic',
     'image' => 'Bild',
     'document' || 'archive' => 'Dokument',
     _ => kind,
@@ -1985,6 +1986,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     'podcast' => Icons.podcasts_outlined,
     'music' => Icons.music_note_outlined,
     'ebook' || 'book' => Icons.menu_book_outlined,
+    'manga' => Icons.auto_stories_outlined,
     'image' => Icons.image_outlined,
     'document' || 'archive' => Icons.description_outlined,
     _ => Icons.audiotrack,
@@ -1992,6 +1994,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
 
   static bool _isDocumentKind(String kind) => const {
     'ebook',
+    'manga',
     'image',
     'document',
     'ttrpg_product',

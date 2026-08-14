@@ -62,4 +62,29 @@ void main() {
     expect(candidates.single.kind, 'document');
     expect(candidates.single.title, 'Comic 01');
   });
+
+  test('groups CBZ chapters and cover below a manga root', () {
+    final importer = DocumentImporter(
+      mediaRoots: LibraryConfiguration.defaults,
+    );
+
+    final candidates = importer.group([
+      file('Manga/Rebirth/cover.png', mimeType: 'image/png'),
+      file(
+        'Manga/Rebirth/Rebirth - Kapitel 0280.cbz',
+        mimeType: 'application/vnd.comicbook+zip',
+      ),
+      file(
+        'Manga/Rebirth/Rebirth - Kapitel 0281.cbz',
+        mimeType: 'application/vnd.comicbook+zip',
+      ),
+    ]);
+
+    expect(candidates, hasLength(1));
+    expect(candidates.single.kind, 'manga');
+    expect(candidates.single.title, 'Rebirth');
+    expect(candidates.single.directory, 'Manga/Rebirth');
+    expect(candidates.single.files, hasLength(3));
+    expect(candidates.single.coverFile?.filename, 'cover.png');
+  });
 }

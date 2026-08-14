@@ -35,6 +35,7 @@ final class DocumentImporter {
 
   static const _supportedKinds = {
     'book',
+    'manga',
     'image',
     'document',
     'ttrpg_product',

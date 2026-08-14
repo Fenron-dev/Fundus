@@ -1104,6 +1104,7 @@ class _LibraryShellState extends State<LibraryShell> {
             .where(
               (work) => const {
                 'ebook',
+                'manga',
                 'image',
                 'document',
                 'ttrpg_product',
@@ -1412,8 +1413,8 @@ class _LibraryShellState extends State<LibraryShell> {
           ),
           ListTile(
             leading: const Icon(Icons.description_outlined),
-            title: const Text('Dokumente & TTRPG'),
-            subtitle: const Text('PDFs, E-Books, Bilder und Archive'),
+            title: const Text('Dokumente, Manga & TTRPG'),
+            subtitle: const Text('PDFs, E-Books, CBZ, Bilder und Archive'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => setState(() {
               _section = _LibrarySection.documents;
@@ -2088,7 +2089,7 @@ class _LibraryShellState extends State<LibraryShell> {
     if (_selectedAuthor != null) return _selectedAuthor!;
     if (_selectedNarrator != null) return 'Gesprochen von $_selectedNarrator';
     return _section == _LibrarySection.documents
-        ? 'Dokumente, Bilder & TTRPG'
+        ? 'Dokumente, Manga, Bilder & TTRPG'
         : 'Hörbücher & Hörspiele';
   }
 
@@ -2996,8 +2997,8 @@ class _Sidebar extends StatelessWidget {
         ),
         ListTile(
           leading: const Icon(Icons.collections_bookmark_outlined),
-          title: const Text('Dokumente & TTRPG'),
-          subtitle: const Text('PDFs, Bilder und Archive'),
+          title: const Text('Dokumente, Manga & TTRPG'),
+          subtitle: const Text('PDFs, CBZ, Bilder und Archive'),
           selected: selectedSection == _LibrarySection.documents,
           onTap: () => onSelectSection(_LibrarySection.documents),
         ),
@@ -4780,6 +4781,7 @@ class _WorkCover extends StatelessWidget {
 String _workKindLabel(String kind) => switch (kind) {
   'audiobook' => 'Hörbuch',
   'ebook' => 'E-Book/PDF',
+  'manga' => 'Manga/Comic',
   'image' => 'Bildsammlung',
   'document' => 'Dokument',
   'ttrpg_product' => 'TTRPG-Produkt',
@@ -4790,6 +4792,7 @@ String _workKindLabel(String kind) => switch (kind) {
 IconData _workKindIcon(String kind) => switch (kind) {
   'audiobook' => Icons.music_note,
   'ebook' => Icons.menu_book_outlined,
+  'manga' => Icons.auto_stories_outlined,
   'image' => Icons.image_outlined,
   'document' => Icons.description_outlined,
   'ttrpg_product' => Icons.casino_outlined,

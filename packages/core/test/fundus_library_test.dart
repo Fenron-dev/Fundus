@@ -928,6 +928,39 @@ void main() {
     },
   );
 
+  test('indexes a manga folder with CBZ chapters and a cover', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-manga-');
+    addTearDown(() => root.delete(recursive: true));
+    final manga = Directory('${root.path}/Manga/Rebirth');
+    await manga.create(recursive: true);
+    await File('${manga.path}/cover.png').writeAsBytes([1, 2, 3]);
+    await File(
+      '${manga.path}/Rebirth - Kapitel 0280.cbz',
+    ).writeAsBytes([1, 2, 3]);
+    await File(
+      '${manga.path}/Rebirth - Kapitel 0281.cbz',
+    ).writeAsBytes([1, 2, 3]);
+
+    final library = await FundusLibrary.create(root);
+    addTearDown(library.close);
+    await library.index().drain<void>();
+
+    final work = library.listWorks().single;
+    expect(work.kind, 'manga');
+    expect(work.title, 'Rebirth');
+    expect(work.fileCount, 3);
+    expect(work.coverPath, endsWith('cover.png'));
+    expect(library.workDirectoryPath(work.id), manga.path);
+    expect(
+      library.playbackTracks(work.id).map((file) => file.title),
+      containsAll([
+        'cover.png',
+        'Rebirth - Kapitel 0280.cbz',
+        'Rebirth - Kapitel 0281.cbz',
+      ]),
+    );
+  });
+
   test('open rejects a directory without a manifest', () async {
     final root = await Directory.systemTemp.createTemp('fundus-empty-');
     addTearDown(() => root.delete(recursive: true));
