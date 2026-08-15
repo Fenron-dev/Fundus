@@ -15,6 +15,7 @@ import 'library/comic_book_viewer.dart';
 import 'library/document_file_opener.dart';
 import 'library/document_preview.dart';
 import 'library/publication_reader_settings.dart';
+import 'library/reader_progress_conflict.dart';
 import 'library/recent_library_store.dart';
 import 'library/security_scoped_bookmarks.dart';
 import 'library/zip_archive_browser.dart';
@@ -4207,9 +4208,13 @@ class _DetailPanelState extends State<_DetailPanel> {
             .toList(growable: false)
           ..sort((left, right) => left.index.compareTo(right.index));
     if (comics.isEmpty) return;
-    final progress = work == null || library == null
+    var progress = work == null || library == null
         ? null
         : library.loadProgress(work.id);
+    if (work != null && library != null) {
+      progress = await _resolveLocalReaderProgress(work, progress);
+      if (!mounted) return;
+    }
     final storedPosition = progress?.position;
     var chapterIndex = comics.indexWhere(
       (file) => file.fileId == (startFileId ?? progress?.fileId),
@@ -4230,7 +4235,9 @@ class _DetailPanelState extends State<_DetailPanel> {
     var publicationBookmarks = library == null || work == null
         ? <LibraryBookmark>[]
         : library.loadAnnotations(work.id).bookmarks;
-    var readerProfile = await PublicationReaderSettings.loadComicProfile();
+    var readerProfile = await PublicationReaderSettings.loadComicProfile(
+      workId: work?.id,
+    );
     if (!mounted) return;
     while (mounted) {
       final file = comics[chapterIndex];
@@ -4274,28 +4281,41 @@ class _DetailPanelState extends State<_DetailPanel> {
         onPositionChanged: library == null || work == null || library.isReadOnly
             ? null
             : (page, total, elementId, scrollOffset) {
+                final position = MediaPosition(
+                  kind: MediaPositionKind.imageIndex,
+                  numericValue: page + 1,
+                  total: total.toDouble(),
+                  fileId: file.fileId,
+                  chapterId: file.title,
+                  elementId: elementId,
+                  scrollOffset: scrollOffset,
+                  key: file.relativePath,
+                  label:
+                      'Kapitel ${chapterIndex + 1}/${comics.length} · Seite ${page + 1}',
+                );
                 library.saveMediaProgress(
                   workId: work.id,
                   fileId: file.fileId,
-                  position: MediaPosition(
-                    kind: MediaPositionKind.imageIndex,
-                    numericValue: page + 1,
-                    total: total.toDouble(),
-                    fileId: file.fileId,
-                    chapterId: file.title,
-                    elementId: elementId,
-                    scrollOffset: scrollOffset,
-                    key: file.relativePath,
-                    label:
-                        'Kapitel ${chapterIndex + 1}/${comics.length} · Seite ${page + 1}',
-                  ),
+                  position: position,
                   finished:
                       chapterIndex + 1 == comics.length && page + 1 >= total,
+                );
+                unawaited(
+                  PublicationReaderSettings.saveDevicePosition(
+                    libraryId: library.manifest.libraryId,
+                    workId: work.id,
+                    position: position,
+                  ),
                 );
               },
         onProfileChanged: (profile) {
           readerProfile = profile;
-          unawaited(PublicationReaderSettings.saveComicProfile(profile));
+          unawaited(
+            PublicationReaderSettings.saveComicProfile(
+              profile,
+              workId: work?.id,
+            ),
+          );
         },
       );
       if (!mounted || result == null) break;
@@ -4358,6 +4378,8 @@ class _DetailPanelState extends State<_DetailPanel> {
     LibraryPlaybackProgress? progress,
   ) async {
     final library = widget.library;
+    progress = await _resolveLocalReaderProgress(work, progress);
+    if (!mounted) return;
     final position = progress?.position;
     final initialPage =
         position?.kind == MediaPositionKind.page &&
@@ -4373,18 +4395,26 @@ class _DetailPanelState extends State<_DetailPanel> {
         onPageChanged: library == null || library.isReadOnly
             ? null
             : (page, total) {
+                final position = MediaPosition(
+                  kind: MediaPositionKind.page,
+                  numericValue: page + 1,
+                  total: total.toDouble(),
+                  fileId: file.fileId,
+                  key: file.relativePath,
+                  label: 'Seite ${page + 1}',
+                );
                 library.saveMediaProgress(
                   workId: work.id,
                   fileId: file.fileId,
-                  position: MediaPosition(
-                    kind: MediaPositionKind.page,
-                    numericValue: page + 1,
-                    total: total.toDouble(),
-                    fileId: file.fileId,
-                    key: file.relativePath,
-                    label: 'Seite ${page + 1}',
-                  ),
+                  position: position,
                   finished: page + 1 >= total,
+                );
+                unawaited(
+                  PublicationReaderSettings.saveDevicePosition(
+                    libraryId: library.manifest.libraryId,
+                    workId: work.id,
+                    position: position,
+                  ),
                 );
               },
       );
@@ -4401,6 +4431,49 @@ class _DetailPanelState extends State<_DetailPanel> {
           .firstOrNull;
       if (refreshed != null) widget.onMetadataChanged?.call(refreshed);
     }
+  }
+
+  Future<LibraryPlaybackProgress?> _resolveLocalReaderProgress(
+    LibraryWorkSummary work,
+    LibraryPlaybackProgress? sharedProgress,
+  ) async {
+    final library = widget.library;
+    if (library == null || sharedProgress == null) return sharedProgress;
+    final localPosition = await PublicationReaderSettings.loadDevicePosition(
+      libraryId: library.manifest.libraryId,
+      workId: work.id,
+    );
+    final sharedPosition = sharedProgress.position;
+    if (localPosition != null &&
+        sharedProgress.deviceId != 'desktop-local' &&
+        readerPositionsDiffer(localPosition, sharedPosition)) {
+      if (!mounted) return sharedProgress;
+      final choice = await resolveReaderProgressConflict(
+        context,
+        devicePosition: localPosition,
+        serverPosition: sharedPosition,
+        deviceName: Platform.localHostname.isEmpty
+            ? 'Dieser Mac'
+            : Platform.localHostname,
+        serverDeviceName: 'Anderes Gerät',
+      );
+      if (choice == ReaderProgressConflictChoice.keepDevice &&
+          localPosition.fileId != null &&
+          !library.isReadOnly) {
+        return library.saveMediaProgress(
+          workId: work.id,
+          fileId: localPosition.fileId!,
+          position: localPosition,
+          finished: false,
+        );
+      }
+    }
+    await PublicationReaderSettings.saveDevicePosition(
+      libraryId: library.manifest.libraryId,
+      workId: work.id,
+      position: sharedPosition,
+    );
+    return sharedProgress;
   }
 
   Future<void> _openFileWithSystemApp(String path) async {

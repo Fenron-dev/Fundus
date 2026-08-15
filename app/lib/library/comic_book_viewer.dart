@@ -308,6 +308,7 @@ class _ComicBookDialog extends StatefulWidget {
 class _ComicBookDialogState extends State<_ComicBookDialog> {
   final _service = const ZipArchiveService();
   final Map<int, Future<String>> _extractedPages = {};
+  final Map<int, String> _extractedPagePaths = {};
   late final Future<List<ZipArchiveEntry>> _pagesFuture = _service
       .inspect(widget.archivePath)
       .then(comicBookPages);
@@ -867,12 +868,19 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     final start = (page - _profile.preloadCount).clamp(0, pages.length - 1);
     final end = (page + _profile.preloadCount).clamp(0, pages.length - 1);
     for (var index = start; index <= end; index++) {
-      _extractedPages.putIfAbsent(
-        index,
-        () => _service.extractToTemporaryFile(widget.archivePath, pages[index]),
-      );
+      _pageFuture(index, pages[index]);
     }
   }
+
+  Future<String> _pageFuture(int page, ZipArchiveEntry entry) =>
+      _extractedPages.putIfAbsent(page, () async {
+        final path = await _service.extractToTemporaryFile(
+          widget.archivePath,
+          entry,
+        );
+        _extractedPagePaths[page] = path;
+        return path;
+      });
 
   Future<void> _showPageOverview(
     List<ZipArchiveEntry> pages,
@@ -935,13 +943,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
                         children: [
                           Expanded(
                             child: FutureBuilder<String>(
-                              future: _extractedPages.putIfAbsent(
-                                page,
-                                () => _service.extractToTemporaryFile(
-                                  widget.archivePath,
-                                  pages[page],
-                                ),
-                              ),
+                              future: _pageFuture(page, pages[page]),
                               builder: (context, snapshot) => snapshot.hasError
                                   ? const Center(
                                       child: Icon(Icons.broken_image_outlined),
@@ -1190,56 +1192,80 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     bool continuous = false,
     bool continuousHorizontal = false,
     Size? viewport,
-  }) => FutureBuilder<String>(
-    future: _extractedPages.putIfAbsent(
-      page,
-      () => _service.extractToTemporaryFile(widget.archivePath, pages[page]),
-    ),
-    builder: (context, pageSnapshot) {
-      if (pageSnapshot.connectionState != ConnectionState.done) {
-        return SizedBox(
-          height: continuous ? 480 : null,
-          child: const Center(child: CircularProgressIndicator()),
-        );
-      }
-      if (pageSnapshot.hasError) {
-        return SizedBox(
-          height: continuous ? 240 : null,
-          child: Center(
-            child: Text(
-              'Seite ${page + 1} konnte nicht geöffnet werden.',
-              style: const TextStyle(color: Colors.white),
+  }) {
+    final extractedPath = _extractedPagePaths[page];
+    if (extractedPath != null) {
+      return _buildExtractedPage(
+        File(extractedPath),
+        page,
+        continuous: continuous,
+        continuousHorizontal: continuousHorizontal,
+        viewport: viewport,
+      );
+    }
+    return FutureBuilder<String>(
+      future: _pageFuture(page, pages[page]),
+      builder: (context, pageSnapshot) {
+        if (pageSnapshot.connectionState != ConnectionState.done) {
+          return SizedBox(
+            height: continuous ? 480 : null,
+            child: const Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (pageSnapshot.hasError) {
+          return SizedBox(
+            height: continuous ? 240 : null,
+            child: Center(
+              child: Text(
+                'Seite ${page + 1} konnte nicht geöffnet werden.',
+                style: const TextStyle(color: Colors.white),
+              ),
             ),
-          ),
+          );
+        }
+        return _buildExtractedPage(
+          File(pageSnapshot.data!),
+          page,
+          continuous: continuous,
+          continuousHorizontal: continuousHorizontal,
+          viewport: viewport,
         );
-      }
-      final file = File(pageSnapshot.data!);
-      final image = Image.file(
-        file,
-        fit: _imageFit,
-        errorBuilder: (context, error, stackTrace) => Text(
-          'Seite ${page + 1} konnte nicht dargestellt werden.',
-          style: const TextStyle(color: Colors.white),
-        ),
-      );
-      final pageContent = Padding(
-        padding: EdgeInsets.all(
-          _profile.layout == PublicationReaderLayout.webtoon
-              ? 0
-              : _profile.pageGap / 2,
-        ),
-        child: continuous
-            ? _buildContinuousImage(
-                file,
-                viewport!,
-                horizontal: continuousHorizontal,
-              )
-            : Center(child: image),
-      );
-      if (continuous) return pageContent;
-      return InteractiveViewer(minScale: .5, maxScale: 6, child: pageContent);
-    },
-  );
+      },
+    );
+  }
+
+  Widget _buildExtractedPage(
+    File file,
+    int page, {
+    required bool continuous,
+    required bool continuousHorizontal,
+    required Size? viewport,
+  }) {
+    final image = Image.file(
+      file,
+      fit: _imageFit,
+      errorBuilder: (context, error, stackTrace) => Text(
+        'Seite ${page + 1} konnte nicht dargestellt werden.',
+        style: const TextStyle(color: Colors.white),
+      ),
+    );
+    final pageContent = Padding(
+      padding: EdgeInsets.all(
+        _profile.layout == PublicationReaderLayout.webtoon
+            ? 0
+            : _profile.pageGap / 2,
+      ),
+      child: continuous
+          ? _buildContinuousImage(
+              file,
+              viewport!,
+              horizontal: continuousHorizontal,
+            )
+          : Center(child: image),
+    );
+    if (continuous) return pageContent;
+    return InteractiveViewer(minScale: .5, maxScale: 6, child: pageContent);
+  }
 
   Widget _buildReaderSurface(
     List<ZipArchiveEntry> pages,

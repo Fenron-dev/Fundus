@@ -1636,6 +1636,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     final isDocument = _isDocumentKind(work.kind);
     var detailTracks = <FundusRemoteTrack>[];
     FundusOfflineWork? offlineWork;
+    MediaPosition? documentPosition;
+    String? documentProgressFileId;
     if (isOffline) {
       offlineWork = await _offlineStore.lookup(
         serverId: server.id,
@@ -1661,6 +1663,28 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         detailTracks = result.value.tracks;
       } catch (_) {
         // Summary details remain usable if the server becomes unavailable.
+      }
+    }
+    if (isDocument) {
+      if (offlineWork != null) {
+        final offlineProgress = await _offlineStore.loadProgress(
+          serverId: server.id,
+          libraryId: library.id,
+          workId: work.id,
+        );
+        documentPosition = offlineProgress?.mediaPosition;
+        documentProgressFileId = offlineProgress?.fileId;
+      }
+      try {
+        final result = await _runWithReconnect(
+          server,
+          (active) => _client.progress(active, library.id, work.id),
+        );
+        server = result.server;
+        documentPosition ??= result.value?.mediaPosition;
+        documentProgressFileId ??= result.value?.fileId;
+      } catch (_) {
+        // Offline reading remains available without the server.
       }
     }
     if (!mounted) return;
@@ -1798,7 +1822,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                       ),
                       label: Text(
                         isDocument
-                            ? 'Erste Datei anzeigen'
+                            ? documentPosition == null
+                                  ? 'Lesen'
+                                  : 'Fortsetzen'
                             : 'Abspielen / fortsetzen',
                       ),
                     ),
@@ -1851,7 +1877,13 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     if (action?.startsWith('open:') ?? false) {
       final target = action!.substring(5);
       final resume = target == 'resume';
-      final index = resume ? 0 : int.tryParse(target);
+      final progressFileId = documentProgressFileId ?? documentPosition?.fileId;
+      final resumeIndex = detailTracks.indexWhere(
+        (track) => track.id == progressFileId,
+      );
+      final index = resume
+          ? (resumeIndex < 0 ? 0 : resumeIndex)
+          : int.tryParse(target);
       if (index == null || index < 0 || index >= detailTracks.length) return;
       if (detailTracks[index].title.toLowerCase().endsWith('.cbz')) {
         await _openRemoteComicWork(
@@ -1864,7 +1896,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         );
         return;
       }
-      if (offlineWork != null && index < offlineWork.tracks.length) {
+      if (detailTracks[index].title.toLowerCase().endsWith('.pdf')) {
+        await _openRemotePdfWork(
+          server,
+          library,
+          work,
+          detailTracks,
+          offlineWork: offlineWork,
+          startFileId: resume ? null : detailTracks[index].id,
+        );
+      } else if (offlineWork != null && index < offlineWork.tracks.length) {
         await _openDocumentPath(offlineWork.tracks[index].path);
       } else {
         await _openRemoteDocument(server, library, detailTracks[index]);
@@ -2312,8 +2353,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       serverProgress = result.value;
     } catch (_) {}
     var progress = serverProgress ?? localProgress;
+    var selectedDeviceProgress = false;
     final localPosition = localProgress?.mediaPosition;
     final serverPosition = serverProgress?.mediaPosition;
+    final deviceId = await _store.deviceId();
     if (localPosition != null &&
         serverPosition != null &&
         readerPositionsDiffer(localPosition, serverPosition)) {
@@ -2329,6 +2372,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       progress = choice == ReaderProgressConflictChoice.keepDevice
           ? localProgress
           : serverProgress;
+      selectedDeviceProgress =
+          choice == ReaderProgressConflictChoice.keepDevice;
     }
     final storedPosition = progress?.mediaPosition;
     var chapterIndex = comics.indexWhere(
@@ -2346,8 +2391,30 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     var initialScrollOffset = storedPosition?.fileId == comics[chapterIndex].id
         ? storedPosition?.scrollOffset
         : null;
-    var profile = await PublicationReaderSettings.loadComicProfile();
-    final deviceId = await _store.deviceId();
+    var profile = await PublicationReaderSettings.loadComicProfile(
+      workId: work.id,
+    );
+    if (selectedDeviceProgress && localPosition != null) {
+      await _saveRemoteReaderProgress(
+        server,
+        library,
+        work,
+        comics[chapterIndex],
+        localPosition,
+        deviceId: deviceId,
+        finished: localProgress?.finished ?? false,
+      );
+    } else if (serverPosition != null) {
+      final cached = await _offlineStore.saveMediaProgress(
+        serverId: server.id,
+        libraryId: library.id,
+        workId: work.id,
+        fileId: comics[chapterIndex].id,
+        position: serverPosition,
+        finished: serverProgress?.finished ?? false,
+      );
+      await _offlineStore.markProgressSynced(cached);
+    }
     if (!mounted) return;
 
     while (mounted) {
@@ -2386,7 +2453,12 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         chapterFileId: track.id,
         onProfileChanged: (updated) {
           profile = updated;
-          unawaited(PublicationReaderSettings.saveComicProfile(updated));
+          unawaited(
+            PublicationReaderSettings.saveComicProfile(
+              updated,
+              workId: work.id,
+            ),
+          );
         },
         onPositionChanged: (page, total, elementId, scrollOffset) {
           final mediaPosition = MediaPosition(
@@ -2410,7 +2482,6 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
               mediaPosition,
               deviceId: deviceId,
               finished: chapterIndex + 1 == comics.length && page + 1 >= total,
-              offline: offlineTrack != null,
             ),
           );
         },
@@ -2445,20 +2516,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     MediaPosition position, {
     required String deviceId,
     required bool finished,
-    required bool offline,
   }) async {
     try {
-      FundusOfflinePendingProgress? pending;
-      if (offline) {
-        pending = await _offlineStore.saveMediaProgress(
-          serverId: server.id,
-          libraryId: library.id,
-          workId: work.id,
-          fileId: track.id,
-          position: position,
-          finished: finished,
-        );
-      }
+      final pending = await _offlineStore.saveMediaProgress(
+        serverId: server.id,
+        libraryId: library.id,
+        workId: work.id,
+        fileId: track.id,
+        position: position,
+        finished: finished,
+      );
       await _runWithReconnect(
         server,
         (active) => _client.saveMediaProgress(
@@ -2469,15 +2536,158 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           position: position,
           finished: finished,
           deviceId: deviceId,
-          operationId:
-              pending?.operationId ??
-              'reader-${DateTime.now().microsecondsSinceEpoch}-${track.id}',
+          operationId: pending.operationId,
         ),
       );
-      if (pending != null) await _offlineStore.markProgressSynced(pending);
+      await _offlineStore.markProgressSynced(pending);
     } catch (_) {
       // Offline progress remains queued locally and is retried later. A cache
       // write error must not break the serialized queue for later positions.
+    }
+  }
+
+  Future<void> _openRemotePdfWork(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work,
+    List<FundusRemoteTrack> tracks, {
+    required FundusOfflineWork? offlineWork,
+    String? startFileId,
+  }) async {
+    final pdfs =
+        tracks
+            .where((track) => track.title.toLowerCase().endsWith('.pdf'))
+            .toList(growable: false)
+          ..sort((left, right) => left.position.compareTo(right.position));
+    if (pdfs.isEmpty) return;
+
+    final localProgress = await _offlineStore.loadProgress(
+      serverId: server.id,
+      libraryId: library.id,
+      workId: work.id,
+    );
+    FundusRemoteProgress? serverProgress;
+    try {
+      final result = await _runWithReconnect(
+        server,
+        (active) => _client.progress(active, library.id, work.id),
+      );
+      server = result.server;
+      serverProgress = result.value;
+    } catch (_) {}
+
+    final localPosition = localProgress?.mediaPosition;
+    final serverPosition = serverProgress?.mediaPosition;
+    var selectedPosition = serverPosition ?? localPosition;
+    var selectedFinished =
+        serverProgress?.finished ?? localProgress?.finished ?? false;
+    var selectedDeviceProgress = false;
+    if (startFileId == null &&
+        localPosition != null &&
+        serverPosition != null &&
+        readerPositionsDiffer(localPosition, serverPosition)) {
+      final localDeviceName = await _store.deviceName();
+      if (!mounted) return;
+      final choice = await resolveReaderProgressConflict(
+        context,
+        devicePosition: localPosition,
+        serverPosition: serverPosition,
+        deviceName: localDeviceName,
+        serverDeviceName: serverProgress?.deviceName ?? server.name,
+      );
+      selectedDeviceProgress =
+          choice == ReaderProgressConflictChoice.keepDevice;
+      selectedPosition = selectedDeviceProgress
+          ? localPosition
+          : serverPosition;
+      selectedFinished = selectedDeviceProgress
+          ? localProgress?.finished ?? false
+          : serverProgress?.finished ?? false;
+    }
+
+    final targetFileId = startFileId ?? selectedPosition?.fileId;
+    var fileIndex = pdfs.indexWhere((track) => track.id == targetFileId);
+    if (fileIndex < 0) fileIndex = 0;
+    final track = pdfs[fileIndex];
+    final deviceId = await _store.deviceId();
+    if (selectedDeviceProgress && selectedPosition != null) {
+      await _saveRemoteReaderProgress(
+        server,
+        library,
+        work,
+        track,
+        selectedPosition,
+        deviceId: deviceId,
+        finished: selectedFinished,
+      );
+    } else if (serverPosition != null) {
+      final cached = await _offlineStore.saveMediaProgress(
+        serverId: server.id,
+        libraryId: library.id,
+        workId: work.id,
+        fileId: track.id,
+        position: serverPosition,
+        finished: serverProgress?.finished ?? false,
+      );
+      await _offlineStore.markProgressSynced(cached);
+    }
+
+    final offlineTrack = offlineWork?.tracks
+        .where((candidate) => candidate.id == track.id)
+        .firstOrNull;
+    final File file;
+    try {
+      file = offlineTrack == null
+          ? await _cachedRemoteDocument(server, library, track)
+          : File(offlineTrack.path);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('PDF konnte nicht geladen werden.')),
+      );
+      return;
+    }
+    if (!mounted) return;
+    final initialPage =
+        selectedPosition?.kind == MediaPositionKind.page &&
+            selectedPosition?.fileId == track.id &&
+            startFileId == null
+        ? ((selectedPosition!.numericValue ?? 1).round() - 1).clamp(0, 1 << 30)
+        : 0;
+    try {
+      await showDocumentPreview(
+        context,
+        path: file.path,
+        initialPage: initialPage,
+        onOpenExternal: (path) => const DocumentFileOpener().open(path),
+        onPageChanged: (page, total) {
+          final position = MediaPosition(
+            kind: MediaPositionKind.page,
+            numericValue: page + 1,
+            total: total.toDouble(),
+            fileId: track.id,
+            key: track.title,
+            label: 'Seite ${page + 1}',
+          );
+          _readerProgressQueue = _readerProgressQueue.then(
+            (_) => _saveRemoteReaderProgress(
+              server,
+              library,
+              work,
+              track,
+              position,
+              deviceId: deviceId,
+              finished: page + 1 >= total,
+            ),
+          );
+        },
+      );
+      await _readerProgressQueue;
+    } on DocumentPreviewException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
     }
   }
 
@@ -2682,14 +2892,18 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
-                  onPressed: () =>
-                      Navigator.pop(context, isDocument ? 'open:0' : 'play'),
+                  onPressed: () => Navigator.pop(
+                    context,
+                    isDocument ? 'open:resume' : 'play',
+                  ),
                   icon: Icon(
                     isDocument ? Icons.visibility_outlined : Icons.play_arrow,
                   ),
                   label: Text(
                     isDocument
-                        ? 'Erste Datei anzeigen'
+                        ? progress?.mediaPosition == null
+                              ? 'Lesen'
+                              : 'Fortsetzen'
                         : progress != null && progress.position > Duration.zero
                         ? 'Weiterhören'
                         : 'Abspielen',
@@ -2711,9 +2925,79 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       ),
     );
     if (action?.startsWith('open:') ?? false) {
-      final index = int.tryParse(action!.substring(5));
+      final target = action!.substring(5);
+      final resume = target == 'resume';
+      final progressFileId =
+          progress?.fileId ?? progress?.mediaPosition?.fileId;
+      final resumeIndex = offline.tracks.indexWhere(
+        (track) => track.id == progressFileId,
+      );
+      final index = resume
+          ? (resumeIndex < 0 ? 0 : resumeIndex)
+          : int.tryParse(target);
       if (index != null && index >= 0 && index < offline.tracks.length) {
-        await _openDocumentPath(offline.tracks[index].path);
+        final server =
+            _servers.where((item) => item.id == offline.serverId).firstOrNull ??
+            FundusRemoteServer(
+              id: offline.serverId,
+              name: 'Offline',
+              baseUri: Uri.parse('https://127.0.0.1'),
+              certificateFingerprint: ''.padLeft(64, '0'),
+              token: '',
+            );
+        final library = FundusRemoteLibrary(
+          id: offline.libraryId,
+          name: 'Offline',
+          workCount: 1,
+        );
+        final work = FundusRemoteWork(
+          id: offline.workId,
+          title: offline.title,
+          authors: offline.authors,
+          hasCover: offline.coverPath != null,
+          kind: offline.kind,
+          subtitle: offline.subtitle,
+          series: offline.series,
+          seriesSequence: offline.seriesSequence,
+          narrators: offline.narrators,
+          language: offline.language,
+          description: offline.description,
+          publisher: offline.publisher,
+          publishedYear: offline.publishedYear,
+          fileCount: offline.tracks.length,
+        );
+        final tracks = [
+          for (final track in offline.tracks)
+            FundusRemoteTrack(
+              id: track.id,
+              title: track.title,
+              position: track.position,
+              duration: track.duration,
+              audioMetadata: track.audioMetadata,
+            ),
+        ];
+        final selected = offline.tracks[index];
+        if (selected.title.toLowerCase().endsWith('.cbz')) {
+          await _openRemoteComicWork(
+            server,
+            library,
+            work,
+            tracks,
+            offlineWork: offline,
+            startFileId: resume ? null : selected.id,
+          );
+        } else if (selected.title.toLowerCase().endsWith('.pdf')) {
+          await _openRemotePdfWork(
+            server,
+            library,
+            work,
+            tracks,
+            offlineWork: offline,
+            startFileId: resume ? null : selected.id,
+          );
+        } else {
+          await _openDocumentPath(selected.path);
+        }
       }
     } else if (action == 'play') {
       await _playOffline(offline);

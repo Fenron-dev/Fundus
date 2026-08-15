@@ -1,32 +1,131 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:fundus_core/fundus_core.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 abstract final class PublicationReaderSettings {
-  static const _storage = FlutterSecureStorage();
-  static const _comicProfileKey = 'fundus.reader.comic.profile.v1';
+  static const _legacyStorage = FlutterSecureStorage();
+  static const _legacyComicProfileKey = 'fundus.reader.comic.profile.v1';
+  static const _defaultProfileKey = 'default';
+  static Future<void> _writes = Future.value();
 
-  static Future<PublicationReaderProfile> loadComicProfile() async {
+  static Future<PublicationReaderProfile> loadComicProfile({
+    String? workId,
+  }) async {
     try {
-      final source = await _storage.read(key: _comicProfileKey);
-      if (source == null) return const PublicationReaderProfile();
-      final value = jsonDecode(source);
-      if (value is! Map) return const PublicationReaderProfile();
-      return PublicationReaderProfile.fromJson(value.cast<String, Object?>());
+      await _writes;
+      final values = await _readValues();
+      final profiles = values['profiles'];
+      if (profiles is Map) {
+        final value =
+            profiles[workId ?? _defaultProfileKey] ??
+            profiles[_defaultProfileKey];
+        if (value is Map) {
+          return PublicationReaderProfile.fromJson(
+            Map<String, Object?>.from(value),
+          );
+        }
+      }
+      final legacy = await _legacyStorage.read(key: _legacyComicProfileKey);
+      if (legacy != null) {
+        final value = jsonDecode(legacy);
+        if (value is Map) {
+          final profile = PublicationReaderProfile.fromJson(
+            Map<String, Object?>.from(value),
+          );
+          await saveComicProfile(profile, workId: workId);
+          return profile;
+        }
+      }
     } catch (_) {
-      return const PublicationReaderProfile();
+      // Reader preferences are optional; fall back to safe defaults.
+    }
+    return const PublicationReaderProfile();
+  }
+
+  static Future<void> saveComicProfile(
+    PublicationReaderProfile profile, {
+    String? workId,
+  }) {
+    final operation = _writes.then((_) async {
+      try {
+        final values = await _readValues();
+        final profiles = values['profiles'] is Map
+            ? Map<String, Object?>.from(values['profiles'] as Map)
+            : <String, Object?>{};
+        profiles[workId ?? _defaultProfileKey] = profile.toJson();
+        values['profiles'] = profiles;
+        await _writeValues(values);
+      } catch (_) {
+        // Reader settings are optional and must never prevent opening a work.
+      }
+    });
+    _writes = operation;
+    return operation;
+  }
+
+  static Future<MediaPosition?> loadDevicePosition({
+    required String libraryId,
+    required String workId,
+  }) async {
+    try {
+      await _writes;
+      final values = await _readValues();
+      final positions = values['positions'];
+      final value = positions is Map ? positions['$libraryId/$workId'] : null;
+      return value is Map
+          ? MediaPosition.fromJson(Map<String, Object?>.from(value))
+          : null;
+    } catch (_) {
+      return null;
     }
   }
 
-  static Future<void> saveComicProfile(PublicationReaderProfile profile) async {
-    try {
-      await _storage.write(
-        key: _comicProfileKey,
-        value: jsonEncode(profile.toJson()),
-      );
-    } catch (_) {
-      // Reader settings are optional and must never prevent opening a work.
-    }
+  static Future<void> saveDevicePosition({
+    required String libraryId,
+    required String workId,
+    required MediaPosition position,
+  }) {
+    final operation = _writes.then((_) async {
+      try {
+        final values = await _readValues();
+        final positions = values['positions'] is Map
+            ? Map<String, Object?>.from(values['positions'] as Map)
+            : <String, Object?>{};
+        positions['$libraryId/$workId'] = position.toJson();
+        values['positions'] = positions;
+        await _writeValues(values);
+      } catch (_) {
+        // Device checkpoints are a convenience and must not block reading.
+      }
+    });
+    _writes = operation;
+    return operation;
+  }
+
+  static Future<Map<String, Object?>> _readValues() async {
+    final file = await _settingsFile();
+    if (!await file.exists()) return <String, Object?>{};
+    final decoded = jsonDecode(await file.readAsString());
+    return decoded is Map
+        ? Map<String, Object?>.from(decoded)
+        : <String, Object?>{};
+  }
+
+  static Future<void> _writeValues(Map<String, Object?> values) async {
+    final file = await _settingsFile();
+    await file.parent.create(recursive: true);
+    final partial = File('${file.path}.part');
+    await partial.writeAsString(jsonEncode(values), flush: true);
+    if (await file.exists()) await file.delete();
+    await partial.rename(file.path);
+  }
+
+  static Future<File> _settingsFile() async {
+    final directory = await getApplicationSupportDirectory();
+    return File(p.join(directory.path, 'reader-settings.json'));
   }
 }
