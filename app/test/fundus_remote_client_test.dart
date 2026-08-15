@@ -145,6 +145,36 @@ void main() {
     expect(restoredHistory.position, const Duration(seconds: 2));
     expect(restoredHistory.duration, const Duration(seconds: 3));
 
+    final readerPosition = MediaPosition(
+      kind: MediaPositionKind.imageIndex,
+      numericValue: 7,
+      total: 18,
+      fileId: detail.tracks.single.id,
+      chapterId: 'Kapitel 1',
+      elementId: '007.webp',
+      scrollOffset: .35,
+      label: 'Seite 7',
+    );
+    final savedReader = await client.saveMediaProgress(
+      profile,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+      fileId: detail.tracks.single.id,
+      position: readerPosition,
+      finished: false,
+      deviceId: 'client-test',
+      operationId: 'remote-reader-progress-test',
+    );
+    final loadedReader = await client.progress(
+      profile,
+      libraries.single.id,
+      works.single.id,
+    );
+    expect(savedReader.mediaPosition?.kind, MediaPositionKind.imageIndex);
+    expect(loadedReader?.mediaPosition?.numericValue, 7);
+    expect(loadedReader?.mediaPosition?.elementId, '007.webp');
+    expect(loadedReader?.mediaPosition?.scrollOffset, .35);
+
     final queueSession = await client.savePlaybackSession(
       profile,
       libraryId: libraries.single.id,
@@ -251,14 +281,16 @@ void main() {
     expect(offline.chapters, hasLength(1));
     expect(offline.chapters.single.fileId, offline.tracks.single.id);
     expect(transferredBytes, containsAllInOrder([0, 3]));
-    expect(
-      (await offlineStore.loadProgress(
-        serverId: profile.id,
-        libraryId: libraries.single.id,
-        workId: works.single.id,
-      ))?.position,
-      const Duration(seconds: 2),
+    final cachedReaderProgress = await offlineStore.loadProgress(
+      serverId: profile.id,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
     );
+    expect(
+      cachedReaderProgress?.mediaPosition?.kind,
+      MediaPositionKind.imageIndex,
+    );
+    expect(cachedReaderProgress?.mediaPosition?.numericValue, 7);
     final refreshed = await offlineStore.refreshMetadata(
       serverId: profile.id,
       libraryId: libraries.single.id,

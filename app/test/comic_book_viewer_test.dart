@@ -151,6 +151,30 @@ void main() {
     );
   });
 
+  test(
+    'continuous readers retain earlier page futures for stable scrolling',
+    () {
+      expect(
+        comicShouldEvictCachedPage(
+          continuous: true,
+          cachedPage: 1,
+          currentPage: 20,
+          preloadCount: 2,
+        ),
+        isFalse,
+      );
+      expect(
+        comicShouldEvictCachedPage(
+          continuous: false,
+          cachedPage: 1,
+          currentPage: 20,
+          preloadCount: 2,
+        ),
+        isTrue,
+      );
+    },
+  );
+
   test('chapter sequence reports missing and duplicate chapter numbers', () {
     final report = comicChapterSequenceReport([
       'Serie – Kapitel 0280',

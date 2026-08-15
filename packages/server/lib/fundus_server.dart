@@ -596,11 +596,11 @@ final class FundusServerHandler {
     }
     final fileId = decoded['file_id'];
     final seconds = decoded['position_seconds'];
+    final encodedPosition = decoded['position'];
     final operationId = decoded['operation_id'];
     if (fileId is! String ||
-        seconds is! num ||
-        !seconds.isFinite ||
-        seconds < 0 ||
+        (encodedPosition is! Map &&
+            (seconds is! num || !seconds.isFinite || seconds < 0)) ||
         operationId is! String ||
         operationId.trim().isEmpty) {
       return _badRequest('invalid_progress');
@@ -609,24 +609,54 @@ final class FundusServerHandler {
         .playbackTracks(workId)
         .any((track) => track.fileId == fileId);
     if (!validTrack) return _badRequest('file_not_in_work');
-    final total = decoded['duration_seconds'];
-    if (total != null &&
-        (total is! num || !total.isFinite || total < seconds)) {
-      return _badRequest('invalid_duration');
+    final deviceId = decoded['device_id'] is String
+        ? decoded['device_id'] as String
+        : 'remote-peer';
+    final LibraryPlaybackProgress progress;
+    if (encodedPosition is Map) {
+      final MediaPosition mediaPosition;
+      try {
+        mediaPosition = MediaPosition.fromJson(
+          Map<String, Object?>.from(encodedPosition),
+        );
+      } on Object {
+        return _badRequest('invalid_progress_position');
+      }
+      final numeric = mediaPosition.numericValue;
+      final total = mediaPosition.total;
+      if ((numeric != null && (!numeric.isFinite || numeric < 0)) ||
+          (total != null &&
+              (!total.isFinite ||
+                  total < 0 ||
+                  (numeric != null && total < numeric)))) {
+        return _badRequest('invalid_progress_position');
+      }
+      progress = entry.library.saveMediaProgress(
+        workId: workId,
+        fileId: fileId,
+        position: mediaPosition,
+        finished: decoded['finished'] == true,
+        deviceId: deviceId,
+        operationId: operationId,
+      );
+    } else {
+      final total = decoded['duration_seconds'];
+      if (total != null &&
+          (total is! num || !total.isFinite || total < seconds)) {
+        return _badRequest('invalid_duration');
+      }
+      progress = entry.library.saveProgress(
+        workId: workId,
+        fileId: fileId,
+        position: Duration(milliseconds: ((seconds as num) * 1000).round()),
+        duration: total is num
+            ? Duration(milliseconds: (total * 1000).round())
+            : null,
+        finished: decoded['finished'] == true,
+        deviceId: deviceId,
+        operationId: operationId,
+      );
     }
-    final progress = entry.library.saveProgress(
-      workId: workId,
-      fileId: fileId,
-      position: Duration(milliseconds: (seconds * 1000).round()),
-      duration: total is num
-          ? Duration(milliseconds: (total * 1000).round())
-          : null,
-      finished: decoded['finished'] == true,
-      deviceId: decoded['device_id'] is String
-          ? decoded['device_id'] as String
-          : 'remote-peer',
-      operationId: operationId,
-    );
     return _json(_progressJson(progress));
   }
 

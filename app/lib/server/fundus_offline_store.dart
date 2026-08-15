@@ -86,6 +86,7 @@ final class FundusOfflinePendingProgress {
     required this.position,
     required this.finished,
     required this.operationId,
+    this.mediaPosition,
   });
 
   final String serverId;
@@ -95,6 +96,7 @@ final class FundusOfflinePendingProgress {
   final Duration position;
   final bool finished;
   final String operationId;
+  final MediaPosition? mediaPosition;
 }
 
 typedef OfflineDownloadProgress = void Function(int completed, int total);
@@ -570,6 +572,9 @@ final class FundusOfflineStore {
         ),
         finished: value['finished'] == true,
         revision: value['revision'] is int ? value['revision'] as int : 0,
+        mediaPosition: value['position'] is Map
+            ? _mediaPosition(value['position'] as Map)
+            : null,
       );
     } on FileSystemException {
       return null;
@@ -600,6 +605,8 @@ final class FundusOfflineStore {
       jsonEncode({
         'file_id': progress.fileId,
         'position_ms': progress.position.inMilliseconds,
+        if (progress.mediaPosition != null)
+          'position': progress.mediaPosition!.toJson(),
         'finished': progress.finished,
         'revision': progress.revision,
         'updated_at': DateTime.now().toUtc().toIso8601String(),
@@ -656,6 +663,52 @@ final class FundusOfflineStore {
     );
   }
 
+  Future<FundusOfflinePendingProgress> saveMediaProgress({
+    required String serverId,
+    required String libraryId,
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    required bool finished,
+  }) async {
+    final directory = await _workDirectory(serverId, libraryId, workId);
+    await directory.create(recursive: true);
+    final destination = File(p.join(directory.path, 'progress.json'));
+    final partial = File('${destination.path}.part');
+    final updatedAt = DateTime.now().toUtc().toIso8601String();
+    final operationId = sha256
+        .convert(
+          utf8.encode(
+            '$serverId\u0000$libraryId\u0000$workId\u0000$fileId\u0000'
+            '${jsonEncode(position.toJson())}\u0000$updatedAt',
+          ),
+        )
+        .toString();
+    await partial.writeAsString(
+      jsonEncode({
+        'file_id': fileId,
+        'position': position.toJson(),
+        'finished': finished,
+        'updated_at': updatedAt,
+        'operation_id': 'offline-$operationId',
+        'pending_sync': true,
+      }),
+      flush: true,
+    );
+    if (await destination.exists()) await destination.delete();
+    await partial.rename(destination.path);
+    return FundusOfflinePendingProgress(
+      serverId: serverId,
+      libraryId: libraryId,
+      workId: workId,
+      fileId: fileId,
+      position: Duration.zero,
+      mediaPosition: position,
+      finished: finished,
+      operationId: 'offline-$operationId',
+    );
+  }
+
   Future<List<FundusOfflinePendingProgress>> pendingProgress() async {
     final result = <FundusOfflinePendingProgress>[];
     for (final work in await listAll()) {
@@ -687,6 +740,9 @@ final class FundusOfflineStore {
             ),
             finished: value['finished'] == true,
             operationId: value['operation_id'] as String,
+            mediaPosition: value['position'] is Map
+                ? _mediaPosition(value['position'] as Map)
+                : null,
           ),
         );
       } on FileSystemException {
@@ -740,6 +796,14 @@ final class FundusOfflineStore {
     return RegExp(r'^\.[a-z0-9]{1,5}$').hasMatch(extension)
         ? extension
         : '.bin';
+  }
+
+  static MediaPosition? _mediaPosition(Map value) {
+    try {
+      return MediaPosition.fromJson(Map<String, Object?>.from(value));
+    } on Object {
+      return null;
+    }
   }
 
   Future<void> _appendLedger(String event, Map<String, Object?> details) async {

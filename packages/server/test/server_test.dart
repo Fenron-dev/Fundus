@@ -281,6 +281,45 @@ void main() {
     );
   });
 
+  test('stores media-neutral reader positions with anchors', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final path = '/v1/libraries/$libraryId/progress/${work.id}';
+    final response = await _put(
+      server,
+      path,
+      jsonEncode({
+        'operation_id': 'reader-position-1',
+        'device_id': 'phone-test',
+        'file_id': track.fileId,
+        'position': {
+          'schema_version': 2,
+          'kind': 'imageIndex',
+          'numeric_value': 14,
+          'total': 32,
+          'file_id': track.fileId,
+          'chapter_id': 'Kapitel 12',
+          'element_id': 'pages/014.webp',
+          'scroll_offset': .42,
+          'label': 'Kapitel 12 · Seite 14',
+        },
+      }),
+    );
+    expect(response.statusCode, 200);
+    final body = await _json(response);
+    final position = body['position']! as Map<String, dynamic>;
+    expect(position['kind'], 'imageIndex');
+    expect(position['numeric_value'], 14);
+    expect(position['element_id'], 'pages/014.webp');
+    expect(position['scroll_offset'], .42);
+
+    final loaded = await _json(await _get(server, path));
+    final progress = loaded['progress']! as Map<String, dynamic>;
+    expect(
+      (progress['position']! as Map<String, dynamic>)['chapter_id'],
+      'Kapitel 12',
+    );
+  });
+
   test('lists and restores progress history as a new revision', () async {
     final libraryId = firstLibrary.manifest.libraryId;
     final path = '/v1/libraries/$libraryId/progress/${work.id}';

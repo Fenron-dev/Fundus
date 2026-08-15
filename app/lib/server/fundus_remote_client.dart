@@ -316,6 +316,7 @@ final class FundusRemoteProgress {
     required this.finished,
     required this.revision,
     this.duration,
+    this.mediaPosition,
     this.deviceId,
     this.deviceName,
   });
@@ -323,6 +324,7 @@ final class FundusRemoteProgress {
   final String? fileId;
   final Duration position;
   final Duration? duration;
+  final MediaPosition? mediaPosition;
   final bool finished;
   final int revision;
   final String? deviceId;
@@ -963,6 +965,7 @@ final class FundusRemoteClient {
     if (progress is! Map) return null;
     final position = progress['position'];
     if (position is! Map) return null;
+    final mediaPosition = _mediaPosition(position);
     final seconds = position['numeric_value'];
     final total = position['total'];
     return FundusRemoteProgress(
@@ -977,6 +980,7 @@ final class FundusRemoteClient {
       duration: total is num
           ? Duration(milliseconds: (total * 1000).round())
           : null,
+      mediaPosition: mediaPosition,
       finished: progress['finished'] == true,
       revision: progress['revision'] is int ? progress['revision'] as int : 0,
       deviceId: progress['device_id'] is String
@@ -1120,6 +1124,60 @@ final class FundusRemoteClient {
       duration: total is num
           ? Duration(milliseconds: (total * 1000).round())
           : duration,
+      mediaPosition: positionValue is Map
+          ? _mediaPosition(positionValue)
+          : null,
+      finished: value['finished'] == true,
+      revision: value['revision'] is int ? value['revision'] as int : 0,
+      deviceId: value['device_id'] is String
+          ? value['device_id'] as String
+          : null,
+      deviceName: value['device_name'] is String
+          ? value['device_name'] as String
+          : null,
+    );
+  }
+
+  Future<FundusRemoteProgress> saveMediaProgress(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    required bool finished,
+    required String deviceId,
+    required String operationId,
+  }) async {
+    final bytes = await _request(
+      server.baseUri.resolve('/v1/libraries/$libraryId/progress/$workId'),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'PUT',
+      body: jsonEncode({
+        'operation_id': operationId,
+        'device_id': deviceId,
+        'file_id': fileId,
+        'position': position.toJson(),
+        'finished': finished,
+      }),
+    );
+    final value = jsonDecode(utf8.decode(bytes));
+    if (value is! Map || value['position'] is! Map) {
+      throw const HttpException('Ungültige Fortschrittsantwort.');
+    }
+    final savedPosition = _mediaPosition(value['position'] as Map);
+    if (savedPosition == null) {
+      throw const HttpException('Ungültige Medienposition in der Antwort.');
+    }
+    final numeric = savedPosition.numericValue ?? 0;
+    final total = savedPosition.total;
+    return FundusRemoteProgress(
+      fileId: value['file_id'] is String ? value['file_id'] as String : fileId,
+      position: Duration(milliseconds: (numeric * 1000).round()),
+      duration: total == null
+          ? null
+          : Duration(milliseconds: (total * 1000).round()),
+      mediaPosition: savedPosition,
       finished: value['finished'] == true,
       revision: value['revision'] is int ? value['revision'] as int : 0,
       deviceId: value['device_id'] is String
@@ -1231,4 +1289,12 @@ final class FundusRemoteClient {
 
   static String _fingerprint(X509Certificate certificate) =>
       sha256.convert(certificate.der).toString();
+
+  static MediaPosition? _mediaPosition(Map value) {
+    try {
+      return MediaPosition.fromJson(Map<String, Object?>.from(value));
+    } on Object {
+      return null;
+    }
+  }
 }

@@ -19,6 +19,7 @@ import 'library/recent_library_store.dart';
 import 'library/security_scoped_bookmarks.dart';
 import 'library/zip_archive_browser.dart';
 import 'playback/fundus_player_controller.dart';
+import 'playback/track_jump_confirmation.dart';
 import 'playback/playback_conflict_settings.dart';
 import 'playback/playlist_session_conflict.dart';
 import 'playback/playback_sleep_timer_button.dart';
@@ -488,17 +489,30 @@ class _FundusAppState extends State<FundusApp> {
       final server = byId[pending.serverId];
       if (server == null) continue;
       try {
-        await _remoteClient.saveProgress(
-          server,
-          libraryId: pending.libraryId,
-          workId: pending.workId,
-          fileId: pending.fileId,
-          position: pending.position,
-          duration: null,
-          finished: pending.finished,
-          deviceId: deviceId,
-          operationId: pending.operationId,
-        );
+        if (pending.mediaPosition case final mediaPosition?) {
+          await _remoteClient.saveMediaProgress(
+            server,
+            libraryId: pending.libraryId,
+            workId: pending.workId,
+            fileId: pending.fileId,
+            position: mediaPosition,
+            finished: pending.finished,
+            deviceId: deviceId,
+            operationId: pending.operationId,
+          );
+        } else {
+          await _remoteClient.saveProgress(
+            server,
+            libraryId: pending.libraryId,
+            workId: pending.workId,
+            fileId: pending.fileId,
+            position: pending.position,
+            duration: null,
+            finished: pending.finished,
+            deviceId: deviceId,
+            operationId: pending.operationId,
+          );
+        }
         await _offlineStore.markProgressSynced(pending);
       } catch (_) {
         // Bleibt bis zum nächsten App-/Netzwerkstart in der lokalen Queue.
@@ -5550,7 +5564,21 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
                   trailing: index == widget.controller.currentIndex
                       ? const Icon(Icons.graphic_eq)
                       : null,
-                  onTap: () => widget.controller.jumpToTrack(index),
+                  onTap: index == widget.controller.currentIndex
+                      ? null
+                      : () async {
+                          final current = widget.controller.track;
+                          if (current == null ||
+                              !await confirmPlaybackTrackJump(
+                                context,
+                                currentTitle: current.title,
+                                targetTitle: tracks[index].title,
+                                currentPosition: widget.controller.position,
+                              )) {
+                            return;
+                          }
+                          await widget.controller.jumpToTrack(index);
+                        },
                 ),
               const SizedBox(height: 24),
             ],
@@ -5958,7 +5986,21 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
             ? null
             : Text(_PlayerBar._time(track.duration!)),
         trailing: selected ? const Icon(Icons.graphic_eq) : null,
-        onTap: () => widget.controller.jumpToTrack(trackIndex),
+        onTap: selected
+            ? null
+            : () async {
+                final current = widget.controller.track;
+                if (current == null ||
+                    !await confirmPlaybackTrackJump(
+                      context,
+                      currentTitle: current.title,
+                      targetTitle: track.title,
+                      currentPosition: widget.controller.position,
+                    )) {
+                  return;
+                }
+                await widget.controller.jumpToTrack(trackIndex);
+              },
       );
     },
   );

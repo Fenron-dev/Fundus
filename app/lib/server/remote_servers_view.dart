@@ -10,9 +10,12 @@ import '../diagnostics/fundus_diagnostics.dart';
 import '../library/comic_book_viewer.dart';
 import '../library/document_file_opener.dart';
 import '../library/document_preview.dart';
+import '../library/publication_reader_settings.dart';
+import '../library/reader_progress_conflict.dart';
 import '../library/zip_archive_browser.dart';
 import '../playback/playback_sleep_timer_button.dart';
 import '../playback/playback_conflict_settings.dart';
+import '../playback/track_jump_confirmation.dart';
 import 'fundus_remote_client.dart';
 import 'fundus_remote_document_cache.dart';
 import 'fundus_peer_server_controller.dart';
@@ -98,6 +101,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   DateTime? _lastDownloadUiUpdate;
   final Map<String, Future<Uint8List>> _coverRequests = {};
   final Map<String, Future<FundusRemoteServer>> _reconnects = {};
+  Future<void> _readerProgressQueue = Future<void>.value();
   late final AppLifecycleListener _lifecycleListener;
 
   @override
@@ -588,42 +592,190 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   }
 
   Widget _offlineLibraryView() {
-    final works = _offlineWorks
+    final source = _offlineWorks
         .where((work) => work.libraryId == _offlineLibraryFilter)
         .toList();
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        ListTile(
-          leading: BackButton(
-            onPressed: () => setState(() => _offlineLibraryFilter = null),
+    final byId = {for (final work in source) work.workId: work};
+    final summaries = [for (final work in source) _offlineSummary(work)];
+    final works = LibraryWorkSearch.apply(
+      summaries,
+      _query,
+    ).map((summary) => byId[summary.id]!).toList(growable: false);
+    final kinds = source.map((work) => work.kind).toSet().toList()..sort();
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(
+          child: ListTile(
+            leading: BackButton(
+              onPressed: () => setState(() => _offlineLibraryFilter = null),
+            ),
+            title: const Text('Offline-Medien'),
+            subtitle: Text('${works.length} Medium/Medien auf diesem Gerät'),
           ),
-          title: const Text('Offline-Medien'),
-          subtitle: Text('${works.length} Medium/Medien auf diesem Gerät'),
         ),
-        for (final offline in works)
-          Card(
-            child: ListTile(
-              leading: offline.coverPath == null
-                  ? Icon(_kindIcon(offline.kind))
-                  : ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: Image.file(
-                        File(offline.coverPath!),
-                        width: 42,
-                        height: 52,
-                        fit: BoxFit.cover,
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: SearchBar(
+              controller: _searchController,
+              leading: const Icon(Icons.search),
+              hintText: 'Titel, Person oder Serie …',
+              onChanged: (value) =>
+                  setState(() => _query = _query.copyWith(text: value)),
+            ),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                SegmentedButton<_RemoteLayout>(
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(
+                      value: _RemoteLayout.grid,
+                      icon: Icon(Icons.grid_view),
+                    ),
+                    ButtonSegment(
+                      value: _RemoteLayout.list,
+                      icon: Icon(Icons.view_list),
+                    ),
+                  ],
+                  selected: {_layout},
+                  onSelectionChanged: (value) =>
+                      setState(() => _layout = value.first),
+                ),
+                const SizedBox(width: 8),
+                for (final kind in kinds) ...[
+                  ChoiceChip(
+                    label: Text(_kindLabel(kind)),
+                    selected: _query.kinds.contains(kind),
+                    onSelected: (_) => setState(
+                      () => _query = _query.copyWith(
+                        kinds: _query.kinds.contains(kind) ? {} : {kind},
                       ),
                     ),
-              title: Text(offline.title),
-              subtitle: Text(_offlineSubtitle(offline)),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => _showOfflineWork(offline),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+              ],
+            ),
+          ),
+        ),
+        if (_layout == _RemoteLayout.grid)
+          SliverPadding(
+            padding: const EdgeInsets.all(16),
+            sliver: SliverGrid.builder(
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 220,
+                mainAxisExtent: 310,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+              ),
+              itemCount: works.length,
+              itemBuilder: (context, index) => _offlineWorkCard(works[index]),
+            ),
+          )
+        else
+          SliverPadding(
+            padding: const EdgeInsets.all(16),
+            sliver: SliverList.builder(
+              itemCount: works.length,
+              itemBuilder: (context, index) {
+                final offline = works[index];
+                return Card(
+                  child: ListTile(
+                    leading: SizedBox(
+                      width: 48,
+                      height: 58,
+                      child: _offlineCover(offline),
+                    ),
+                    title: Text(offline.title),
+                    subtitle: Text(_offlineSubtitle(offline)),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => _showOfflineWork(offline),
+                  ),
+                );
+              },
             ),
           ),
       ],
     );
   }
+
+  Widget _offlineWorkCard(FundusOfflineWork offline) => Card(
+    clipBehavior: Clip.antiAlias,
+    child: InkWell(
+      onTap: () => _showOfflineWork(offline),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: _offlineCover(offline)),
+          Padding(
+            padding: const EdgeInsets.all(10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  offline.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  offline.authors.join(', '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  _kindLabel(offline.kind),
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
+                const Row(
+                  children: [
+                    Icon(Icons.download_done, size: 15),
+                    SizedBox(width: 4),
+                    Text('Offline'),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _offlineCover(FundusOfflineWork offline) => offline.coverPath == null
+      ? Icon(_kindIcon(offline.kind), size: 72)
+      : Image.file(
+          File(offline.coverPath!),
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => Icon(_kindIcon(offline.kind), size: 72),
+        );
+
+  LibraryWorkSummary _offlineSummary(FundusOfflineWork work) =>
+      LibraryWorkSummary(
+        id: work.workId,
+        kind: work.kind,
+        title: work.title,
+        author: work.authors.firstOrNull ?? 'Unbekannt',
+        authors: work.authors,
+        fileCount: work.tracks.length,
+        addedAt: work.downloadedAt,
+        series: work.series,
+        seriesSequence: work.seriesSequence?.toDouble(),
+        language: work.language,
+        subtitle: work.subtitle,
+        description: work.description,
+        narrators: work.narrators,
+        publisher: work.publisher,
+        publishedYear: work.publishedYear,
+        tags: work.tags,
+        offline: true,
+      );
 
   Widget _serverList() => ListView(
     padding: const EdgeInsets.all(16),
@@ -985,16 +1137,26 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                                 _kindLabel(work.kind),
                                 style: Theme.of(context).textTheme.labelSmall,
                               ),
-                              if (_offlineKeys.contains(
-                                _offlineKey(server, library, work),
-                              ))
-                                const Row(
-                                  children: [
-                                    Icon(Icons.download_done, size: 15),
-                                    SizedBox(width: 4),
-                                    Text('Offline'),
-                                  ],
-                                ),
+                              Row(
+                                children: [
+                                  Icon(
+                                    _offlineKeys.contains(
+                                          _offlineKey(server, library, work),
+                                        )
+                                        ? Icons.download_done
+                                        : Icons.cloud_outlined,
+                                    size: 15,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _offlineKeys.contains(
+                                          _offlineKey(server, library, work),
+                                        )
+                                        ? 'Offline verfügbar'
+                                        : 'Server',
+                                  ),
+                                ],
+                              ),
                             ],
                           ),
                         ),
@@ -1028,7 +1190,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                         if (work.series != null) work.series!,
                       ].join(' · '),
                     ),
-                    trailing: const Icon(Icons.chevron_right),
+                    trailing: Icon(
+                      _offlineKeys.contains(_offlineKey(server, library, work))
+                          ? Icons.download_done
+                          : Icons.cloud_outlined,
+                    ),
                     onTap: () => _showWork(server, library, work),
                   ),
                 );
@@ -1623,7 +1789,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                           ? null
                           : () => Navigator.pop(
                               context,
-                              isDocument ? 'open:0' : 'play',
+                              isDocument ? 'open:resume' : 'play',
                             ),
                       icon: Icon(
                         isDocument
@@ -1683,8 +1849,21 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       return;
     }
     if (action?.startsWith('open:') ?? false) {
-      final index = int.tryParse(action!.substring(5));
+      final target = action!.substring(5);
+      final resume = target == 'resume';
+      final index = resume ? 0 : int.tryParse(target);
       if (index == null || index < 0 || index >= detailTracks.length) return;
+      if (detailTracks[index].title.toLowerCase().endsWith('.cbz')) {
+        await _openRemoteComicWork(
+          server,
+          library,
+          work,
+          detailTracks,
+          offlineWork: offlineWork,
+          startFileId: resume ? null : detailTracks[index].id,
+        );
+        return;
+      }
       if (offlineWork != null && index < offlineWork.tracks.length) {
         await _openDocumentPath(offlineWork.tracks[index].path);
       } else {
@@ -2073,6 +2252,232 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           ),
         ),
       );
+    }
+  }
+
+  Future<File> _cachedRemoteDocument(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteTrack track,
+  ) => _documentCache.obtain(
+    cacheKey: '${server.id}/${library.id}/${track.id}',
+    filename: track.title,
+    open: () async {
+      final result = await _runWithReconnect(
+        server,
+        (active) => _client.openContent(
+          active,
+          libraryId: library.id,
+          fileId: track.id,
+        ),
+      );
+      final remote = result.value;
+      return FundusRemoteDocumentSource(
+        bytes: remote.response,
+        contentLength: remote.response.contentLength > 0
+            ? remote.response.contentLength
+            : null,
+        close: remote.close,
+      );
+    },
+  );
+
+  Future<void> _openRemoteComicWork(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work,
+    List<FundusRemoteTrack> tracks, {
+    required FundusOfflineWork? offlineWork,
+    String? startFileId,
+  }) async {
+    final comics =
+        tracks
+            .where((track) => track.title.toLowerCase().endsWith('.cbz'))
+            .toList(growable: false)
+          ..sort((left, right) => left.position.compareTo(right.position));
+    if (comics.isEmpty) return;
+
+    final localProgress = await _offlineStore.loadProgress(
+      serverId: server.id,
+      libraryId: library.id,
+      workId: work.id,
+    );
+    FundusRemoteProgress? serverProgress;
+    try {
+      final result = await _runWithReconnect(
+        server,
+        (active) => _client.progress(active, library.id, work.id),
+      );
+      server = result.server;
+      serverProgress = result.value;
+    } catch (_) {}
+    var progress = serverProgress ?? localProgress;
+    final localPosition = localProgress?.mediaPosition;
+    final serverPosition = serverProgress?.mediaPosition;
+    if (localPosition != null &&
+        serverPosition != null &&
+        readerPositionsDiffer(localPosition, serverPosition)) {
+      final localDeviceName = await _store.deviceName();
+      if (!mounted) return;
+      final choice = await resolveReaderProgressConflict(
+        context,
+        devicePosition: localPosition,
+        serverPosition: serverPosition,
+        deviceName: localDeviceName,
+        serverDeviceName: serverProgress?.deviceName ?? server.name,
+      );
+      progress = choice == ReaderProgressConflictChoice.keepDevice
+          ? localProgress
+          : serverProgress;
+    }
+    final storedPosition = progress?.mediaPosition;
+    var chapterIndex = comics.indexWhere(
+      (track) => track.id == (startFileId ?? progress?.fileId),
+    );
+    if (chapterIndex < 0) chapterIndex = 0;
+    var initialPage =
+        storedPosition?.kind == MediaPositionKind.imageIndex &&
+            storedPosition?.fileId == comics[chapterIndex].id
+        ? ((storedPosition!.numericValue ?? 1).round() - 1).clamp(0, 1 << 30)
+        : 0;
+    var initialElementId = storedPosition?.fileId == comics[chapterIndex].id
+        ? storedPosition?.elementId
+        : null;
+    var initialScrollOffset = storedPosition?.fileId == comics[chapterIndex].id
+        ? storedPosition?.scrollOffset
+        : null;
+    var profile = await PublicationReaderSettings.loadComicProfile();
+    final deviceId = await _store.deviceId();
+    if (!mounted) return;
+
+    while (mounted) {
+      final track = comics[chapterIndex];
+      final offlineTrack = offlineWork?.tracks
+          .where((candidate) => candidate.id == track.id)
+          .firstOrNull;
+      final File file;
+      try {
+        file = offlineTrack == null
+            ? await _cachedRemoteDocument(server, library, track)
+            : File(offlineTrack.path);
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Manga-Kapitel konnte nicht geladen werden.'),
+          ),
+        );
+        return;
+      }
+      if (!mounted) return;
+      final result = await showComicBookViewer(
+        context,
+        archivePath: file.path,
+        initialPage: initialPage,
+        initialElementId: initialElementId,
+        initialScrollOffset: initialScrollOffset,
+        initialProfile: profile,
+        hasPreviousChapter: chapterIndex > 0,
+        hasNextChapter: chapterIndex + 1 < comics.length,
+        chapterTitle: track.title,
+        chapterIndex: chapterIndex,
+        chapterCount: comics.length,
+        chapterTitles: comics.map((chapter) => chapter.title).toList(),
+        chapterFileId: track.id,
+        onProfileChanged: (updated) {
+          profile = updated;
+          unawaited(PublicationReaderSettings.saveComicProfile(updated));
+        },
+        onPositionChanged: (page, total, elementId, scrollOffset) {
+          final mediaPosition = MediaPosition(
+            kind: MediaPositionKind.imageIndex,
+            numericValue: page + 1,
+            total: total.toDouble(),
+            fileId: track.id,
+            chapterId: track.title,
+            elementId: elementId,
+            scrollOffset: scrollOffset,
+            key: track.title,
+            label:
+                'Kapitel ${chapterIndex + 1}/${comics.length} · Seite ${page + 1}',
+          );
+          _readerProgressQueue = _readerProgressQueue.then(
+            (_) => _saveRemoteReaderProgress(
+              server,
+              library,
+              work,
+              track,
+              mediaPosition,
+              deviceId: deviceId,
+              finished: chapterIndex + 1 == comics.length && page + 1 >= total,
+              offline: offlineTrack != null,
+            ),
+          );
+        },
+      );
+      await _readerProgressQueue;
+      if (!mounted || result == null) return;
+      if (result.action == ComicBookViewerAction.selectChapter &&
+          result.chapterIndex != null &&
+          result.chapterIndex! >= 0 &&
+          result.chapterIndex! < comics.length) {
+        chapterIndex = result.chapterIndex!;
+      } else if (result.action == ComicBookViewerAction.previousChapter &&
+          chapterIndex > 0) {
+        chapterIndex--;
+      } else if (result.action == ComicBookViewerAction.nextChapter &&
+          chapterIndex + 1 < comics.length) {
+        chapterIndex++;
+      } else {
+        return;
+      }
+      initialPage = 0;
+      initialElementId = null;
+      initialScrollOffset = null;
+    }
+  }
+
+  Future<void> _saveRemoteReaderProgress(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work,
+    FundusRemoteTrack track,
+    MediaPosition position, {
+    required String deviceId,
+    required bool finished,
+    required bool offline,
+  }) async {
+    try {
+      FundusOfflinePendingProgress? pending;
+      if (offline) {
+        pending = await _offlineStore.saveMediaProgress(
+          serverId: server.id,
+          libraryId: library.id,
+          workId: work.id,
+          fileId: track.id,
+          position: position,
+          finished: finished,
+        );
+      }
+      await _runWithReconnect(
+        server,
+        (active) => _client.saveMediaProgress(
+          active,
+          libraryId: library.id,
+          workId: work.id,
+          fileId: track.id,
+          position: position,
+          finished: finished,
+          deviceId: deviceId,
+          operationId:
+              pending?.operationId ??
+              'reader-${DateTime.now().microsecondsSinceEpoch}-${track.id}',
+        ),
+      );
+      if (pending != null) await _offlineStore.markProgressSynced(pending);
+    } catch (_) {
+      // Offline progress remains queued locally and is retried later. A cache
+      // write error must not break the serialized queue for later positions.
     }
   }
 
@@ -2513,7 +2918,21 @@ class _RemoteExpandedPlayer extends StatelessWidget {
                   trailing: index == controller.currentIndex
                       ? const Icon(Icons.graphic_eq)
                       : null,
-                  onTap: () => controller.jumpToTrack(index),
+                  onTap: index == controller.currentIndex
+                      ? null
+                      : () async {
+                          final current = controller.track;
+                          if (current == null ||
+                              !await confirmPlaybackTrackJump(
+                                context,
+                                currentTitle: current.title,
+                                targetTitle: controller.tracks[index].title,
+                                currentPosition: controller.position,
+                              )) {
+                            return;
+                          }
+                          await controller.jumpToTrack(index);
+                        },
                 ),
               const SizedBox(height: 160),
             ],

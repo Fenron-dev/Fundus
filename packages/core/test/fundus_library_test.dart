@@ -541,9 +541,12 @@ void main() {
       restored.notes.map((note) => note.markdown),
       contains('Zweite Notiz'),
     );
-    expect(restored.bookmarks.single.label, 'Wichtige Stelle');
+    final restoredTimeBookmark = restored.bookmarks.firstWhere(
+      (bookmark) => bookmark.mediaPosition.kind == MediaPositionKind.time,
+    );
+    expect(restoredTimeBookmark.label, 'Wichtige Stelle');
     expect(
-      restored.bookmarks.single.position,
+      restoredTimeBookmark.position,
       const Duration(minutes: 12, seconds: 34),
     );
   });

@@ -89,6 +89,13 @@ PublicationProgressPlacement comicProgressPlacementFor(
           : PublicationProgressPlacement.bottom
     : configured;
 
+bool comicShouldEvictCachedPage({
+  required bool continuous,
+  required int cachedPage,
+  required int currentPage,
+  required int preloadCount,
+}) => !continuous && (cachedPage - currentPage).abs() > preloadCount;
+
 final class ComicChapterSequenceReport {
   const ComicChapterSequenceReport({
     required this.numbersByIndex,
@@ -832,9 +839,19 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     if (page == _currentPage) return;
     setState(() {
       _currentPage = page;
-      _extractedPages.removeWhere(
-        (cached, _) => (cached - page).abs() > _profile.preloadCount,
-      );
+      // Keep page futures stable in continuous readers. Replacing an earlier
+      // image with the shorter loading placeholder changes ListView's extent
+      // and makes Webtoons jump while scrolling upwards.
+      if (!_continuous) {
+        _extractedPages.removeWhere(
+          (cached, _) => comicShouldEvictCachedPage(
+            continuous: _continuous,
+            cachedPage: cached,
+            currentPage: page,
+            preloadCount: _profile.preloadCount,
+          ),
+        );
+      }
     });
     widget.onPageChanged?.call(page, pages.length);
     widget.onPositionChanged?.call(
@@ -983,11 +1000,16 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
       ),
     );
     if (!mounted) return;
-    _extractedPages.removeWhere(
-      (cached, _) =>
-          (cached - (selectedPage ?? _currentPage)).abs() >
-          _profile.preloadCount,
-    );
+    if (!_continuous) {
+      _extractedPages.removeWhere(
+        (cached, _) => comicShouldEvictCachedPage(
+          continuous: _continuous,
+          cachedPage: cached,
+          currentPage: selectedPage ?? _currentPage,
+          preloadCount: _profile.preloadCount,
+        ),
+      );
+    }
     if (selectedPage == null) return;
     _seekToPage(selectedPage, groups);
     _selectPage(selectedPage, pages);
