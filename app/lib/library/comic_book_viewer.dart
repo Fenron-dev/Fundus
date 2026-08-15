@@ -146,6 +146,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
   int _currentPage = 0;
   double? _currentScrollOffset;
   bool _reportedInitialPage = false;
+  bool _immersive = false;
   late PublicationReaderProfile _profile;
 
   @override
@@ -164,6 +165,18 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     PublicationPageScale.fitHeight => BoxFit.fitHeight,
     PublicationPageScale.original => BoxFit.none,
   };
+
+  Future<void> _setImmersive(bool immersive) async {
+    if (_immersive == immersive) return;
+    setState(() => _immersive = immersive);
+    if (Platform.isAndroid || Platform.isIOS) {
+      await SystemChrome.setEnabledSystemUIMode(
+        immersive ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+      );
+    }
+  }
+
+  void _toggleImmersive() => _setImmersive(!_immersive);
 
   void _updateProfile(PublicationReaderProfile profile) {
     final structureChanged =
@@ -327,8 +340,10 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     },
   );
 
-  Widget _buildContinuousReader(List<ZipArchiveEntry> pages) =>
-      NotificationListener<OverscrollNotification>(
+  Widget _buildContinuousReader(List<ZipArchiveEntry> pages) => LayoutBuilder(
+    builder: (context, constraints) {
+      final viewport = Size(constraints.maxWidth, constraints.maxHeight);
+      return NotificationListener<OverscrollNotification>(
         onNotification: (notification) {
           if (notification.overscroll > 24 &&
               _currentPage + 1 >= pages.length &&
@@ -350,15 +365,67 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
           itemCount: pages.length,
           itemBuilder: (context, page) => KeyedSubtree(
             key: _continuousPageKeys.putIfAbsent(page, GlobalKey.new),
-            child: _buildPage(pages, page, continuous: true),
+            child: _buildPage(
+              pages,
+              page,
+              continuous: true,
+              viewport: viewport,
+            ),
           ),
         ),
       );
+    },
+  );
+
+  Widget _buildContinuousImage(File file, Size viewport) {
+    final image = Image.file(
+      file,
+      errorBuilder: (context, error, stackTrace) => const Text(
+        'Die Seite konnte nicht dargestellt werden.',
+        style: TextStyle(color: Colors.white),
+      ),
+    );
+    return switch (_profile.pageScale) {
+      PublicationPageScale.fitWidth => SizedBox(
+        width: viewport.width,
+        child: Image.file(file, width: viewport.width, fit: BoxFit.fitWidth),
+      ),
+      PublicationPageScale.fitHeight => SizedBox(
+        height: viewport.height,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: viewport.width),
+            child: Center(
+              child: Image.file(
+                file,
+                height: viewport.height,
+                fit: BoxFit.fitHeight,
+              ),
+            ),
+          ),
+        ),
+      ),
+      PublicationPageScale.fitScreen => SizedBox(
+        width: viewport.width,
+        height: viewport.height,
+        child: Image.file(file, fit: BoxFit.contain),
+      ),
+      PublicationPageScale.original => SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minWidth: viewport.width),
+          child: Center(child: image),
+        ),
+      ),
+    };
+  }
 
   Widget _buildPage(
     List<ZipArchiveEntry> pages,
     int page, {
     bool continuous = false,
+    Size? viewport,
   }) => FutureBuilder<String>(
     future: _extractedPages.putIfAbsent(
       page,
@@ -382,11 +449,10 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
           ),
         );
       }
+      final file = File(pageSnapshot.data!);
       final image = Image.file(
-        File(pageSnapshot.data!),
-        fit: continuous && _profile.layout == PublicationReaderLayout.webtoon
-            ? BoxFit.fitWidth
-            : _imageFit,
+        file,
+        fit: _imageFit,
         errorBuilder: (context, error, stackTrace) => Text(
           'Seite ${page + 1} konnte nicht dargestellt werden.',
           style: const TextStyle(color: Colors.white),
@@ -399,7 +465,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
               : _profile.pageGap / 2,
         ),
         child: continuous
-            ? SizedBox(width: double.infinity, child: image)
+            ? _buildContinuousImage(file, viewport!)
             : Center(child: image),
       );
       if (continuous) return pageContent;
@@ -421,155 +487,183 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     }
     _controller?.dispose();
     _continuousController?.dispose();
+    if (_immersive && (Platform.isAndroid || Platform.isIOS)) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) => Dialog.fullscreen(
     child: Scaffold(
-      appBar: AppBar(
-        leading: IconButton(
-          onPressed: () => Navigator.pop(context),
-          tooltip: 'Comic schließen',
-          icon: const Icon(Icons.close),
-        ),
-        title: Text(
-          p.basenameWithoutExtension(widget.archivePath),
-          overflow: TextOverflow.ellipsis,
-        ),
-        actions: [
-          PopupMenuButton<_ComicReaderSettingAction>(
-            tooltip: 'Reader-Einstellungen',
-            icon: const Icon(Icons.tune),
-            onSelected: (action) {
-              switch (action) {
-                case _ComicReaderSettingAction.leftToRight:
-                  _updateProfile(
-                    _profile.copyWith(
-                      readingDirection: PublicationReadingDirection.leftToRight,
+      appBar: _immersive
+          ? null
+          : AppBar(
+              leading: IconButton(
+                onPressed: () => Navigator.pop(context),
+                tooltip: 'Comic schließen',
+                icon: const Icon(Icons.close),
+              ),
+              title: Text(
+                p.basenameWithoutExtension(widget.archivePath),
+                overflow: TextOverflow.ellipsis,
+              ),
+              actions: [
+                IconButton(
+                  onPressed: _toggleImmersive,
+                  tooltip: 'Vollbild',
+                  icon: const Icon(Icons.fullscreen),
+                ),
+                PopupMenuButton<_ComicReaderSettingAction>(
+                  tooltip: 'Reader-Einstellungen',
+                  icon: const Icon(Icons.tune),
+                  onSelected: (action) {
+                    switch (action) {
+                      case _ComicReaderSettingAction.leftToRight:
+                        _updateProfile(
+                          _profile.copyWith(
+                            readingDirection:
+                                PublicationReadingDirection.leftToRight,
+                          ),
+                        );
+                      case _ComicReaderSettingAction.rightToLeft:
+                        _updateProfile(
+                          _profile.copyWith(
+                            readingDirection:
+                                PublicationReadingDirection.rightToLeft,
+                          ),
+                        );
+                      case _ComicReaderSettingAction.singlePage:
+                        _updateProfile(
+                          _profile.copyWith(
+                            layout: PublicationReaderLayout.singlePage,
+                          ),
+                        );
+                      case _ComicReaderSettingAction.doublePage:
+                        _updateProfile(
+                          _profile.copyWith(
+                            layout: PublicationReaderLayout.doublePage,
+                          ),
+                        );
+                      case _ComicReaderSettingAction.continuousVertical:
+                        _updateProfile(
+                          _profile.copyWith(
+                            layout: PublicationReaderLayout.continuousVertical,
+                          ),
+                        );
+                      case _ComicReaderSettingAction.webtoon:
+                        _updateProfile(
+                          _profile.copyWith(
+                            layout: PublicationReaderLayout.webtoon,
+                          ),
+                        );
+                      case _ComicReaderSettingAction.toggleFirstPageCover:
+                        _updateProfile(
+                          _profile.copyWith(
+                            firstPageIsCover: !_profile.firstPageIsCover,
+                          ),
+                        );
+                      case _ComicReaderSettingAction.fitScreen:
+                        _updateProfile(
+                          _profile.copyWith(
+                            pageScale: PublicationPageScale.fitScreen,
+                          ),
+                        );
+                      case _ComicReaderSettingAction.fitWidth:
+                        _updateProfile(
+                          _profile.copyWith(
+                            pageScale: PublicationPageScale.fitWidth,
+                          ),
+                        );
+                      case _ComicReaderSettingAction.fitHeight:
+                        _updateProfile(
+                          _profile.copyWith(
+                            pageScale: PublicationPageScale.fitHeight,
+                          ),
+                        );
+                      case _ComicReaderSettingAction.original:
+                        _updateProfile(
+                          _profile.copyWith(
+                            pageScale: PublicationPageScale.original,
+                          ),
+                        );
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      enabled: false,
+                      child: Text('Leserichtung'),
                     ),
-                  );
-                case _ComicReaderSettingAction.rightToLeft:
-                  _updateProfile(
-                    _profile.copyWith(
-                      readingDirection: PublicationReadingDirection.rightToLeft,
+                    _profileItem(
+                      _ComicReaderSettingAction.leftToRight,
+                      'Links nach rechts',
+                      !_rightToLeft,
                     ),
-                  );
-                case _ComicReaderSettingAction.singlePage:
-                  _updateProfile(
-                    _profile.copyWith(
-                      layout: PublicationReaderLayout.singlePage,
+                    _profileItem(
+                      _ComicReaderSettingAction.rightToLeft,
+                      'Rechts nach links (Manga)',
+                      _rightToLeft,
                     ),
-                  );
-                case _ComicReaderSettingAction.doublePage:
-                  _updateProfile(
-                    _profile.copyWith(
-                      layout: PublicationReaderLayout.doublePage,
+                    const PopupMenuDivider(),
+                    const PopupMenuItem(
+                      enabled: false,
+                      child: Text('Seitenmodus'),
                     ),
-                  );
-                case _ComicReaderSettingAction.continuousVertical:
-                  _updateProfile(
-                    _profile.copyWith(
-                      layout: PublicationReaderLayout.continuousVertical,
+                    _profileItem(
+                      _ComicReaderSettingAction.singlePage,
+                      'Einzelseite',
+                      _profile.layout == PublicationReaderLayout.singlePage,
                     ),
-                  );
-                case _ComicReaderSettingAction.webtoon:
-                  _updateProfile(
-                    _profile.copyWith(layout: PublicationReaderLayout.webtoon),
-                  );
-                case _ComicReaderSettingAction.toggleFirstPageCover:
-                  _updateProfile(
-                    _profile.copyWith(
-                      firstPageIsCover: !_profile.firstPageIsCover,
+                    _profileItem(
+                      _ComicReaderSettingAction.doublePage,
+                      'Doppelseite',
+                      _profile.layout == PublicationReaderLayout.doublePage,
                     ),
-                  );
-                case _ComicReaderSettingAction.fitScreen:
-                  _updateProfile(
-                    _profile.copyWith(
-                      pageScale: PublicationPageScale.fitScreen,
+                    _profileItem(
+                      _ComicReaderSettingAction.continuousVertical,
+                      'Kontinuierlich vertikal',
+                      _profile.layout ==
+                          PublicationReaderLayout.continuousVertical,
                     ),
-                  );
-                case _ComicReaderSettingAction.fitWidth:
-                  _updateProfile(
-                    _profile.copyWith(pageScale: PublicationPageScale.fitWidth),
-                  );
-                case _ComicReaderSettingAction.fitHeight:
-                  _updateProfile(
-                    _profile.copyWith(
-                      pageScale: PublicationPageScale.fitHeight,
+                    _profileItem(
+                      _ComicReaderSettingAction.webtoon,
+                      'Webtoon / Long-Strip',
+                      _profile.layout == PublicationReaderLayout.webtoon,
                     ),
-                  );
-                case _ComicReaderSettingAction.original:
-                  _updateProfile(
-                    _profile.copyWith(pageScale: PublicationPageScale.original),
-                  );
-              }
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(enabled: false, child: Text('Leserichtung')),
-              _profileItem(
-                _ComicReaderSettingAction.leftToRight,
-                'Links nach rechts',
-                !_rightToLeft,
-              ),
-              _profileItem(
-                _ComicReaderSettingAction.rightToLeft,
-                'Rechts nach links (Manga)',
-                _rightToLeft,
-              ),
-              const PopupMenuDivider(),
-              const PopupMenuItem(enabled: false, child: Text('Seitenmodus')),
-              _profileItem(
-                _ComicReaderSettingAction.singlePage,
-                'Einzelseite',
-                _profile.layout == PublicationReaderLayout.singlePage,
-              ),
-              _profileItem(
-                _ComicReaderSettingAction.doublePage,
-                'Doppelseite',
-                _profile.layout == PublicationReaderLayout.doublePage,
-              ),
-              _profileItem(
-                _ComicReaderSettingAction.continuousVertical,
-                'Kontinuierlich vertikal',
-                _profile.layout == PublicationReaderLayout.continuousVertical,
-              ),
-              _profileItem(
-                _ComicReaderSettingAction.webtoon,
-                'Webtoon / Long-Strip',
-                _profile.layout == PublicationReaderLayout.webtoon,
-              ),
-              _profileItem(
-                _ComicReaderSettingAction.toggleFirstPageCover,
-                'Erste Seite ist Cover',
-                _profile.firstPageIsCover,
-              ),
-              const PopupMenuDivider(),
-              const PopupMenuItem(enabled: false, child: Text('Skalierung')),
-              _profileItem(
-                _ComicReaderSettingAction.fitScreen,
-                'An Bildschirm anpassen',
-                _profile.pageScale == PublicationPageScale.fitScreen,
-              ),
-              _profileItem(
-                _ComicReaderSettingAction.fitWidth,
-                'An Breite anpassen',
-                _profile.pageScale == PublicationPageScale.fitWidth,
-              ),
-              _profileItem(
-                _ComicReaderSettingAction.fitHeight,
-                'An Höhe anpassen',
-                _profile.pageScale == PublicationPageScale.fitHeight,
-              ),
-              _profileItem(
-                _ComicReaderSettingAction.original,
-                'Originalgröße',
-                _profile.pageScale == PublicationPageScale.original,
-              ),
-            ],
-          ),
-        ],
-      ),
+                    _profileItem(
+                      _ComicReaderSettingAction.toggleFirstPageCover,
+                      'Erste Seite ist Cover',
+                      _profile.firstPageIsCover,
+                    ),
+                    const PopupMenuDivider(),
+                    const PopupMenuItem(
+                      enabled: false,
+                      child: Text('Skalierung'),
+                    ),
+                    _profileItem(
+                      _ComicReaderSettingAction.fitScreen,
+                      'An Bildschirm anpassen',
+                      _profile.pageScale == PublicationPageScale.fitScreen,
+                    ),
+                    _profileItem(
+                      _ComicReaderSettingAction.fitWidth,
+                      'An Breite anpassen',
+                      _profile.pageScale == PublicationPageScale.fitWidth,
+                    ),
+                    _profileItem(
+                      _ComicReaderSettingAction.fitHeight,
+                      'An Höhe anpassen',
+                      _profile.pageScale == PublicationPageScale.fitHeight,
+                    ),
+                    _profileItem(
+                      _ComicReaderSettingAction.original,
+                      'Originalgröße',
+                      _profile.pageScale == PublicationPageScale.original,
+                    ),
+                  ],
+                ),
+              ],
+            ),
       body: FutureBuilder<List<ZipArchiveEntry>>(
         future: _pagesFuture,
         builder: (context, snapshot) {
@@ -654,6 +748,14 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
                 _goRight(pages.length);
                 return KeyEventResult.handled;
               }
+              if (event.logicalKey == LogicalKeyboardKey.f11) {
+                _toggleImmersive();
+                return KeyEventResult.handled;
+              }
+              if (_immersive && event.logicalKey == LogicalKeyboardKey.escape) {
+                _setImmersive(false);
+                return KeyEventResult.handled;
+              }
               if (_continuous &&
                   (event.logicalKey == LogicalKeyboardKey.arrowUp ||
                       event.logicalKey == LogicalKeyboardKey.pageUp)) {
@@ -668,52 +770,61 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
               }
               return KeyEventResult.ignored;
             },
-            child: Column(
-              children: [
-                Expanded(
-                  child: ColoredBox(
-                    color: Colors.black,
-                    child: _continuous
-                        ? _buildContinuousReader(pages)
-                        : _buildPagedReader(pages, groups),
-                  ),
-                ),
-                SafeArea(
-                  top: false,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        IconButton(
-                          onPressed: _canGoLeft(pages.length)
-                              ? () => _goLeft(pages.length)
-                              : null,
-                          tooltip: _rightToLeft
-                              ? 'Nächste Seite'
-                              : 'Vorherige Seite',
-                          icon: const Icon(Icons.chevron_left),
-                        ),
-                        Text(
-                          comicPageLabel(groups, _currentPage, pages.length),
-                        ),
-                        IconButton(
-                          onPressed: _canGoRight(pages.length)
-                              ? () => _goRight(pages.length)
-                              : null,
-                          tooltip: _rightToLeft
-                              ? 'Vorherige Seite'
-                              : 'Nächste Seite',
-                          icon: const Icon(Icons.chevron_right),
-                        ),
-                      ],
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onDoubleTap: _toggleImmersive,
+              child: Column(
+                children: [
+                  Expanded(
+                    child: ColoredBox(
+                      color: Colors.black,
+                      child: _continuous
+                          ? _buildContinuousReader(pages)
+                          : _buildPagedReader(pages, groups),
                     ),
                   ),
-                ),
-              ],
+                  if (!_immersive)
+                    SafeArea(
+                      top: false,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            IconButton(
+                              onPressed: _canGoLeft(pages.length)
+                                  ? () => _goLeft(pages.length)
+                                  : null,
+                              tooltip: _rightToLeft
+                                  ? 'Nächste Seite'
+                                  : 'Vorherige Seite',
+                              icon: const Icon(Icons.chevron_left),
+                            ),
+                            Text(
+                              comicPageLabel(
+                                groups,
+                                _currentPage,
+                                pages.length,
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: _canGoRight(pages.length)
+                                  ? () => _goRight(pages.length)
+                                  : null,
+                              tooltip: _rightToLeft
+                                  ? 'Vorherige Seite'
+                                  : 'Nächste Seite',
+                              icon: const Icon(Icons.chevron_right),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           );
         },
