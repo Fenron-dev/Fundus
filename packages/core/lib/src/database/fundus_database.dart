@@ -94,7 +94,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 5;
+  static const schemaVersion = 6;
 
   final Database _database;
 
@@ -509,6 +509,10 @@ final class FundusDatabase {
              progress.position_kind AS progress_kind,
              progress.position_key AS progress_key,
              progress.position_label AS progress_label,
+             progress.position_schema_version AS progress_schema_version,
+             progress.chapter_id AS progress_chapter_id,
+             progress.element_id AS progress_element_id,
+             progress.scroll_offset AS progress_scroll_offset,
              progress.file_id AS progress_file_id,
              progress.total AS progress_total,
              progress.finished AS progress_finished,
@@ -574,11 +578,15 @@ final class FundusDatabase {
             mediaProgress: row['progress_kind'] is String
                 ? MediaPosition.fromJson({
                     'kind': row['progress_kind'] as String,
+                    'schema_version': row['progress_schema_version'] as int?,
                     'numeric_value': row['progress_position'] as num?,
                     'key': row['progress_key'] as String?,
                     'label': row['progress_label'] as String?,
                     'total': row['progress_total'] as num?,
                     'file_id': row['progress_file_id'] as String?,
+                    'chapter_id': row['progress_chapter_id'] as String?,
+                    'element_id': row['progress_element_id'] as String?,
+                    'scroll_offset': row['progress_scroll_offset'] as num?,
                   })
                 : null,
             progressTrackIndex: row['progress_track_index'] as int?,
@@ -710,11 +718,15 @@ final class FundusDatabase {
       fileId: row['file_id'] as String?,
       position: MediaPosition.fromJson({
         'kind': row['position_kind'] as String,
+        'schema_version': row['position_schema_version'] as int?,
         'numeric_value': row['numeric_value'] as num?,
         'key': row['position_key'] as String?,
         'label': row['position_label'] as String?,
         'total': row['total'] as num?,
         'file_id': row['file_id'] as String?,
+        'chapter_id': row['chapter_id'] as String?,
+        'element_id': row['element_id'] as String?,
+        'scroll_offset': row['scroll_offset'] as num?,
       }),
       finished: (row['finished'] as int) == 1,
       revision: row['revision'] as int,
@@ -749,15 +761,10 @@ final class FundusDatabase {
     if (selected == null || selected.fileId == null) {
       throw StateError('Fortschrittsrevision ist nicht wiederherstellbar.');
     }
-    final seconds = selected.position.numericValue ?? 0;
-    final total = selected.position.total;
-    return saveProgress(
+    return saveMediaProgress(
       workId: workId,
       fileId: selected.fileId!,
-      position: Duration(milliseconds: (seconds * 1000).round()),
-      duration: total == null
-          ? null
-          : Duration(milliseconds: (total * 1000).round()),
+      position: selected.position,
       finished: selected.finished,
       deviceId: deviceId,
       operationId: operationId,
@@ -828,10 +835,14 @@ final class FundusDatabase {
       final now = DateTime.now().millisecondsSinceEpoch;
       final mediaPosition = MediaPosition(
         kind: position.kind,
+        schemaVersion: position.schemaVersion,
         numericValue: position.numericValue,
         key: position.key,
         total: position.total,
         fileId: fileId,
+        chapterId: position.chapterId,
+        elementId: position.elementId,
+        scrollOffset: position.scrollOffset,
         label: position.label,
       );
       final snapshot = jsonEncode({
@@ -843,16 +854,21 @@ final class FundusDatabase {
       _database.execute(
         '''
         INSERT INTO progress (
-          work_id, user_id, file_id, position_kind, numeric_value,
-          position_key, position_label, total, finished, revision,
+          work_id, user_id, file_id, position_kind, position_schema_version,
+          numeric_value, position_key, position_label, chapter_id, element_id,
+          scroll_offset, total, finished, revision,
           updated_at, device_id, operation_id
-        ) VALUES (?, 'default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, 'default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(work_id, user_id) DO UPDATE SET
           file_id = excluded.file_id,
           position_kind = excluded.position_kind,
+          position_schema_version = excluded.position_schema_version,
           numeric_value = excluded.numeric_value,
           position_key = excluded.position_key,
           position_label = excluded.position_label,
+          chapter_id = excluded.chapter_id,
+          element_id = excluded.element_id,
+          scroll_offset = excluded.scroll_offset,
           total = excluded.total,
           finished = excluded.finished,
           revision = excluded.revision,
@@ -864,9 +880,13 @@ final class FundusDatabase {
           workId,
           fileId,
           mediaPosition.kind.name,
+          mediaPosition.schemaVersion,
           mediaPosition.numericValue,
           mediaPosition.key,
           mediaPosition.label,
+          mediaPosition.chapterId,
+          mediaPosition.elementId,
+          mediaPosition.scrollOffset,
           mediaPosition.total,
           finished ? 1 : 0,
           revision,
@@ -1701,6 +1721,7 @@ final class FundusDatabase {
     if (_database.userVersion == 2 && !readOnly) _migrateToVersion3();
     if (_database.userVersion == 3 && !readOnly) _migrateToVersion4();
     if (_database.userVersion == 4 && !readOnly) _migrateToVersion5();
+    if (_database.userVersion == 5 && !readOnly) _migrateToVersion6();
   }
 
   void _migrateToVersion1() {
@@ -1791,6 +1812,32 @@ final class FundusDatabase {
       rethrow;
     }
   }
+
+  void _migrateToVersion6() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      if (tableExists('progress')) {
+        const columns = {
+          'position_schema_version': 'INTEGER NOT NULL DEFAULT 1',
+          'chapter_id': 'TEXT',
+          'element_id': 'TEXT',
+          'scroll_offset': 'REAL',
+        };
+        for (final entry in columns.entries) {
+          if (!columnExists('progress', entry.key)) {
+            _database.execute(
+              'ALTER TABLE progress ADD COLUMN ${entry.key} ${entry.value}',
+            );
+          }
+        }
+      }
+      _database.userVersion = 6;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
 }
 
 const _version1Statements = <String>[
@@ -1870,9 +1917,13 @@ const _version1Statements = <String>[
     user_id TEXT NOT NULL DEFAULT 'default',
     file_id TEXT REFERENCES files(id) ON DELETE SET NULL,
     position_kind TEXT NOT NULL,
+    position_schema_version INTEGER NOT NULL DEFAULT 1,
     numeric_value REAL,
     position_key TEXT,
     position_label TEXT,
+    chapter_id TEXT,
+    element_id TEXT,
+    scroll_offset REAL,
     total REAL,
     finished INTEGER NOT NULL DEFAULT 0 CHECK (finished IN (0, 1)),
     revision INTEGER NOT NULL DEFAULT 1,

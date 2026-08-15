@@ -916,6 +916,9 @@ void main() {
           numericValue: 7,
           total: 24,
           fileId: track.fileId,
+          chapterId: 'chapter-1',
+          elementId: 'pages/007.webp',
+          scrollOffset: .25,
           label: 'Seite 7',
         ),
         operationId: 'comic-page-7',
@@ -925,7 +928,32 @@ void main() {
       expect(saved.position.numericValue, 7);
       expect(saved.position.total, 24);
       expect(saved.position.label, 'Seite 7');
+      expect(saved.position.chapterId, 'chapter-1');
+      expect(saved.position.elementId, 'pages/007.webp');
+      expect(saved.position.scrollOffset, .25);
       expect(library.loadProgress(work.id)?.position.displayValue, 'Bild 7');
+
+      library.saveMediaProgress(
+        workId: work.id,
+        fileId: track.fileId,
+        position: MediaPosition(
+          kind: MediaPositionKind.imageIndex,
+          numericValue: 8,
+          total: 24,
+          fileId: track.fileId,
+          chapterId: 'chapter-1',
+          elementId: 'pages/008.webp',
+        ),
+        operationId: 'comic-page-8',
+      );
+      final restored = library.restoreProgressRevision(
+        workId: work.id,
+        revision: 1,
+        operationId: 'restore-comic-page-7',
+      );
+      expect(restored.position.kind, MediaPositionKind.imageIndex);
+      expect(restored.position.elementId, 'pages/007.webp');
+      expect(restored.position.scrollOffset, .25);
     },
   );
 

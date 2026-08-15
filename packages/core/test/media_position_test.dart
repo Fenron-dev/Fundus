@@ -23,4 +23,52 @@ void main() {
 
     expect(position.displayValue, 'Seite 42');
   });
+
+  test(
+    'versioned publication anchors round-trip and legacy data remains valid',
+    () {
+      const position = MediaPosition(
+        kind: MediaPositionKind.imageIndex,
+        numericValue: 12,
+        total: 18,
+        fileId: 'chapter-file',
+        chapterId: 'chapter-283',
+        elementId: 'pages/012.webp',
+        scrollOffset: .35,
+        label: 'Kapitel 283 · Seite 12',
+      );
+
+      final restored = MediaPosition.fromJson(position.toJson());
+      expect(restored.schemaVersion, MediaPosition.currentSchemaVersion);
+      expect(restored.chapterId, 'chapter-283');
+      expect(restored.elementId, 'pages/012.webp');
+      expect(restored.scrollOffset, .35);
+
+      final legacy = MediaPosition.fromJson({
+        'kind': 'page',
+        'numeric_value': 4,
+      });
+      expect(legacy.schemaVersion, 1);
+      expect(legacy.displayValue, 'Seite 4');
+    },
+  );
+
+  test('future versions and invalid offsets are rejected', () {
+    expect(
+      () => MediaPosition.fromJson({
+        'schema_version': MediaPosition.currentSchemaVersion + 1,
+        'kind': 'page',
+        'numeric_value': 1,
+      }),
+      throwsFormatException,
+    );
+    expect(
+      () => MediaPosition.fromJson({
+        'kind': 'page',
+        'numeric_value': 1,
+        'scroll_offset': 1.2,
+      }),
+      throwsFormatException,
+    );
+  });
 }

@@ -14,6 +14,7 @@ import 'library/android_storage_access.dart';
 import 'library/comic_book_viewer.dart';
 import 'library/document_file_opener.dart';
 import 'library/document_preview.dart';
+import 'library/publication_reader_settings.dart';
 import 'library/recent_library_store.dart';
 import 'library/security_scoped_bookmarks.dart';
 import 'library/zip_archive_browser.dart';
@@ -39,6 +40,8 @@ typedef PlaylistPlaybackCallback = Future<void> Function(String playlistId);
 typedef MissingWorkDeleteCallback =
     Future<void> Function(LibraryWorkSummary work);
 typedef WorkMetadataChangedCallback = void Function(LibraryWorkSummary work);
+
+const _publicationFormats = PublicationFormatRegistry();
 
 final class _RemoteLibraryChoice {
   const _RemoteLibraryChoice({
@@ -4071,8 +4074,8 @@ class _DetailPanelState extends State<_DetailPanel> {
   }
 
   Future<void> _openDocument(LibraryPlaybackTrack file) async {
-    final extension = p.extension(file.absolutePath).toLowerCase();
-    if (extension == '.cbz') {
+    final descriptor = _publicationFormats.probe(file.absolutePath);
+    if (descriptor?.renderer == PublicationRendererKind.comic) {
       final work = _editedWork ?? widget.work;
       final files = work == null
           ? <LibraryPlaybackTrack>[file]
@@ -4080,14 +4083,14 @@ class _DetailPanelState extends State<_DetailPanel> {
       await _openComicWork(work, files, startFileId: file.fileId);
       return;
     }
-    if (extension == '.pdf') {
+    if (descriptor?.renderer == PublicationRendererKind.fixedDocument) {
       final work = _editedWork ?? widget.work;
       if (work != null) {
         await _openPdf(work, file, widget.library?.loadProgress(work.id));
         return;
       }
     }
-    if (extension == '.zip') {
+    if (p.extension(file.absolutePath).toLowerCase() == '.zip') {
       await showZipArchiveBrowser(
         context,
         archivePath: file.absolutePath,
@@ -4101,11 +4104,12 @@ class _DetailPanelState extends State<_DetailPanel> {
   List<LibraryPlaybackTrack> _readableDocumentFiles(
     List<LibraryPlaybackTrack> files,
   ) => files
-      .where(
-        (file) =>
-            p.extension(file.absolutePath).toLowerCase() == '.cbz' ||
-            supportsInternalDocumentPreview(file.absolutePath),
-      )
+      .where((file) {
+        final renderer = _publicationFormats.probe(file.absolutePath)?.renderer;
+        return renderer == PublicationRendererKind.comic ||
+            renderer == PublicationRendererKind.fixedDocument ||
+            supportsInternalDocumentPreview(file.absolutePath);
+      })
       .toList(growable: false);
 
   Future<void> _openDocumentWork(
@@ -4115,7 +4119,11 @@ class _DetailPanelState extends State<_DetailPanel> {
     final readable = _readableDocumentFiles(files);
     if (readable.isEmpty) return;
     final comics = readable
-        .where((file) => p.extension(file.absolutePath).toLowerCase() == '.cbz')
+        .where(
+          (file) =>
+              _publicationFormats.probe(file.absolutePath)?.renderer ==
+              PublicationRendererKind.comic,
+        )
         .toList(growable: false);
     if (comics.isNotEmpty) {
       await _openComicWork(work, comics);
@@ -4125,7 +4133,8 @@ class _DetailPanelState extends State<_DetailPanel> {
     final selected =
         readable.where((file) => file.fileId == progress?.fileId).firstOrNull ??
         readable.first;
-    if (p.extension(selected.absolutePath).toLowerCase() == '.pdf') {
+    if (_publicationFormats.probe(selected.absolutePath)?.renderer ==
+        PublicationRendererKind.fixedDocument) {
       await _openPdf(work, selected, progress);
     } else {
       await _openDocument(selected);
@@ -4133,8 +4142,17 @@ class _DetailPanelState extends State<_DetailPanel> {
   }
 
   Future<void> _openDocumentPath(String path) async {
-    if (p.extension(path).toLowerCase() == '.cbz') {
-      await showComicBookViewer(context, archivePath: path);
+    if (_publicationFormats.probe(path)?.renderer ==
+        PublicationRendererKind.comic) {
+      final profile = await PublicationReaderSettings.loadComicProfile();
+      if (!mounted) return;
+      await showComicBookViewer(
+        context,
+        archivePath: path,
+        initialProfile: profile,
+        onProfileChanged: (updated) =>
+            unawaited(PublicationReaderSettings.saveComicProfile(updated)),
+      );
       return;
     }
     if (!supportsInternalDocumentPreview(path)) {
@@ -4164,7 +4182,9 @@ class _DetailPanelState extends State<_DetailPanel> {
     final comics =
         files
             .where(
-              (file) => p.extension(file.absolutePath).toLowerCase() == '.cbz',
+              (file) =>
+                  _publicationFormats.probe(file.absolutePath)?.renderer ==
+                  PublicationRendererKind.comic,
             )
             .toList(growable: false)
           ..sort((left, right) => left.index.compareTo(right.index));
@@ -4182,17 +4202,26 @@ class _DetailPanelState extends State<_DetailPanel> {
             storedPosition?.fileId == comics[chapterIndex].fileId
         ? ((storedPosition!.numericValue ?? 1).round() - 1).clamp(0, 1 << 30)
         : 0;
+    var readerProfile = await PublicationReaderSettings.loadComicProfile();
+    if (!mounted) return;
     while (mounted) {
       final file = comics[chapterIndex];
       final result = await showComicBookViewer(
         context,
         archivePath: file.absolutePath,
         initialPage: initialPage,
+        initialElementId: storedPosition?.fileId == file.fileId
+            ? storedPosition?.elementId
+            : null,
+        initialScrollOffset: storedPosition?.fileId == file.fileId
+            ? storedPosition?.scrollOffset
+            : null,
+        initialProfile: readerProfile,
         hasPreviousChapter: chapterIndex > 0,
         hasNextChapter: chapterIndex + 1 < comics.length,
-        onPageChanged: library == null || work == null || library.isReadOnly
+        onPositionChanged: library == null || work == null || library.isReadOnly
             ? null
-            : (page, total) {
+            : (page, total, elementId, scrollOffset) {
                 library.saveMediaProgress(
                   workId: work.id,
                   fileId: file.fileId,
@@ -4201,6 +4230,9 @@ class _DetailPanelState extends State<_DetailPanel> {
                     numericValue: page + 1,
                     total: total.toDouble(),
                     fileId: file.fileId,
+                    chapterId: file.title,
+                    elementId: elementId,
+                    scrollOffset: scrollOffset,
                     key: file.relativePath,
                     label:
                         'Kapitel ${chapterIndex + 1}/${comics.length} · Seite ${page + 1}',
@@ -4209,6 +4241,10 @@ class _DetailPanelState extends State<_DetailPanel> {
                       chapterIndex + 1 == comics.length && page + 1 >= total,
                 );
               },
+        onProfileChanged: (profile) {
+          readerProfile = profile;
+          unawaited(PublicationReaderSettings.saveComicProfile(profile));
+        },
       );
       if (!mounted || result == null) break;
       if (result == ComicBookViewerResult.nextChapter &&

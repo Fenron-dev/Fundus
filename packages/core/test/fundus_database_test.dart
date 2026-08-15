@@ -16,6 +16,13 @@ void main() {
     expect(database.columnExists('playback_sessions', 'revision'), isTrue);
     expect(database.columnExists('files', 'audio_codec'), isTrue);
     expect(database.columnExists('files', 'sample_rate_hz'), isTrue);
+    expect(
+      database.columnExists('progress', 'position_schema_version'),
+      isTrue,
+    );
+    expect(database.columnExists('progress', 'chapter_id'), isTrue);
+    expect(database.columnExists('progress', 'element_id'), isTrue);
+    expect(database.columnExists('progress', 'scroll_offset'), isTrue);
     expect(database.tableExists('search_index'), isTrue);
   });
 
@@ -68,5 +75,33 @@ void main() {
     expect(migrated.columnExists('files', 'codec_profile'), isTrue);
     expect(migrated.columnExists('files', 'audio_channels'), isTrue);
     expect(migrated.columnExists('files', 'sample_rate_hz'), isTrue);
+  });
+
+  test('schema v5 is migrated with stable publication anchors', () async {
+    final directory = await Directory.systemTemp.createTemp('fundus-db-v5-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/index.db');
+    final legacy = sqlite3.open(file.path);
+    legacy.execute('''
+      CREATE TABLE progress (
+        work_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        position_kind TEXT NOT NULL,
+        PRIMARY KEY (work_id, user_id)
+      )
+    ''');
+    legacy.userVersion = 5;
+    legacy.close();
+
+    final migrated = FundusDatabase.openFile(file);
+    addTearDown(migrated.close);
+    expect(migrated.userVersion, FundusDatabase.schemaVersion);
+    expect(
+      migrated.columnExists('progress', 'position_schema_version'),
+      isTrue,
+    );
+    expect(migrated.columnExists('progress', 'chapter_id'), isTrue);
+    expect(migrated.columnExists('progress', 'element_id'), isTrue);
+    expect(migrated.columnExists('progress', 'scroll_offset'), isTrue);
   });
 }
