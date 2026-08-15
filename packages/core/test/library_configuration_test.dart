@@ -19,6 +19,8 @@ void main() {
     );
     expect(restored.rootsFor('podcast'), ['Podcasts']);
     expect(restored.rootsFor('image'), contains('Pictures'));
+    expect(restored.rootsFor('webnovel'), contains('Webnovels'));
+    expect(restored.rootsFor('manga'), containsAll(['Manga', 'Comics']));
   });
 
   test('custom roots override one kind and retain other defaults', () async {

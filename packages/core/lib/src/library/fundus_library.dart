@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
@@ -345,6 +346,30 @@ final class FundusLibrary {
     deviceId: deviceId,
     operationId: operationId ?? FundusId.generate(),
   );
+
+  Future<String> cacheGeneratedCover({
+    required String workId,
+    required Uint8List bytes,
+    String extension = 'png',
+  }) async {
+    _ensureWritable();
+    if (bytes.isEmpty) throw ArgumentError.value(bytes, 'bytes');
+    final normalizedExtension = extension.toLowerCase() == 'jpg'
+        ? 'jpg'
+        : 'png';
+    final directory = Directory(
+      p.join(root.path, metadataDirectoryName, 'covers'),
+    );
+    await directory.create(recursive: true);
+    final filename = '$workId.document.$normalizedExtension';
+    final target = File(p.join(directory.path, filename));
+    await target.writeAsBytes(bytes, flush: true);
+    _database.setGeneratedCoverPath(
+      workId,
+      p.posix.join(metadataDirectoryName, 'covers', filename),
+    );
+    return target.path;
+  }
 
   PlaybackSession savePlaybackSession(
     PlaybackSession session, {
@@ -716,6 +741,7 @@ final class FundusLibrary {
       abridged: work.abridged,
       progressPosition: work.progressPosition,
       progressDuration: work.progressDuration,
+      mediaProgress: work.mediaProgress,
       progressTrackIndex: work.progressTrackIndex,
       progressFinished: work.progressFinished,
       status: work.status,

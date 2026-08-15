@@ -22,6 +22,7 @@ final class LibraryConfiguration {
     'movie': ['Movies', 'Filme'],
     'tv': ['TV Shows', 'Serien'],
     'book': ['Books', 'Bücher'],
+    'webnovel': ['Webnovels', 'Web Novels'],
     'manga': ['Manga', 'Comics'],
     'music': ['Music', 'Musik'],
     'podcast': ['Podcasts'],

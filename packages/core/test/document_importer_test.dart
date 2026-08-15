@@ -87,4 +87,22 @@ void main() {
     expect(candidates.single.files, hasLength(3));
     expect(candidates.single.coverFile?.filename, 'cover.png');
   });
+
+  test('keeps webnovels separate from books and documents', () {
+    final importer = DocumentImporter(
+      mediaRoots: LibraryConfiguration.defaults,
+    );
+
+    final candidates = importer.group([
+      file('Webnovels/Arc One/chapter-1.html', mimeType: 'text/html'),
+      file('Books/Novel.epub', mimeType: 'application/epub+zip'),
+      file('Documents/Notes.pdf', mimeType: 'application/pdf'),
+    ]);
+
+    expect(candidates.map((candidate) => candidate.kind), [
+      'document',
+      'ebook',
+      'webnovel',
+    ]);
+  });
 }

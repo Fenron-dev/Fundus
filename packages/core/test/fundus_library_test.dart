@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:fundus_core/fundus_core.dart';
 import 'package:sqlite3/sqlite3.dart';
@@ -959,6 +960,45 @@ void main() {
         'Rebirth - Kapitel 0281.cbz',
       ]),
     );
+
+    final chapter = library
+        .playbackTracks(work.id)
+        .where((file) => file.title.endsWith('0281.cbz'))
+        .single;
+    library.saveMediaProgress(
+      workId: work.id,
+      fileId: chapter.fileId,
+      position: MediaPosition(
+        kind: MediaPositionKind.imageIndex,
+        numericValue: 4,
+        total: 18,
+        fileId: chapter.fileId,
+        label: 'Kapitel 2/2 · Seite 4',
+      ),
+    );
+    expect(library.listWorks().single.mediaProgress?.numericValue, 4);
+  });
+
+  test('stores a generated document cover inside the library', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-pdf-cover-');
+    addTearDown(() => root.delete(recursive: true));
+    final documents = Directory('${root.path}/Documents');
+    await documents.create(recursive: true);
+    await File('${documents.path}/Manual.pdf').writeAsBytes([1, 2, 3]);
+
+    final library = await FundusLibrary.create(root);
+    addTearDown(library.close);
+    await library.index().drain<void>();
+    final work = library.listWorks().single;
+
+    final coverPath = await library.cacheGeneratedCover(
+      workId: work.id,
+      bytes: Uint8List.fromList([9, 8, 7]),
+    );
+
+    expect(coverPath, contains('.library/covers'));
+    expect(await File(coverPath).readAsBytes(), [9, 8, 7]);
+    expect(library.listWorks().single.coverPath, coverPath);
   });
 
   test('open rejects a directory without a manifest', () async {

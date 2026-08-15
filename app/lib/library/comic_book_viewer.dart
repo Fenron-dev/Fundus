@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
 import 'zip_archive_browser.dart';
@@ -28,30 +29,40 @@ List<ZipArchiveEntry> comicBookPages(ZipArchiveSnapshot snapshot) {
   return pages;
 }
 
-Future<void> showComicBookViewer(
+Future<ComicBookViewerResult?> showComicBookViewer(
   BuildContext context, {
   required String archivePath,
   int initialPage = 0,
+  bool hasPreviousChapter = false,
+  bool hasNextChapter = false,
   void Function(int page, int total)? onPageChanged,
-}) => showDialog<void>(
+}) => showDialog<ComicBookViewerResult>(
   context: context,
   barrierDismissible: false,
   builder: (context) => _ComicBookDialog(
     archivePath: archivePath,
     initialPage: initialPage,
+    hasPreviousChapter: hasPreviousChapter,
+    hasNextChapter: hasNextChapter,
     onPageChanged: onPageChanged,
   ),
 );
+
+enum ComicBookViewerResult { previousChapter, nextChapter }
 
 class _ComicBookDialog extends StatefulWidget {
   const _ComicBookDialog({
     required this.archivePath,
     required this.initialPage,
+    required this.hasPreviousChapter,
+    required this.hasNextChapter,
     required this.onPageChanged,
   });
 
   final String archivePath;
   final int initialPage;
+  final bool hasPreviousChapter;
+  final bool hasNextChapter;
   final void Function(int page, int total)? onPageChanged;
 
   @override
@@ -66,6 +77,29 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
       .then(comicBookPages);
   PageController? _controller;
   int _currentPage = 0;
+  bool _reportedInitialPage = false;
+
+  void _previous() {
+    if (_currentPage > 0) {
+      _controller?.previousPage(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+      );
+    } else if (widget.hasPreviousChapter) {
+      Navigator.pop(context, ComicBookViewerResult.previousChapter);
+    }
+  }
+
+  void _next(int pageCount) {
+    if (_currentPage + 1 < pageCount) {
+      _controller?.nextPage(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+      );
+    } else if (widget.hasNextChapter) {
+      Navigator.pop(context, ComicBookViewerResult.nextChapter);
+    }
+  }
 
   @override
   void dispose() {
@@ -112,101 +146,125 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
           final initial = widget.initialPage.clamp(0, pages.length - 1);
           _controller ??= PageController(initialPage: initial);
           if (_currentPage == 0 && initial > 0) _currentPage = initial;
-          return Column(
-            children: [
-              Expanded(
-                child: ColoredBox(
-                  color: Colors.black,
-                  child: PageView.builder(
-                    controller: _controller,
-                    itemCount: pages.length,
-                    onPageChanged: (page) {
-                      setState(() {
-                        _currentPage = page;
-                        _extractedPages.removeWhere(
-                          (cached, _) => (cached - page).abs() > 2,
-                        );
-                      });
-                      widget.onPageChanged?.call(page, pages.length);
-                    },
-                    itemBuilder: (context, page) => FutureBuilder<String>(
-                      future: _extractedPages.putIfAbsent(
-                        page,
-                        () => _service.extractToTemporaryFile(
-                          widget.archivePath,
-                          pages[page],
+          if (!_reportedInitialPage) {
+            _reportedInitialPage = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              widget.onPageChanged?.call(initial, pages.length);
+            });
+          }
+          return Focus(
+            autofocus: true,
+            onKeyEvent: (node, event) {
+              if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+                return KeyEventResult.ignored;
+              }
+              if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+                _previous();
+                return KeyEventResult.handled;
+              }
+              if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+                _next(pages.length);
+                return KeyEventResult.handled;
+              }
+              return KeyEventResult.ignored;
+            },
+            child: Column(
+              children: [
+                Expanded(
+                  child: ColoredBox(
+                    color: Colors.black,
+                    child: PageView.builder(
+                      controller: _controller,
+                      itemCount: pages.length,
+                      onPageChanged: (page) {
+                        setState(() {
+                          _currentPage = page;
+                          _extractedPages.removeWhere(
+                            (cached, _) => (cached - page).abs() > 2,
+                          );
+                        });
+                        widget.onPageChanged?.call(page, pages.length);
+                      },
+                      itemBuilder: (context, page) => FutureBuilder<String>(
+                        future: _extractedPages.putIfAbsent(
+                          page,
+                          () => _service.extractToTemporaryFile(
+                            widget.archivePath,
+                            pages[page],
+                          ),
                         ),
-                      ),
-                      builder: (context, pageSnapshot) {
-                        if (pageSnapshot.connectionState !=
-                            ConnectionState.done) {
-                          return const Center(
-                            child: CircularProgressIndicator(),
-                          );
-                        }
-                        if (pageSnapshot.hasError) {
-                          return Center(
-                            child: Text(
-                              'Seite ${page + 1} konnte nicht geöffnet werden.',
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                          );
-                        }
-                        return InteractiveViewer(
-                          minScale: .5,
-                          maxScale: 6,
-                          child: Center(
-                            child: Image.file(
-                              File(pageSnapshot.data!),
-                              fit: BoxFit.contain,
-                              errorBuilder: (context, error, stackTrace) => Text(
-                                'Seite ${page + 1} konnte nicht dargestellt werden.',
+                        builder: (context, pageSnapshot) {
+                          if (pageSnapshot.connectionState !=
+                              ConnectionState.done) {
+                            return const Center(
+                              child: CircularProgressIndicator(),
+                            );
+                          }
+                          if (pageSnapshot.hasError) {
+                            return Center(
+                              child: Text(
+                                'Seite ${page + 1} konnte nicht geöffnet werden.',
                                 style: const TextStyle(color: Colors.white),
                               ),
+                            );
+                          }
+                          return InteractiveViewer(
+                            minScale: .5,
+                            maxScale: 6,
+                            child: Center(
+                              child: Image.file(
+                                File(pageSnapshot.data!),
+                                fit: BoxFit.contain,
+                                errorBuilder: (context, error, stackTrace) => Text(
+                                  'Seite ${page + 1} konnte nicht dargestellt werden.',
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                              ),
                             ),
-                          ),
-                        );
-                      },
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ),
-              ),
-              SafeArea(
-                top: false,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      IconButton(
-                        onPressed: _currentPage == 0
-                            ? null
-                            : () => _controller!.previousPage(
-                                duration: const Duration(milliseconds: 180),
-                                curve: Curves.easeOut,
-                              ),
-                        tooltip: 'Vorherige Seite',
-                        icon: const Icon(Icons.chevron_left),
-                      ),
-                      Text('Seite ${_currentPage + 1} von ${pages.length}'),
-                      IconButton(
-                        onPressed: _currentPage + 1 >= pages.length
-                            ? null
-                            : () => _controller!.nextPage(
-                                duration: const Duration(milliseconds: 180),
-                                curve: Curves.easeOut,
-                              ),
-                        tooltip: 'Nächste Seite',
-                        icon: const Icon(Icons.chevron_right),
-                      ),
-                    ],
+                SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(
+                          onPressed:
+                              _currentPage > 0 || widget.hasPreviousChapter
+                              ? _previous
+                              : null,
+                          tooltip: _currentPage == 0
+                              ? 'Vorheriges Kapitel'
+                              : 'Vorherige Seite',
+                          icon: const Icon(Icons.chevron_left),
+                        ),
+                        Text('Seite ${_currentPage + 1} von ${pages.length}'),
+                        IconButton(
+                          onPressed:
+                              _currentPage + 1 < pages.length ||
+                                  widget.hasNextChapter
+                              ? () => _next(pages.length)
+                              : null,
+                          tooltip: _currentPage + 1 >= pages.length
+                              ? 'Nächstes Kapitel'
+                              : 'Nächste Seite',
+                          icon: const Icon(Icons.chevron_right),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           );
         },
       ),

@@ -35,6 +35,7 @@ final class DocumentImporter {
 
   static const _supportedKinds = {
     'book',
+    'webnovel',
     'manga',
     'image',
     'document',
@@ -56,6 +57,10 @@ final class DocumentImporter {
     'tif',
     'tiff',
     'svg',
+    'txt',
+    'md',
+    'html',
+    'htm',
     'zip',
     'cbz',
     '7z',

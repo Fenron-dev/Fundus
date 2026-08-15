@@ -560,6 +560,7 @@ class _FundusAppState extends State<FundusApp> {
         if (!mounted) return;
         setState(() => _indexEvent = event);
       }
+      await _generateDocumentCovers(library);
       if (mounted) {
         setState(() => _works = library.listWorks(includeMissing: true));
       }
@@ -575,6 +576,46 @@ class _FundusAppState extends State<FundusApp> {
       if (mounted) setState(() => _error = error.toString());
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _generateDocumentCovers(FundusLibrary library) async {
+    const renderer = NativePdfRenderer();
+    for (final work in library.listWorks()) {
+      if (work.coverPath != null ||
+          !const {
+            'ebook',
+            'webnovel',
+            'document',
+            'ttrpg_product',
+          }.contains(work.kind)) {
+        continue;
+      }
+      final pdf = library
+          .playbackTracks(work.id)
+          .where(
+            (track) => p.extension(track.absolutePath).toLowerCase() == '.pdf',
+          )
+          .firstOrNull;
+      if (pdf == null) continue;
+      try {
+        final bytes = await renderer.renderPage(
+          pdf.absolutePath,
+          0,
+          maxWidth: 640,
+        );
+        await library.cacheGeneratedCover(workId: work.id, bytes: bytes);
+      } on DocumentPreviewException catch (error) {
+        await FundusDiagnostics.instance.record('document.cover_failed', {
+          'work_id': work.id,
+          'error': error.message,
+        });
+      } on FileSystemException catch (error) {
+        await FundusDiagnostics.instance.record('document.cover_failed', {
+          'work_id': work.id,
+          'error': error.message,
+        });
+      }
     }
   }
 
@@ -1096,27 +1137,15 @@ class _LibraryShellState extends State<LibraryShell> {
 
   List<LibraryWorkSummary> get _visibleWorks {
     final works = LibraryWorkSearch.apply(widget.works, _query);
-    return switch (_section) {
-      _LibrarySection.library =>
-        works.where((work) => work.kind == 'audiobook').toList(growable: false),
-      _LibrarySection.documents =>
-        works
-            .where(
-              (work) => const {
-                'ebook',
-                'manga',
-                'image',
-                'document',
-                'ttrpg_product',
-                'archive',
-              }.contains(work.kind),
-            )
-            .toList(growable: false),
-      _LibrarySection.playlists => works,
-    };
+    final kinds = _section.workKinds;
+    return kinds == null
+        ? works
+        : works
+              .where((work) => kinds.contains(work.kind))
+              .toList(growable: false);
   }
 
-  bool get _showingGroups => _section == _LibrarySection.documents
+  bool get _showingGroups => _section.isDocumentSection
       ? false
       : switch (_grouping) {
           _LibraryGrouping.books => false,
@@ -1211,7 +1240,7 @@ class _LibraryShellState extends State<LibraryShell> {
                       selectedSection: _section,
                       onSelectSection: (section) => setState(() {
                         _section = section;
-                        if (section == _LibrarySection.documents) {
+                        if (section.isDocumentSection) {
                           _grouping = _LibraryGrouping.books;
                         }
                         _inlineDetailWork = null;
@@ -1251,7 +1280,7 @@ class _LibraryShellState extends State<LibraryShell> {
                   if (_detailPaneVisible &&
                       !_playerExpanded &&
                       (_section == _LibrarySection.library ||
-                          _section == _LibrarySection.documents)) ...[
+                          _section.isDocumentSection)) ...[
                     _ResizeHandle(
                       onDrag: (delta) => setState(
                         () => _detailPaneWidth = (_detailPaneWidth - delta)
@@ -1313,29 +1342,20 @@ class _LibraryShellState extends State<LibraryShell> {
                     selectedIndex: _section.index,
                     onDestinationSelected: (value) => setState(() {
                       _section = _LibrarySection.values[value];
-                      if (_section == _LibrarySection.documents) {
+                      if (_section.isDocumentSection) {
                         _grouping = _LibraryGrouping.books;
                       }
                       _inlineDetailWork = null;
                       _playerExpanded = false;
                     }),
                     labelType: NavigationRailLabelType.all,
-                    destinations: const [
-                      NavigationRailDestination(
-                        icon: Icon(Icons.headphones_outlined),
-                        selectedIcon: Icon(Icons.headphones),
-                        label: Text('Hörbücher'),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.collections_bookmark_outlined),
-                        selectedIcon: Icon(Icons.collections_bookmark),
-                        label: Text('Dokumente'),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.queue_music_outlined),
-                        selectedIcon: Icon(Icons.queue_music),
-                        label: Text('Playlists'),
-                      ),
+                    destinations: [
+                      for (final section in _LibrarySection.values)
+                        NavigationRailDestination(
+                          icon: Icon(section.icon),
+                          selectedIcon: Icon(section.selectedIcon),
+                          label: Text(section.label),
+                        ),
                     ],
                   ),
                   const VerticalDivider(width: 1),
@@ -1411,17 +1431,19 @@ class _LibraryShellState extends State<LibraryShell> {
               _mobileDestination = 0;
             }),
           ),
-          ListTile(
-            leading: const Icon(Icons.description_outlined),
-            title: const Text('Dokumente, Manga & TTRPG'),
-            subtitle: const Text('PDFs, E-Books, CBZ, Bilder und Archive'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => setState(() {
-              _section = _LibrarySection.documents;
-              _grouping = _LibraryGrouping.books;
-              _mobileDestination = 0;
-            }),
-          ),
+          for (final section in _LibrarySection.values.where(
+            (section) => section.isDocumentSection,
+          ))
+            ListTile(
+              leading: Icon(section.icon),
+              title: Text(section.label),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => setState(() {
+                _section = section;
+                _grouping = _LibraryGrouping.books;
+                _mobileDestination = 0;
+              }),
+            ),
           const Divider(height: 32),
           FilledButton.icon(
             onPressed: widget.peerServer == null
@@ -2088,9 +2110,7 @@ class _LibraryShellState extends State<LibraryShell> {
     }
     if (_selectedAuthor != null) return _selectedAuthor!;
     if (_selectedNarrator != null) return 'Gesprochen von $_selectedNarrator';
-    return _section == _LibrarySection.documents
-        ? 'Dokumente, Manga, Bilder & TTRPG'
-        : 'Hörbücher & Hörspiele';
+    return _section.browserTitle;
   }
 
   String get _groupingLabel => switch (_grouping) {
@@ -2585,7 +2605,77 @@ class _LibraryShellState extends State<LibraryShell> {
   };
 }
 
-enum _LibrarySection { library, documents, playlists }
+enum _LibrarySection {
+  library,
+  manga,
+  ttrpg,
+  webnovels,
+  books,
+  documents,
+  images,
+  archives,
+  playlists,
+}
+
+extension on _LibrarySection {
+  bool get isDocumentSection => switch (this) {
+    _LibrarySection.library || _LibrarySection.playlists => false,
+    _ => true,
+  };
+
+  Set<String>? get workKinds => switch (this) {
+    _LibrarySection.library => const {'audiobook'},
+    _LibrarySection.manga => const {'manga'},
+    _LibrarySection.ttrpg => const {'ttrpg_product'},
+    _LibrarySection.webnovels => const {'webnovel'},
+    _LibrarySection.books => const {'ebook'},
+    _LibrarySection.documents => const {'document'},
+    _LibrarySection.images => const {'image'},
+    _LibrarySection.archives => const {'archive'},
+    _LibrarySection.playlists => null,
+  };
+
+  String get label => switch (this) {
+    _LibrarySection.library => 'Hörbücher',
+    _LibrarySection.manga => 'Manga & Comics',
+    _LibrarySection.ttrpg => 'TTRPG',
+    _LibrarySection.webnovels => 'Webnovels',
+    _LibrarySection.books => 'Bücher & E-Books',
+    _LibrarySection.documents => 'Dokumente',
+    _LibrarySection.images => 'Fotos & Bilder',
+    _LibrarySection.archives => 'Archive',
+    _LibrarySection.playlists => 'Playlists',
+  };
+
+  String get browserTitle => switch (this) {
+    _LibrarySection.library => 'Hörbücher & Hörspiele',
+    _ => label,
+  };
+
+  IconData get icon => switch (this) {
+    _LibrarySection.library => Icons.headphones_outlined,
+    _LibrarySection.manga => Icons.auto_stories_outlined,
+    _LibrarySection.ttrpg => Icons.casino_outlined,
+    _LibrarySection.webnovels => Icons.chrome_reader_mode_outlined,
+    _LibrarySection.books => Icons.menu_book_outlined,
+    _LibrarySection.documents => Icons.description_outlined,
+    _LibrarySection.images => Icons.photo_library_outlined,
+    _LibrarySection.archives => Icons.archive_outlined,
+    _LibrarySection.playlists => Icons.queue_music_outlined,
+  };
+
+  IconData get selectedIcon => switch (this) {
+    _LibrarySection.library => Icons.headphones,
+    _LibrarySection.manga => Icons.auto_stories,
+    _LibrarySection.ttrpg => Icons.casino,
+    _LibrarySection.webnovels => Icons.chrome_reader_mode,
+    _LibrarySection.books => Icons.menu_book,
+    _LibrarySection.documents => Icons.description,
+    _LibrarySection.images => Icons.photo_library,
+    _LibrarySection.archives => Icons.archive,
+    _LibrarySection.playlists => Icons.queue_music,
+  };
+}
 
 enum _LibraryLayout { grid, table }
 
@@ -2926,6 +3016,11 @@ class _MediaFilterButton extends StatelessWidget {
     'audiobook': 'Hörbücher',
     'video': 'Videos',
     'ebook': 'E-Books',
+    'webnovel': 'Webnovels',
+    'manga': 'Manga & Comics',
+    'document': 'Dokumente',
+    'ttrpg_product': 'TTRPG',
+    'archive': 'Archive',
     'image': 'Bilder',
   };
 
@@ -2995,13 +3090,15 @@ class _Sidebar extends StatelessWidget {
           leading: Icon(Icons.movie_outlined),
           title: Text('Filme & Serien'),
         ),
-        ListTile(
-          leading: const Icon(Icons.collections_bookmark_outlined),
-          title: const Text('Dokumente, Manga & TTRPG'),
-          subtitle: const Text('PDFs, CBZ, Bilder und Archive'),
-          selected: selectedSection == _LibrarySection.documents,
-          onTap: () => onSelectSection(_LibrarySection.documents),
-        ),
+        for (final section in _LibrarySection.values.where(
+          (section) => section.isDocumentSection,
+        ))
+          ListTile(
+            leading: Icon(section.icon),
+            title: Text(section.label),
+            selected: selectedSection == section,
+            onTap: () => onSelectSection(section),
+          ),
         const SizedBox(height: 12),
         const _SectionLabel('Entdecken'),
         const ListTile(
@@ -3811,13 +3908,17 @@ class _DetailPanelState extends State<_DetailPanel> {
           if (selectedWork.kind == 'audiobook')
             _AudioCompatibilityPanel(tracks: workFiles)
           else ...[
-            if (workFiles.length == 1) ...[
+            if (_readableDocumentFiles(workFiles).isNotEmpty) ...[
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
-                  onPressed: () => _openDocument(workFiles.single),
-                  icon: const Icon(Icons.open_in_new),
-                  label: const Text('Datei öffnen'),
+                  onPressed: () => _openDocumentWork(selectedWork, workFiles),
+                  icon: const Icon(Icons.menu_book_outlined),
+                  label: Text(
+                    widget.library?.loadProgress(selectedWork.id) == null
+                        ? 'Öffnen'
+                        : 'Fortsetzen',
+                  ),
                 ),
               ),
               const SizedBox(height: 10),
@@ -3972,8 +4073,19 @@ class _DetailPanelState extends State<_DetailPanel> {
   Future<void> _openDocument(LibraryPlaybackTrack file) async {
     final extension = p.extension(file.absolutePath).toLowerCase();
     if (extension == '.cbz') {
-      await _openComic(file);
+      final work = _editedWork ?? widget.work;
+      final files = work == null
+          ? <LibraryPlaybackTrack>[file]
+          : widget.library?.playbackTracks(work.id) ?? [file];
+      await _openComicWork(work, files, startFileId: file.fileId);
       return;
+    }
+    if (extension == '.pdf') {
+      final work = _editedWork ?? widget.work;
+      if (work != null) {
+        await _openPdf(work, file, widget.library?.loadProgress(work.id));
+        return;
+      }
     }
     if (extension == '.zip') {
       await showZipArchiveBrowser(
@@ -3984,6 +4096,40 @@ class _DetailPanelState extends State<_DetailPanel> {
       return;
     }
     await _openDocumentPath(file.absolutePath);
+  }
+
+  List<LibraryPlaybackTrack> _readableDocumentFiles(
+    List<LibraryPlaybackTrack> files,
+  ) => files
+      .where(
+        (file) =>
+            p.extension(file.absolutePath).toLowerCase() == '.cbz' ||
+            supportsInternalDocumentPreview(file.absolutePath),
+      )
+      .toList(growable: false);
+
+  Future<void> _openDocumentWork(
+    LibraryWorkSummary work,
+    List<LibraryPlaybackTrack> files,
+  ) async {
+    final readable = _readableDocumentFiles(files);
+    if (readable.isEmpty) return;
+    final comics = readable
+        .where((file) => p.extension(file.absolutePath).toLowerCase() == '.cbz')
+        .toList(growable: false);
+    if (comics.isNotEmpty) {
+      await _openComicWork(work, comics);
+      return;
+    }
+    final progress = widget.library?.loadProgress(work.id);
+    final selected =
+        readable.where((file) => file.fileId == progress?.fileId).firstOrNull ??
+        readable.first;
+    if (p.extension(selected.absolutePath).toLowerCase() == '.pdf') {
+      await _openPdf(work, selected, progress);
+    } else {
+      await _openDocument(selected);
+    }
   }
 
   Future<void> _openDocumentPath(String path) async {
@@ -4009,40 +4155,127 @@ class _DetailPanelState extends State<_DetailPanel> {
     }
   }
 
-  Future<void> _openComic(LibraryPlaybackTrack file) async {
+  Future<void> _openComicWork(
+    LibraryWorkSummary? work,
+    List<LibraryPlaybackTrack> files, {
+    String? startFileId,
+  }) async {
     final library = widget.library;
-    final work = widget.work;
+    final comics =
+        files
+            .where(
+              (file) => p.extension(file.absolutePath).toLowerCase() == '.cbz',
+            )
+            .toList(growable: false)
+          ..sort((left, right) => left.index.compareTo(right.index));
+    if (comics.isEmpty) return;
     final progress = work == null || library == null
         ? null
         : library.loadProgress(work.id);
     final storedPosition = progress?.position;
-    final initialPage =
+    var chapterIndex = comics.indexWhere(
+      (file) => file.fileId == (startFileId ?? progress?.fileId),
+    );
+    if (chapterIndex < 0) chapterIndex = 0;
+    var initialPage =
         storedPosition?.kind == MediaPositionKind.imageIndex &&
-            storedPosition?.fileId == file.fileId
+            storedPosition?.fileId == comics[chapterIndex].fileId
         ? ((storedPosition!.numericValue ?? 1).round() - 1).clamp(0, 1 << 30)
         : 0;
-    await showComicBookViewer(
-      context,
-      archivePath: file.absolutePath,
-      initialPage: initialPage,
-      onPageChanged: library == null || work == null || library.isReadOnly
-          ? null
-          : (page, total) {
-              library.saveMediaProgress(
-                workId: work.id,
-                fileId: file.fileId,
-                position: MediaPosition(
-                  kind: MediaPositionKind.imageIndex,
-                  numericValue: page + 1,
-                  total: total.toDouble(),
+    while (mounted) {
+      final file = comics[chapterIndex];
+      final result = await showComicBookViewer(
+        context,
+        archivePath: file.absolutePath,
+        initialPage: initialPage,
+        hasPreviousChapter: chapterIndex > 0,
+        hasNextChapter: chapterIndex + 1 < comics.length,
+        onPageChanged: library == null || work == null || library.isReadOnly
+            ? null
+            : (page, total) {
+                library.saveMediaProgress(
+                  workId: work.id,
                   fileId: file.fileId,
-                  label: 'Seite ${page + 1}',
-                ),
-                finished: page + 1 >= total,
-              );
-            },
-    );
+                  position: MediaPosition(
+                    kind: MediaPositionKind.imageIndex,
+                    numericValue: page + 1,
+                    total: total.toDouble(),
+                    fileId: file.fileId,
+                    key: file.relativePath,
+                    label:
+                        'Kapitel ${chapterIndex + 1}/${comics.length} · Seite ${page + 1}',
+                  ),
+                  finished:
+                      chapterIndex + 1 == comics.length && page + 1 >= total,
+                );
+              },
+      );
+      if (!mounted || result == null) break;
+      if (result == ComicBookViewerResult.nextChapter &&
+          chapterIndex + 1 < comics.length) {
+        chapterIndex++;
+        initialPage = 0;
+        continue;
+      }
+      if (result == ComicBookViewerResult.previousChapter && chapterIndex > 0) {
+        chapterIndex--;
+        initialPage = 1 << 30;
+        continue;
+      }
+      break;
+    }
     if (library != null && work != null) {
+      final refreshed = library
+          .listWorks(includeMissing: true)
+          .where((candidate) => candidate.id == work.id)
+          .firstOrNull;
+      if (refreshed != null) widget.onMetadataChanged?.call(refreshed);
+    }
+  }
+
+  Future<void> _openPdf(
+    LibraryWorkSummary work,
+    LibraryPlaybackTrack file,
+    LibraryPlaybackProgress? progress,
+  ) async {
+    final library = widget.library;
+    final position = progress?.position;
+    final initialPage =
+        position?.kind == MediaPositionKind.page &&
+            position?.fileId == file.fileId
+        ? ((position!.numericValue ?? 1).round() - 1).clamp(0, 1 << 30)
+        : 0;
+    try {
+      await showDocumentPreview(
+        context,
+        path: file.absolutePath,
+        initialPage: initialPage,
+        onOpenExternal: _openFileWithSystemApp,
+        onPageChanged: library == null || library.isReadOnly
+            ? null
+            : (page, total) {
+                library.saveMediaProgress(
+                  workId: work.id,
+                  fileId: file.fileId,
+                  position: MediaPosition(
+                    kind: MediaPositionKind.page,
+                    numericValue: page + 1,
+                    total: total.toDouble(),
+                    fileId: file.fileId,
+                    key: file.relativePath,
+                    label: 'Seite ${page + 1}',
+                  ),
+                  finished: page + 1 >= total,
+                );
+              },
+      );
+    } on DocumentPreviewException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+    if (library != null) {
       final refreshed = library
           .listWorks(includeMissing: true)
           .where((candidate) => candidate.id == work.id)
@@ -4781,6 +5014,7 @@ class _WorkCover extends StatelessWidget {
 String _workKindLabel(String kind) => switch (kind) {
   'audiobook' => 'Hörbuch',
   'ebook' => 'E-Book/PDF',
+  'webnovel' => 'Webnovel',
   'manga' => 'Manga/Comic',
   'image' => 'Bildsammlung',
   'document' => 'Dokument',
@@ -4792,6 +5026,7 @@ String _workKindLabel(String kind) => switch (kind) {
 IconData _workKindIcon(String kind) => switch (kind) {
   'audiobook' => Icons.music_note,
   'ebook' => Icons.menu_book_outlined,
+  'webnovel' => Icons.chrome_reader_mode_outlined,
   'manga' => Icons.auto_stories_outlined,
   'image' => Icons.image_outlined,
   'document' => Icons.description_outlined,

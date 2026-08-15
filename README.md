@@ -62,7 +62,9 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
 - dateibezogenes Audio-Kompatibilitätsprofil für Desktop und Android mit
   Container, Codec, Profil, Kanälen und Abtastrate; die AAC-Konfiguration in
   M4B/M4A hat Vorrang vor ungenauen MP4-Headerwerten
-- erster Dokument-/TTRPG-Schnitt: PDF-, E-Book-, Bild- und Archivdateien unter
+- Dokument-, Lese- und TTRPG-Bereiche werden als getrennte Navigation für
+  Manga/Comics, TTRPG, Webnovels, Bücher/E-Books, Dokumente, Fotos/Bilder und
+  Archive angeboten; PDF-, E-Book-, Bild- und Archivdateien unter
   konfigurierten Medienwurzeln werden getrennt von Hörbüchern indexiert;
   Produktordner bündeln PDFs, Karten und Handouts zu einem gemeinsamen Werk;
   lokale Dateien lassen sich über die registrierte macOS- oder Android-App
@@ -71,8 +73,10 @@ Der erste vertikale Schnitt für Hörbücher und Hörspiele ist ausführbar:
   Rasterbilddateien besitzen zusätzlich eine interne, zoombare Vorschau; auch
   Remote- und Offline-Dokumente nutzen dieselbe Dateiliste und Vorschau, wobei
   Netzwerkdateien begrenzt und nur temporär zwischengespeichert werden; CBZ-
-  Comics öffnen als natürlich sortierte, zoombare Seitenfolge und merken den
-  lokalen Lesefortschritt im generischen Fundus-Fortschrittsmodell
+  Comics öffnen als natürlich sortierte, zoombare Seitenfolge, unterstützen
+  Pfeiltasten und den Wechsel zwischen CBZ-Kapiteln und merken Chapter sowie
+  Seite im generischen Fundus-Fortschrittsmodell; ein Werk-Button öffnet oder
+  setzt Manga und PDFs fort, PDF-Cover werden aus der ersten Seite erzeugt
 - manueller Hörbuch-Metadateneditor für Titel, mehrere Autoren und Sprecher,
   Serie/Band, Sprache, Verlag/Jahr und Beschreibung; Änderungen werden ohne
   Eingriff in die Mediendatei portabel in `_fundus/meta.yaml` gespiegelt

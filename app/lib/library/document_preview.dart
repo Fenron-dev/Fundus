@@ -83,6 +83,8 @@ Future<void> showDocumentPreview(
   BuildContext context, {
   required String path,
   required Future<void> Function(String path) onOpenExternal,
+  int initialPage = 0,
+  void Function(int page, int total)? onPageChanged,
 }) async {
   if (!await File(path).exists()) {
     throw const DocumentPreviewException(
@@ -93,8 +95,12 @@ Future<void> showDocumentPreview(
   await showDialog<void>(
     context: context,
     barrierDismissible: false,
-    builder: (context) =>
-        _DocumentPreviewDialog(path: path, onOpenExternal: onOpenExternal),
+    builder: (context) => _DocumentPreviewDialog(
+      path: path,
+      onOpenExternal: onOpenExternal,
+      initialPage: initialPage,
+      onPageChanged: onPageChanged,
+    ),
   );
 }
 
@@ -102,10 +108,14 @@ class _DocumentPreviewDialog extends StatefulWidget {
   const _DocumentPreviewDialog({
     required this.path,
     required this.onOpenExternal,
+    required this.initialPage,
+    required this.onPageChanged,
   });
 
   final String path;
   final Future<void> Function(String path) onOpenExternal;
+  final int initialPage;
+  final void Function(int page, int total)? onPageChanged;
 
   @override
   State<_DocumentPreviewDialog> createState() => _DocumentPreviewDialogState();
@@ -113,22 +123,24 @@ class _DocumentPreviewDialog extends StatefulWidget {
 
 class _DocumentPreviewDialogState extends State<_DocumentPreviewDialog> {
   final _pdf = const NativePdfRenderer();
-  final _pages = PageController();
+  PageController? _pages;
   final Map<int, Future<Uint8List>> _renderedPages = {};
   Future<int>? _pageCount;
   int _currentPage = 0;
+  bool _reportedInitialPage = false;
 
   bool get _isPdf => p.extension(widget.path).toLowerCase() == '.pdf';
 
   @override
   void initState() {
     super.initState();
+    _currentPage = widget.initialPage;
     if (_isPdf) _pageCount = _pdf.pageCount(widget.path);
   }
 
   @override
   void dispose() {
-    _pages.dispose();
+    _pages?.dispose();
     super.dispose();
   }
 
@@ -188,83 +200,124 @@ class _DocumentPreviewDialogState extends State<_DocumentPreviewDialog> {
         );
       }
       final pageCount = snapshot.data!;
-      return Column(
-        children: [
-          Expanded(
-            child: PageView.builder(
-              controller: _pages,
-              itemCount: pageCount,
-              onPageChanged: (page) {
-                setState(() {
-                  _currentPage = page;
-                  _renderedPages.removeWhere(
-                    (renderedPage, _) => (renderedPage - page).abs() > 2,
-                  );
-                });
-              },
-              itemBuilder: (context, page) => FutureBuilder<Uint8List>(
-                future: _renderedPages.putIfAbsent(
-                  page,
-                  () => _pdf.renderPage(
-                    widget.path,
-                    page,
-                    maxWidth: width.clamp(900, 2200).round(),
-                  ),
-                ),
-                builder: (context, pageSnapshot) {
-                  if (pageSnapshot.connectionState != ConnectionState.done) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  if (pageSnapshot.hasError) {
-                    return Center(
-                      child: Text(
-                        pageSnapshot.error is DocumentPreviewException
-                            ? (pageSnapshot.error! as DocumentPreviewException)
-                                  .message
-                            : 'Seite ${page + 1} konnte nicht dargestellt werden.',
-                      ),
+      final initial = widget.initialPage.clamp(0, pageCount - 1);
+      _pages ??= PageController(initialPage: initial);
+      if (_currentPage != initial && !_pages!.hasClients) {
+        _currentPage = initial;
+      }
+      if (!_reportedInitialPage) {
+        _reportedInitialPage = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          widget.onPageChanged?.call(initial, pageCount);
+        });
+      }
+      return Focus(
+        autofocus: true,
+        onKeyEvent: (node, event) {
+          if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+            return KeyEventResult.ignored;
+          }
+          if (event.logicalKey == LogicalKeyboardKey.arrowLeft &&
+              _currentPage > 0) {
+            _pages!.previousPage(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+            );
+            return KeyEventResult.handled;
+          }
+          if (event.logicalKey == LogicalKeyboardKey.arrowRight &&
+              _currentPage + 1 < pageCount) {
+            _pages!.nextPage(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+            );
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: Column(
+          children: [
+            Expanded(
+              child: PageView.builder(
+                controller: _pages,
+                itemCount: pageCount,
+                onPageChanged: (page) {
+                  setState(() {
+                    _currentPage = page;
+                    _renderedPages.removeWhere(
+                      (renderedPage, _) => (renderedPage - page).abs() > 2,
                     );
-                  }
-                  return _zoomableImage(
-                    Image.memory(pageSnapshot.data!, fit: BoxFit.contain),
-                  );
+                  });
+                  widget.onPageChanged?.call(page, pageCount);
                 },
+                itemBuilder: (context, page) => FutureBuilder<Uint8List>(
+                  future: _renderedPages.putIfAbsent(
+                    page,
+                    () => _pdf.renderPage(
+                      widget.path,
+                      page,
+                      maxWidth: width.clamp(900, 2200).round(),
+                    ),
+                  ),
+                  builder: (context, pageSnapshot) {
+                    if (pageSnapshot.connectionState != ConnectionState.done) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (pageSnapshot.hasError) {
+                      return Center(
+                        child: Text(
+                          pageSnapshot.error is DocumentPreviewException
+                              ? (pageSnapshot.error!
+                                        as DocumentPreviewException)
+                                    .message
+                              : 'Seite ${page + 1} konnte nicht dargestellt werden.',
+                        ),
+                      );
+                    }
+                    return _zoomableImage(
+                      Image.memory(pageSnapshot.data!, fit: BoxFit.contain),
+                    );
+                  },
+                ),
               ),
             ),
-          ),
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  IconButton(
-                    onPressed: _currentPage == 0
-                        ? null
-                        : () => _pages.previousPage(
-                            duration: const Duration(milliseconds: 180),
-                            curve: Curves.easeOut,
-                          ),
-                    tooltip: 'Vorherige Seite',
-                    icon: const Icon(Icons.chevron_left),
-                  ),
-                  Text('Seite ${_currentPage + 1} von $pageCount'),
-                  IconButton(
-                    onPressed: _currentPage + 1 >= pageCount
-                        ? null
-                        : () => _pages.nextPage(
-                            duration: const Duration(milliseconds: 180),
-                            curve: Curves.easeOut,
-                          ),
-                    tooltip: 'Nächste Seite',
-                    icon: const Icon(Icons.chevron_right),
-                  ),
-                ],
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      onPressed: _currentPage == 0
+                          ? null
+                          : () => _pages!.previousPage(
+                              duration: const Duration(milliseconds: 180),
+                              curve: Curves.easeOut,
+                            ),
+                      tooltip: 'Vorherige Seite',
+                      icon: const Icon(Icons.chevron_left),
+                    ),
+                    Text('Seite ${_currentPage + 1} von $pageCount'),
+                    IconButton(
+                      onPressed: _currentPage + 1 >= pageCount
+                          ? null
+                          : () => _pages!.nextPage(
+                              duration: const Duration(milliseconds: 180),
+                              curve: Curves.easeOut,
+                            ),
+                      tooltip: 'Nächste Seite',
+                      icon: const Icon(Icons.chevron_right),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       );
     },
   );

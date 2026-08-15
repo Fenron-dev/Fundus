@@ -63,10 +63,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Dragonlance Kampagnenband'), findsNothing);
-    await tester.tap(find.text('Dokumente, Manga & TTRPG'));
+    expect(find.text('Manga & Comics'), findsOneWidget);
+    expect(find.text('Webnovels'), findsOneWidget);
+    expect(find.text('Bücher & E-Books'), findsOneWidget);
+    expect(find.text('Dokumente'), findsOneWidget);
+    expect(find.text('Fotos & Bilder'), findsOneWidget);
+    await tester.tap(find.text('TTRPG'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Dokumente, Manga, Bilder & TTRPG'), findsOneWidget);
+    expect(find.text('TTRPG'), findsWidgets);
     expect(find.text('Dragonlance Kampagnenband'), findsWidgets);
     expect(find.textContaining('TTRPG-Produkt'), findsWidgets);
     expect(find.text('Weiterhören'), findsNothing);
@@ -94,10 +99,10 @@ void main() {
     expect(find.text('Mobile Kampagnenbox'), findsNothing);
     await tester.tap(find.text('Mehr'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Dokumente, Manga & TTRPG'));
+    await tester.tap(find.text('TTRPG'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Dokumente, Manga, Bilder & TTRPG'), findsWidgets);
+    expect(find.text('TTRPG'), findsWidgets);
     expect(find.text('Mobile Kampagnenbox'), findsOneWidget);
   });
 
