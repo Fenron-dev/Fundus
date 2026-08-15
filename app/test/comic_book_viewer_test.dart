@@ -81,4 +81,99 @@ void main() {
     expect(comicPageLabel(groups, 2, 8), 'Seiten 2–3 von 8');
     expect(comicPageLabel(groups, 0, 8), 'Seite 1 von 8');
   });
+
+  test('tap zones respect the configured edge width', () {
+    expect(
+      comicReaderTapZoneAt(10, 100, edgeFraction: .25),
+      ComicReaderTapZone.left,
+    );
+    expect(
+      comicReaderTapZoneAt(25, 100, edgeFraction: .25),
+      ComicReaderTapZone.center,
+    );
+    expect(
+      comicReaderTapZoneAt(50, 100, edgeFraction: .25),
+      ComicReaderTapZone.center,
+    );
+    expect(
+      comicReaderTapZoneAt(76, 100, edgeFraction: .25),
+      ComicReaderTapZone.right,
+    );
+  });
+
+  test('overall progress combines chapter and page positions', () {
+    expect(comicOverallProgress(page: 4, pageCount: 10), .5);
+    expect(
+      comicOverallProgress(
+        page: 4,
+        pageCount: 10,
+        chapterIndex: 1,
+        chapterCount: 4,
+      ),
+      .375,
+    );
+    expect(comicOverallProgress(page: 99, pageCount: 10), 1);
+  });
+
+  test('chapter overview result carries the selected chapter', () {
+    final result = ComicBookViewerResult.selectChapter(7);
+
+    expect(result.action, ComicBookViewerAction.selectChapter);
+    expect(result.chapterIndex, 7);
+    expect(
+      ComicBookViewerResult.nextChapter.action,
+      ComicBookViewerAction.nextChapter,
+    );
+    final bookmarkPosition = MediaPosition(
+      kind: MediaPositionKind.imageIndex,
+      numericValue: 4,
+      fileId: 'chapter-2',
+    );
+    final bookmarkResult = ComicBookViewerResult.selectBookmark(
+      bookmarkPosition,
+    );
+    expect(bookmarkResult.action, ComicBookViewerAction.selectBookmark);
+    expect(bookmarkResult.position, same(bookmarkPosition));
+  });
+
+  test('automatic progress placement follows the available width', () {
+    expect(
+      comicProgressPlacementFor(PublicationProgressPlacement.automatic, 600),
+      PublicationProgressPlacement.bottom,
+    );
+    expect(
+      comicProgressPlacementFor(PublicationProgressPlacement.automatic, 1200),
+      PublicationProgressPlacement.right,
+    );
+    expect(
+      comicProgressPlacementFor(PublicationProgressPlacement.left, 1200),
+      PublicationProgressPlacement.left,
+    );
+  });
+
+  test('chapter sequence reports missing and duplicate chapter numbers', () {
+    final report = comicChapterSequenceReport([
+      'Serie – Kapitel 0280',
+      'Serie – Chapter 281',
+      'Serie – Kapitel 0283',
+      'Alternative – Kapitel 0283',
+      'Bonus ohne Nummer',
+    ]);
+
+    expect(report.numbersByIndex, [280, 281, 283, 283, null]);
+    expect(report.missingNumbers, [282]);
+    expect(report.duplicateNumbers, {283});
+    expect(report.hasIssues, isTrue);
+  });
+
+  test('chapter sequence supports decimal chapters without false gaps', () {
+    final report = comicChapterSequenceReport([
+      'Kapitel 10',
+      'Kapitel 10.5',
+      'Kapitel 11',
+    ]);
+
+    expect(report.missingNumbers, isEmpty);
+    expect(report.duplicateNumbers, isEmpty);
+  });
 }

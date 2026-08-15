@@ -4006,8 +4006,12 @@ class _DetailPanelState extends State<_DetailPanel> {
             ListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
-              onTap: _saving ? null : () => _jumpToBookmark(bookmark),
-              leading: Text(_time(bookmark.position)),
+              onTap:
+                  _saving ||
+                      bookmark.mediaPosition.kind != MediaPositionKind.time
+                  ? null
+                  : () => _jumpToBookmark(bookmark),
+              leading: Text(bookmark.displayPosition),
               title: Text(bookmark.label ?? 'Lesezeichen'),
               subtitle: bookmark.note == null ? null : Text(bookmark.note!),
               trailing: IconButton(
@@ -4202,6 +4206,16 @@ class _DetailPanelState extends State<_DetailPanel> {
             storedPosition?.fileId == comics[chapterIndex].fileId
         ? ((storedPosition!.numericValue ?? 1).round() - 1).clamp(0, 1 << 30)
         : 0;
+    var initialElementId = storedPosition?.fileId == comics[chapterIndex].fileId
+        ? storedPosition?.elementId
+        : null;
+    var initialScrollOffset =
+        storedPosition?.fileId == comics[chapterIndex].fileId
+        ? storedPosition?.scrollOffset
+        : null;
+    var publicationBookmarks = library == null || work == null
+        ? <LibraryBookmark>[]
+        : library.loadAnnotations(work.id).bookmarks;
     var readerProfile = await PublicationReaderSettings.loadComicProfile();
     if (!mounted) return;
     while (mounted) {
@@ -4210,15 +4224,39 @@ class _DetailPanelState extends State<_DetailPanel> {
         context,
         archivePath: file.absolutePath,
         initialPage: initialPage,
-        initialElementId: storedPosition?.fileId == file.fileId
-            ? storedPosition?.elementId
-            : null,
-        initialScrollOffset: storedPosition?.fileId == file.fileId
-            ? storedPosition?.scrollOffset
-            : null,
+        initialElementId: initialElementId,
+        initialScrollOffset: initialScrollOffset,
         initialProfile: readerProfile,
         hasPreviousChapter: chapterIndex > 0,
         hasNextChapter: chapterIndex + 1 < comics.length,
+        chapterTitle: file.title,
+        chapterIndex: chapterIndex,
+        chapterCount: comics.length,
+        chapterTitles: comics.map((chapter) => chapter.title).toList(),
+        chapterFileId: file.fileId,
+        initialBookmarks: publicationBookmarks,
+        onAddBookmark: library == null || work == null || library.isReadOnly
+            ? null
+            : (position, label) async {
+                final annotations = await library.addMediaBookmark(
+                  workId: work.id,
+                  fileId: file.fileId,
+                  position: position,
+                  label: label,
+                );
+                publicationBookmarks = annotations.bookmarks;
+                return annotations;
+              },
+        onDeleteBookmark: library == null || work == null || library.isReadOnly
+            ? null
+            : (bookmarkId) async {
+                final annotations = await library.deleteBookmark(
+                  work.id,
+                  bookmarkId,
+                );
+                publicationBookmarks = annotations.bookmarks;
+                return annotations;
+              },
         onPositionChanged: library == null || work == null || library.isReadOnly
             ? null
             : (page, total, elementId, scrollOffset) {
@@ -4247,15 +4285,46 @@ class _DetailPanelState extends State<_DetailPanel> {
         },
       );
       if (!mounted || result == null) break;
-      if (result == ComicBookViewerResult.nextChapter &&
+      if (result.action == ComicBookViewerAction.selectChapter &&
+          result.chapterIndex != null &&
+          result.chapterIndex! >= 0 &&
+          result.chapterIndex! < comics.length) {
+        chapterIndex = result.chapterIndex!;
+        initialPage = 0;
+        initialElementId = null;
+        initialScrollOffset = null;
+        continue;
+      }
+      if (result.action == ComicBookViewerAction.selectBookmark &&
+          result.position != null) {
+        final position = result.position!;
+        final targetChapter = comics.indexWhere(
+          (chapter) => chapter.fileId == position.fileId,
+        );
+        if (targetChapter < 0) break;
+        chapterIndex = targetChapter;
+        initialPage = ((position.numericValue ?? 1).round() - 1).clamp(
+          0,
+          1 << 30,
+        );
+        initialElementId = position.elementId;
+        initialScrollOffset = position.scrollOffset;
+        continue;
+      }
+      if (result.action == ComicBookViewerAction.nextChapter &&
           chapterIndex + 1 < comics.length) {
         chapterIndex++;
         initialPage = 0;
+        initialElementId = null;
+        initialScrollOffset = null;
         continue;
       }
-      if (result == ComicBookViewerResult.previousChapter && chapterIndex > 0) {
+      if (result.action == ComicBookViewerAction.previousChapter &&
+          chapterIndex > 0) {
         chapterIndex--;
         initialPage = 1 << 30;
+        initialElementId = null;
+        initialScrollOffset = null;
         continue;
       }
       break;

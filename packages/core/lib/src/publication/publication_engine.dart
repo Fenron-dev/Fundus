@@ -39,6 +39,10 @@ enum PublicationReadingDirection { leftToRight, rightToLeft }
 
 enum PublicationPageScale { fitScreen, fitWidth, fitHeight, original }
 
+enum PublicationChapterTransition { confirm, automatic }
+
+enum PublicationProgressPlacement { automatic, bottom, left, right }
+
 final class PublicationReaderProfile {
   const PublicationReaderProfile({
     this.layout = PublicationReaderLayout.singlePage,
@@ -46,18 +50,30 @@ final class PublicationReaderProfile {
     this.pageScale = PublicationPageScale.fitScreen,
     this.firstPageIsCover = true,
     this.pageGap = 8,
+    this.readerWidth = 1,
+    this.tapZoneWidth = .3,
+    this.invertTapZones = false,
     this.preloadCount = 2,
+    this.chapterTransition = PublicationChapterTransition.confirm,
+    this.progressPlacement = PublicationProgressPlacement.automatic,
   }) : assert(pageGap >= 0 && pageGap <= 64),
+       assert(readerWidth >= .4 && readerWidth <= 1),
+       assert(tapZoneWidth >= .15 && tapZoneWidth <= .45),
        assert(preloadCount >= 0 && preloadCount <= 8);
 
-  static const schemaVersion = 1;
+  static const schemaVersion = 4;
 
   final PublicationReaderLayout layout;
   final PublicationReadingDirection readingDirection;
   final PublicationPageScale pageScale;
   final bool firstPageIsCover;
   final double pageGap;
+  final double readerWidth;
+  final double tapZoneWidth;
+  final bool invertTapZones;
   final int preloadCount;
+  final PublicationChapterTransition chapterTransition;
+  final PublicationProgressPlacement progressPlacement;
 
   PublicationReaderProfile copyWith({
     PublicationReaderLayout? layout,
@@ -65,14 +81,24 @@ final class PublicationReaderProfile {
     PublicationPageScale? pageScale,
     bool? firstPageIsCover,
     double? pageGap,
+    double? readerWidth,
+    double? tapZoneWidth,
+    bool? invertTapZones,
     int? preloadCount,
+    PublicationChapterTransition? chapterTransition,
+    PublicationProgressPlacement? progressPlacement,
   }) => PublicationReaderProfile(
     layout: layout ?? this.layout,
     readingDirection: readingDirection ?? this.readingDirection,
     pageScale: pageScale ?? this.pageScale,
     firstPageIsCover: firstPageIsCover ?? this.firstPageIsCover,
     pageGap: pageGap ?? this.pageGap,
+    readerWidth: readerWidth ?? this.readerWidth,
+    tapZoneWidth: tapZoneWidth ?? this.tapZoneWidth,
+    invertTapZones: invertTapZones ?? this.invertTapZones,
     preloadCount: preloadCount ?? this.preloadCount,
+    chapterTransition: chapterTransition ?? this.chapterTransition,
+    progressPlacement: progressPlacement ?? this.progressPlacement,
   );
 
   Map<String, Object?> toJson() => {
@@ -82,19 +108,54 @@ final class PublicationReaderProfile {
     'page_scale': pageScale.name,
     'first_page_is_cover': firstPageIsCover,
     'page_gap': pageGap,
+    'reader_width': readerWidth,
+    'tap_zone_width': tapZoneWidth,
+    'invert_tap_zones': invertTapZones,
     'preload_count': preloadCount,
+    'chapter_transition': chapterTransition.name,
+    'progress_placement': progressPlacement.name,
   };
 
   factory PublicationReaderProfile.fromJson(Map<String, Object?> json) {
-    if (json['schema_version'] != schemaVersion) {
+    final version = json['schema_version'];
+    if (version != 1 &&
+        version != 2 &&
+        version != 3 &&
+        version != schemaVersion) {
       throw const FormatException('Nicht unterstütztes Reader-Profil.');
     }
     final pageGap = (json['page_gap'] as num?)?.toDouble();
+    final readerWidth = version == 1
+        ? 1.0
+        : (json['reader_width'] as num?)?.toDouble();
+    final tapZoneWidth = version == 1
+        ? .3
+        : (json['tap_zone_width'] as num?)?.toDouble() ?? .3;
+    final invertTapZones = version == 1
+        ? false
+        : json['invert_tap_zones'] as bool? ?? false;
+    final chapterTransition = version == 3 || version == schemaVersion
+        ? PublicationChapterTransition.values.byName(
+            json['chapter_transition'] as String,
+          )
+        : PublicationChapterTransition.confirm;
+    final progressPlacement = version == schemaVersion
+        ? PublicationProgressPlacement.values.byName(
+            json['progress_placement'] as String,
+          )
+        : PublicationProgressPlacement.automatic;
     final preloadCount = json['preload_count'];
     if (pageGap == null ||
         !pageGap.isFinite ||
         pageGap < 0 ||
         pageGap > 64 ||
+        readerWidth == null ||
+        !readerWidth.isFinite ||
+        readerWidth < .4 ||
+        readerWidth > 1 ||
+        !tapZoneWidth.isFinite ||
+        tapZoneWidth < .15 ||
+        tapZoneWidth > .45 ||
         preloadCount is! int ||
         preloadCount < 0 ||
         preloadCount > 8 ||
@@ -111,7 +172,12 @@ final class PublicationReaderProfile {
       ),
       firstPageIsCover: json['first_page_is_cover'] as bool,
       pageGap: pageGap,
+      readerWidth: readerWidth,
+      tapZoneWidth: tapZoneWidth,
+      invertTapZones: invertTapZones,
       preloadCount: preloadCount,
+      chapterTransition: chapterTransition,
+      progressPlacement: progressPlacement,
     );
   }
 }

@@ -1239,7 +1239,8 @@ final class FundusDatabase {
     );
     final bookmarkRows = _database.select(
       '''
-      SELECT id, file_id, numeric_value, label, note, created_at
+      SELECT id, file_id, position_kind, numeric_value, position_key,
+             position_label, label, note, created_at
       FROM bookmarks
       WHERE work_id = ? AND user_id = 'default'
       ORDER BY numeric_value, created_at
@@ -1261,22 +1262,42 @@ final class FundusDatabase {
           )
           .toList(growable: false),
       bookmarks: bookmarkRows
-          .map(
-            (row) => LibraryBookmark(
+          .map((row) {
+            final fileId = row['file_id'] as String?;
+            final storedKey = row['position_key'] as String?;
+            MediaPosition? mediaPosition;
+            if (storedKey != null && storedKey.startsWith('{')) {
+              try {
+                mediaPosition = MediaPosition.fromJson(
+                  (jsonDecode(storedKey) as Map).cast<String, Object?>(),
+                ).withFileId(fileId);
+              } catch (_) {
+                // Fall back to the legacy columns below.
+              }
+            }
+            final kindName = row['position_kind'] as String? ?? 'time';
+            final kind = MediaPositionKind.values
+                .where((candidate) => candidate.name == kindName)
+                .firstOrNull;
+            mediaPosition ??= MediaPosition(
+              kind: kind ?? MediaPositionKind.time,
+              numericValue: (row['numeric_value'] as num?)?.toDouble() ?? 0,
+              key: storedKey?.startsWith('{') ?? false ? null : storedKey,
+              fileId: fileId,
+              label: row['position_label'] as String?,
+            );
+            return LibraryBookmark(
               id: row['id'] as String,
               workId: workId,
-              fileId: row['file_id'] as String?,
-              position: Duration(
-                milliseconds: (((row['numeric_value'] as num?) ?? 0) * 1000)
-                    .round(),
-              ),
+              fileId: fileId,
+              mediaPosition: mediaPosition,
               label: row['label'] as String?,
               note: row['note'] as String?,
               createdAt: DateTime.fromMillisecondsSinceEpoch(
                 row['created_at'] as int,
               ),
-            ),
-          )
+            );
+          })
           .toList(growable: false),
     );
   }
@@ -1331,6 +1352,28 @@ final class FundusDatabase {
     String? note,
     String? id,
     DateTime? createdAt,
+  }) => addMediaBookmark(
+    workId: workId,
+    fileId: fileId,
+    mediaPosition: MediaPosition(
+      kind: MediaPositionKind.time,
+      numericValue: position.inMilliseconds / 1000,
+      fileId: fileId,
+    ),
+    label: label,
+    note: note,
+    id: id,
+    createdAt: createdAt,
+  );
+
+  LibraryBookmark addMediaBookmark({
+    required String workId,
+    required String fileId,
+    required MediaPosition mediaPosition,
+    String? label,
+    String? note,
+    String? id,
+    DateTime? createdAt,
   }) {
     var bookmarkId = id ?? FundusId.generate();
     if (id != null) {
@@ -1346,7 +1389,7 @@ final class FundusDatabase {
       id: bookmarkId,
       workId: workId,
       fileId: fileId,
-      position: position,
+      mediaPosition: mediaPosition,
       label: label?.trim().isEmpty ?? true ? null : label!.trim(),
       note: note?.trim().isEmpty ?? true ? null : note!.trim(),
       createdAt: createdAt ?? DateTime.now(),
@@ -1355,11 +1398,14 @@ final class FundusDatabase {
       '''
       INSERT INTO bookmarks (
         id, work_id, file_id, user_id, position_kind, numeric_value,
-        label, note, created_at
-      ) VALUES (?, ?, ?, 'default', 'time', ?, ?, ?, ?)
+        position_key, position_label, label, note, created_at
+      ) VALUES (?, ?, ?, 'default', ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         file_id = excluded.file_id,
+        position_kind = excluded.position_kind,
         numeric_value = excluded.numeric_value,
+        position_key = excluded.position_key,
+        position_label = excluded.position_label,
         label = excluded.label,
         note = excluded.note
       ''',
@@ -1367,7 +1413,10 @@ final class FundusDatabase {
         bookmark.id,
         bookmark.workId,
         bookmark.fileId,
-        bookmark.position.inMilliseconds / 1000,
+        bookmark.mediaPosition.kind.name,
+        bookmark.mediaPosition.numericValue,
+        jsonEncode(bookmark.mediaPosition.toJson()),
+        bookmark.mediaPosition.label ?? bookmark.mediaPosition.displayValue,
         bookmark.label,
         bookmark.note,
         bookmark.createdAt.millisecondsSinceEpoch,

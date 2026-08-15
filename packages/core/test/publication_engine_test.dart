@@ -44,7 +44,12 @@ void main() {
       pageScale: PublicationPageScale.fitHeight,
       firstPageIsCover: false,
       pageGap: 12,
+      readerWidth: .78,
+      tapZoneWidth: .25,
+      invertTapZones: true,
       preloadCount: 4,
+      chapterTransition: PublicationChapterTransition.automatic,
+      progressPlacement: PublicationProgressPlacement.left,
     );
 
     final restored = PublicationReaderProfile.fromJson(profile.toJson());
@@ -53,6 +58,67 @@ void main() {
     expect(restored.pageScale, PublicationPageScale.fitHeight);
     expect(restored.firstPageIsCover, isFalse);
     expect(restored.pageGap, 12);
+    expect(restored.readerWidth, .78);
+    expect(restored.tapZoneWidth, .25);
+    expect(restored.invertTapZones, isTrue);
     expect(restored.preloadCount, 4);
+    expect(restored.chapterTransition, PublicationChapterTransition.automatic);
+    expect(restored.progressPlacement, PublicationProgressPlacement.left);
+  });
+
+  test('reader profile version one migrates to full reader width', () {
+    final restored = PublicationReaderProfile.fromJson({
+      'schema_version': 1,
+      'layout': 'webtoon',
+      'reading_direction': 'leftToRight',
+      'page_scale': 'fitWidth',
+      'first_page_is_cover': true,
+      'page_gap': 0,
+      'preload_count': 2,
+    });
+
+    expect(restored.layout, PublicationReaderLayout.webtoon);
+    expect(restored.readerWidth, 1);
+    expect(restored.tapZoneWidth, .3);
+    expect(restored.invertTapZones, isFalse);
+    expect(restored.chapterTransition, PublicationChapterTransition.confirm);
+    expect(restored.progressPlacement, PublicationProgressPlacement.automatic);
+  });
+
+  test('reader profile version two migrates chapter transitions safely', () {
+    final restored = PublicationReaderProfile.fromJson({
+      'schema_version': 2,
+      'layout': 'singlePage',
+      'reading_direction': 'leftToRight',
+      'page_scale': 'fitScreen',
+      'first_page_is_cover': true,
+      'page_gap': 8,
+      'reader_width': 1,
+      'tap_zone_width': .3,
+      'invert_tap_zones': false,
+      'preload_count': 2,
+    });
+
+    expect(restored.chapterTransition, PublicationChapterTransition.confirm);
+    expect(restored.progressPlacement, PublicationProgressPlacement.automatic);
+  });
+
+  test('reader profile version three migrates progress placement safely', () {
+    final restored = PublicationReaderProfile.fromJson({
+      'schema_version': 3,
+      'layout': 'singlePage',
+      'reading_direction': 'leftToRight',
+      'page_scale': 'fitScreen',
+      'first_page_is_cover': true,
+      'page_gap': 8,
+      'reader_width': 1,
+      'tap_zone_width': .3,
+      'invert_tap_zones': false,
+      'preload_count': 2,
+      'chapter_transition': 'automatic',
+    });
+
+    expect(restored.chapterTransition, PublicationChapterTransition.automatic);
+    expect(restored.progressPlacement, PublicationProgressPlacement.automatic);
   });
 }

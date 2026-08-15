@@ -47,6 +47,19 @@ final class MediaPosition {
     };
   }
 
+  MediaPosition withFileId(String? value) => MediaPosition(
+    kind: kind,
+    schemaVersion: schemaVersion,
+    numericValue: numericValue,
+    key: key,
+    total: total,
+    fileId: value,
+    chapterId: chapterId,
+    elementId: elementId,
+    scrollOffset: scrollOffset,
+    label: label,
+  );
+
   Map<String, Object?> toJson() => {
     'schema_version': schemaVersion,
     'kind': kind.name,

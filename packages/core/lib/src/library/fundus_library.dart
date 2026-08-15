@@ -499,6 +499,27 @@ final class FundusLibrary {
     return loadAnnotations(workId);
   }
 
+  Future<WorkAnnotations> addMediaBookmark({
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    String? label,
+    String? note,
+  }) async {
+    _ensureWritable();
+    _database.addMediaBookmark(
+      workId: workId,
+      fileId: fileId,
+      mediaPosition: position,
+      label: label,
+      note: note,
+    );
+    if (_usesAudiobookSidecars(workId)) {
+      await _writeAnnotationSidecars(workId);
+    }
+    return loadAnnotations(workId);
+  }
+
   Future<WorkAnnotations> deleteBookmark(
     String workId,
     String bookmarkId,
@@ -829,13 +850,15 @@ final class FundusLibrary {
     };
     await File(p.join(sidecarDirectory.path, 'bookmarks.yaml')).writeAsString(
       const JsonEncoder.withIndent('  ').convert({
-        'format_version': 1,
+        'format_version': 2,
         'bookmarks': [
           for (final bookmark in annotations.bookmarks)
             {
               'id': bookmark.id,
               'file_path': tracksById[bookmark.fileId],
-              'position_ms': bookmark.position.inMilliseconds,
+              'position': bookmark.mediaPosition.toJson(),
+              if (bookmark.mediaPosition.kind == MediaPositionKind.time)
+                'position_ms': bookmark.position.inMilliseconds,
               'label': bookmark.label,
               'note': bookmark.note,
               'created_at': bookmark.createdAt.toUtc().toIso8601String(),
@@ -1021,23 +1044,47 @@ final class FundusLibrary {
         };
         for (final item in bookmarks.whereType<Map>()) {
           final fileId = tracksByPath[item['file_path']];
-          final positionMs = item['position_ms'];
-          if (fileId == null || positionMs is! num) continue;
+          if (fileId == null) continue;
           final id = item['id'];
           final label = item['label'];
           final note = item['note'];
           final createdAt = item['created_at'];
-          _database.addBookmark(
-            id: id is String ? id : null,
-            workId: workId,
-            fileId: fileId,
-            position: Duration(milliseconds: positionMs.round()),
-            label: label is String ? label : null,
-            note: note is String ? note : null,
-            createdAt: createdAt is String
-                ? DateTime.tryParse(createdAt)
-                : null,
-          );
+          final rawPosition = item['position'];
+          if (rawPosition is Map) {
+            try {
+              final restored = MediaPosition.fromJson(
+                rawPosition.cast<String, Object?>(),
+              );
+              _database.addMediaBookmark(
+                id: id is String ? id : null,
+                workId: workId,
+                fileId: fileId,
+                mediaPosition: restored.withFileId(fileId),
+                label: label is String ? label : null,
+                note: note is String ? note : null,
+                createdAt: createdAt is String
+                    ? DateTime.tryParse(createdAt)
+                    : null,
+              );
+              continue;
+            } catch (_) {
+              // Fall back to the version-one time position below.
+            }
+          }
+          final positionMs = item['position_ms'];
+          if (positionMs is num) {
+            _database.addBookmark(
+              id: id is String ? id : null,
+              workId: workId,
+              fileId: fileId,
+              position: Duration(milliseconds: positionMs.round()),
+              label: label is String ? label : null,
+              note: note is String ? note : null,
+              createdAt: createdAt is String
+                  ? DateTime.tryParse(createdAt)
+                  : null,
+            );
+          }
         }
       }
     }

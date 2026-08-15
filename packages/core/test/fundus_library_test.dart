@@ -478,13 +478,32 @@ void main() {
       position: const Duration(minutes: 12, seconds: 34),
       label: 'Wichtige Stelle',
     );
+    await library.addMediaBookmark(
+      workId: work.id,
+      fileId: track.fileId,
+      position: MediaPosition(
+        kind: MediaPositionKind.imageIndex,
+        numericValue: 7,
+        total: 24,
+        fileId: track.fileId,
+        chapterId: 'Kapitel 2',
+        elementId: 'pages/007.webp',
+        scrollOffset: .35,
+        label: 'Kapitel 2 · Seite 7',
+      ),
+      label: 'Bild-Lesezeichen',
+    );
 
     final annotations = library.loadAnnotations(work.id);
     expect(annotations.tags, ['Fantasy', 'Favorit']);
     expect(annotations.notes, hasLength(2));
     expect(annotations.notes.first.markdown, 'Zweite Notiz');
     expect(
-      annotations.bookmarks.single.position,
+      annotations.bookmarks
+          .firstWhere(
+            (bookmark) => bookmark.mediaPosition.kind == MediaPositionKind.time,
+          )
+          .position,
       const Duration(minutes: 12, seconds: 34),
     );
     final sidecars = Directory('${book.path}/_fundus');
@@ -508,6 +527,15 @@ void main() {
 
     expect(rebuiltWork.id, work.id);
     expect(restored.tags, ['Fantasy', 'Favorit']);
+    final restoredPageBookmark = restored.bookmarks.firstWhere(
+      (bookmark) => bookmark.mediaPosition.kind == MediaPositionKind.imageIndex,
+    );
+    expect(restoredPageBookmark.mediaPosition.numericValue, 7);
+    expect(restoredPageBookmark.mediaPosition.total, 24);
+    expect(restoredPageBookmark.mediaPosition.chapterId, 'Kapitel 2');
+    expect(restoredPageBookmark.mediaPosition.elementId, 'pages/007.webp');
+    expect(restoredPageBookmark.mediaPosition.scrollOffset, .35);
+    expect(restoredPageBookmark.displayPosition, 'Bild 7');
     expect(restored.notes, hasLength(2));
     expect(
       restored.notes.map((note) => note.markdown),

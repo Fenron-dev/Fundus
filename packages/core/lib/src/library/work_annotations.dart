@@ -1,8 +1,10 @@
+import '../model/media_position.dart';
+
 final class LibraryBookmark {
   const LibraryBookmark({
     required this.id,
     required this.workId,
-    required this.position,
+    required this.mediaPosition,
     required this.createdAt,
     this.fileId,
     this.label,
@@ -12,7 +14,14 @@ final class LibraryBookmark {
   final String id;
   final String workId;
   final String? fileId;
-  final Duration position;
+  final MediaPosition mediaPosition;
+
+  /// Compatibility accessor for existing audio-player callers.
+  Duration get position => Duration(
+    milliseconds: ((mediaPosition.numericValue ?? 0) * 1000).round(),
+  );
+
+  String get displayPosition => mediaPosition.displayValue;
   final String? label;
   final String? note;
   final DateTime createdAt;

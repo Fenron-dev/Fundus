@@ -43,6 +43,10 @@ void main() {
       expect(restored.chapterId, 'chapter-283');
       expect(restored.elementId, 'pages/012.webp');
       expect(restored.scrollOffset, .35);
+      final rebound = restored.withFileId('moved-chapter-file');
+      expect(rebound.fileId, 'moved-chapter-file');
+      expect(rebound.elementId, restored.elementId);
+      expect(rebound.scrollOffset, restored.scrollOffset);
 
       final legacy = MediaPosition.fromJson({
         'kind': 'page',
