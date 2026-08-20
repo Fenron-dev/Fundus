@@ -59,6 +59,7 @@ Future<void> showFundusRemoteServers(
   FundusPeerServerController? peerServer,
   FundusOfflineStore? offlineStore,
   FundusOfflineWork? initialOfflineWork,
+  bool closeAfterInitialOfflineWork = false,
 }) => Navigator.of(context).push(
   MaterialPageRoute<void>(
     builder: (_) => FundusRemoteServersView(
@@ -67,6 +68,7 @@ Future<void> showFundusRemoteServers(
       peerServer: peerServer,
       offlineStore: offlineStore,
       initialOfflineWork: initialOfflineWork,
+      closeAfterInitialOfflineWork: closeAfterInitialOfflineWork,
     ),
   ),
 );
@@ -79,6 +81,7 @@ class FundusRemoteServersView extends StatefulWidget {
     this.peerServer,
     this.offlineStore,
     this.initialOfflineWork,
+    this.closeAfterInitialOfflineWork = false,
   });
 
   final String? initialServerId;
@@ -86,6 +89,7 @@ class FundusRemoteServersView extends StatefulWidget {
   final FundusPeerServerController? peerServer;
   final FundusOfflineStore? offlineStore;
   final FundusOfflineWork? initialOfflineWork;
+  final bool closeAfterInitialOfflineWork;
 
   @override
   State<FundusRemoteServersView> createState() =>
@@ -152,7 +156,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   Future<void> _load() async {
     try {
       var servers = await _store.load();
-      final offlineWorks = await _offlineStore.listAll();
+      var offlineWorks = await _offlineStore.listAll();
+      offlineWorks = await _resolveOfflineSourceLabels(offlineWorks, servers);
       if (!mounted) return;
       setState(() {
         _servers = servers;
@@ -175,7 +180,13 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             .firstOrNull;
         if (current != null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) unawaited(_showOfflineWork(current));
+            if (!mounted) return;
+            unawaited(() async {
+              await _showOfflineWork(current);
+              if (mounted && widget.closeAfterInitialOfflineWork) {
+                Navigator.of(context).pop();
+              }
+            }());
           });
         }
       }
@@ -200,6 +211,35 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         _busy = false;
       });
     }
+  }
+
+  Future<List<FundusOfflineWork>> _resolveOfflineSourceLabels(
+    List<FundusOfflineWork> works,
+    List<FundusRemoteServer> servers,
+  ) async {
+    final references = await _store.loadLibraryReferences();
+    final serversById = {for (final server in servers) server.id: server};
+    final librariesByKey = {
+      for (final library in references)
+        '${library.serverId}\u0000${library.libraryId}': library,
+    };
+    return Future.wait([
+      for (final work in works)
+        () async {
+          final server = serversById[work.serverId];
+          final library =
+              librariesByKey['${work.serverId}\u0000${work.libraryId}'];
+          if (server == null || library == null) return work;
+          return await _offlineStore.updateSourceLabels(
+                serverId: work.serverId,
+                libraryId: work.libraryId,
+                workId: work.workId,
+                serverName: server.name,
+                libraryName: library.name,
+              ) ??
+              work;
+        }(),
+    ]);
   }
 
   Future<void> _pair() async {

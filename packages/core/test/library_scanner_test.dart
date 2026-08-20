@@ -15,6 +15,8 @@ void main() {
       p.join(book.path, '01 - Anfang.mp3'),
     ).writeAsBytes([0xff, 0xfb, 0x90, 0x64, ...List.filled(16, 0)]);
     await File(p.join(book.path, 'cover.jpg')).writeAsBytes([4, 5]);
+    await File(p.join(book.path, '._01 - Anfang.mp3')).writeAsBytes([0, 0, 0]);
+    await File(p.join(book.path, '._cover.jpg')).writeAsBytes([0, 0, 0]);
     final internal = Directory(p.join(root.path, '.library'));
     await internal.create();
     await File(p.join(internal.path, 'index.db')).writeAsBytes([6]);
@@ -26,6 +28,7 @@ void main() {
         .toList();
 
     expect(files, hasLength(2));
+    expect(files.map((file) => file.filename), isNot(contains('._cover.jpg')));
     expect(
       files.map((file) => file.relativePath),
       contains('Autor/Serie/01 - Titel/01 - Anfang.mp3'),

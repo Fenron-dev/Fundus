@@ -110,7 +110,11 @@ final class LibraryScanner {
             if (!ignoredDirectoryNames.contains(name)) pending.add(entity);
             continue;
           }
-          if (entity is! File || ignoredFileNames.contains(name)) continue;
+          if (entity is! File ||
+              ignoredFileNames.contains(name) ||
+              name.startsWith('._')) {
+            continue;
+          }
 
           visited++;
           try {

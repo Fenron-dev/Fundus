@@ -466,7 +466,8 @@ class _FundusAppState extends State<FundusApp> {
       await _recentStoreReady;
       var servers = await _remoteStore.load();
       var references = await _remoteStore.loadLibraryReferences();
-      final offline = await _offlineStore.listAll();
+      var offline = await _offlineStore.listAll();
+      offline = await _resolveOfflineSourceLabels(offline, servers, references);
       final reachable = <String>{};
       if (mounted) {
         setState(() {
@@ -495,6 +496,7 @@ class _FundusAppState extends State<FundusApp> {
           }(),
       ]);
       references = await _remoteStore.loadLibraryReferences();
+      offline = await _resolveOfflineSourceLabels(offline, servers, references);
       if (!mounted) return;
       setState(() {
         _offlineWorks = offline;
@@ -510,6 +512,35 @@ class _FundusAppState extends State<FundusApp> {
     } finally {
       _loadingRemoteLibraries = false;
     }
+  }
+
+  Future<List<FundusOfflineWork>> _resolveOfflineSourceLabels(
+    List<FundusOfflineWork> works,
+    List<FundusRemoteServer> servers,
+    List<FundusRemoteLibraryReference> references,
+  ) async {
+    final serversById = {for (final server in servers) server.id: server};
+    final librariesByKey = {
+      for (final library in references)
+        '${library.serverId}\u0000${library.libraryId}': library,
+    };
+    return Future.wait([
+      for (final work in works)
+        () async {
+          final server = serversById[work.serverId];
+          final library =
+              librariesByKey['${work.serverId}\u0000${work.libraryId}'];
+          if (server == null || library == null) return work;
+          return await _offlineStore.updateSourceLabels(
+                serverId: work.serverId,
+                libraryId: work.libraryId,
+                workId: work.workId,
+                serverName: server.name,
+                libraryName: library.name,
+              ) ??
+              work;
+        }(),
+    ]);
   }
 
   static List<_RemoteLibraryChoice> _remoteChoices(
@@ -616,6 +647,7 @@ class _FundusAppState extends State<FundusApp> {
       peerServer: _peerServer,
       offlineStore: _offlineStore,
       initialOfflineWork: work,
+      closeAfterInitialOfflineWork: true,
     );
     await _loadRemoteLibraries();
   }

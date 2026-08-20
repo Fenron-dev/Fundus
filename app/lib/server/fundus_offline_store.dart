@@ -399,6 +399,53 @@ final class FundusOfflineStore {
     }
   }
 
+  Future<FundusOfflineWork?> updateSourceLabels({
+    required String serverId,
+    required String libraryId,
+    required String workId,
+    required String serverName,
+    required String libraryName,
+  }) async {
+    final directory = await _workDirectory(serverId, libraryId, workId);
+    final manifest = File(p.join(directory.path, 'manifest.json'));
+    if (!await manifest.exists()) {
+      for (final fallback in _fallbacks) {
+        final updated = await fallback.updateSourceLabels(
+          serverId: serverId,
+          libraryId: libraryId,
+          workId: workId,
+          serverName: serverName,
+          libraryName: libraryName,
+        );
+        if (updated != null) return updated;
+      }
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(await manifest.readAsString());
+      if (decoded is! Map) return null;
+      if (decoded['server_name'] == serverName &&
+          decoded['library_name'] == libraryName) {
+        return lookup(serverId: serverId, libraryId: libraryId, workId: workId);
+      }
+      final value = Map<String, Object?>.from(decoded)
+        ..['server_name'] = serverName
+        ..['library_name'] = libraryName;
+      final partial = File('${manifest.path}.part');
+      await partial.writeAsString(
+        const JsonEncoder.withIndent('  ').convert(value),
+        flush: true,
+      );
+      if (await manifest.exists()) await manifest.delete();
+      await partial.rename(manifest.path);
+      return lookup(serverId: serverId, libraryId: libraryId, workId: workId);
+    } on FileSystemException {
+      return null;
+    } on FormatException {
+      return null;
+    }
+  }
+
   Future<FundusOfflineWork?> refreshMetadata({
     required String serverId,
     required String libraryId,

@@ -529,6 +529,7 @@ final class FundusDatabase {
       LEFT JOIN work_files wf ON wf.work_id = w.id AND wf.role = 'content'
       LEFT JOIN files content ON content.id = wf.file_id
         AND content.status = 'available'
+        AND substr(content.filename, 1, 2) <> '._'
       LEFT JOIN files cover ON cover.id = w.cover_file_id
         AND cover.status = 'available'
       LEFT JOIN progress ON progress.work_id = w.id
@@ -683,6 +684,7 @@ final class FundusDatabase {
       FROM work_files wf
       JOIN files f ON f.id = wf.file_id
       WHERE wf.work_id = ? AND wf.role = 'content' AND f.status = 'available'
+        AND substr(f.filename, 1, 2) <> '._'
       ORDER BY wf.position, f.filename COLLATE NOCASE
       ''',
       [workId],

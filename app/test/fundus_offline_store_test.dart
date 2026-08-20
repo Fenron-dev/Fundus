@@ -29,9 +29,7 @@ void main() {
         jsonEncode({
           'version': 1,
           'server_id': serverId,
-          'server_name': 'Arbeits-PC',
           'library_id': libraryId,
-          'library_name': 'Comics',
           'work_id': workId,
           'title': 'Test-Manga',
           'kind': 'manga',
@@ -61,11 +59,21 @@ void main() {
 
       final work = (await portableStore.listAll()).single;
       expect(work.title, 'Test-Manga');
-      expect(work.sourceServerName, 'Arbeits-PC');
-      expect(work.sourceLibraryName, 'Comics');
+      expect(work.sourceServerName, isNull);
+      expect(work.sourceLibraryName, isNull);
       expect(work.tracks.map((track) => track.id), ['chapter-1']);
       expect(work.incomplete, isTrue);
       expect(work.missingTrackTitles, ['Kapitel 2.cbz']);
+
+      final labeled = await portableStore.updateSourceLabels(
+        serverId: serverId,
+        libraryId: libraryId,
+        workId: workId,
+        serverName: 'Arbeits-PC',
+        libraryName: 'Comics',
+      );
+      expect(labeled?.sourceServerName, 'Arbeits-PC');
+      expect(labeled?.sourceLibraryName, 'Comics');
 
       await portableStore.saveMediaProgress(
         serverId: serverId,
