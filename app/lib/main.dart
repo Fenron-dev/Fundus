@@ -3725,11 +3725,54 @@ class _DocumentHero extends StatelessWidget {
   }
 }
 
-class _DocumentFilesPanel extends StatelessWidget {
-  const _DocumentFilesPanel({required this.files, required this.onOpen});
+enum _DocumentFileSort { oldestFirst, newestFirst, titleAscending }
+
+class _DocumentFilesPanel extends StatefulWidget {
+  const _DocumentFilesPanel({
+    required this.files,
+    required this.onOpen,
+    this.progress,
+  });
 
   final List<LibraryPlaybackTrack> files;
   final ValueChanged<LibraryPlaybackTrack> onOpen;
+  final LibraryPlaybackProgress? progress;
+
+  @override
+  State<_DocumentFilesPanel> createState() => _DocumentFilesPanelState();
+}
+
+class _DocumentFilesPanelState extends State<_DocumentFilesPanel> {
+  _DocumentFileSort _sort = _DocumentFileSort.oldestFirst;
+
+  List<LibraryPlaybackTrack> get _files {
+    final result = widget.files.toList();
+    switch (_sort) {
+      case _DocumentFileSort.oldestFirst:
+        result.sort((left, right) => left.index.compareTo(right.index));
+      case _DocumentFileSort.newestFirst:
+        result.sort((left, right) => right.index.compareTo(left.index));
+      case _DocumentFileSort.titleAscending:
+        result.sort(
+          (left, right) =>
+              left.title.toLowerCase().compareTo(right.title.toLowerCase()),
+        );
+    }
+    return result;
+  }
+
+  DocumentChapterReadState _readState(LibraryPlaybackTrack file) {
+    final progress = widget.progress;
+    final currentIndex = widget.files.indexWhere(
+      (candidate) => candidate.fileId == progress?.fileId,
+    );
+    return documentChapterReadState(
+      chapterIndex: widget.files.indexOf(file),
+      currentChapterIndex: currentIndex,
+      workFinished: progress?.finished ?? false,
+      currentPosition: progress?.position,
+    );
+  }
 
   @override
   Widget build(BuildContext context) => Card(
@@ -3738,30 +3781,47 @@ class _DocumentFilesPanel extends StatelessWidget {
       initiallyExpanded: true,
       leading: const Icon(Icons.folder_copy_outlined),
       title: const Text('Enthaltene Dateien'),
-      subtitle: Text('${files.length} Datei(en) in diesem Werk'),
+      subtitle: Text('${widget.files.length} Datei(en) in diesem Werk'),
+      trailing: PopupMenuButton<_DocumentFileSort>(
+        tooltip: 'Dateien sortieren',
+        initialValue: _sort,
+        onSelected: (value) => setState(() => _sort = value),
+        itemBuilder: (context) => const [
+          PopupMenuItem(
+            value: _DocumentFileSort.oldestFirst,
+            child: Text('Älteste Kapitel zuerst'),
+          ),
+          PopupMenuItem(
+            value: _DocumentFileSort.newestFirst,
+            child: Text('Neueste Kapitel zuerst'),
+          ),
+          PopupMenuItem(
+            value: _DocumentFileSort.titleAscending,
+            child: Text('Name A–Z'),
+          ),
+        ],
+        icon: const Icon(Icons.sort),
+      ),
       children: [
-        for (final file in files)
+        for (final file in _files)
           ListTile(
             dense: true,
-            leading: Icon(_fileIcon(file.title)),
-            title: Text(file.title),
+            leading: documentChapterLeading(
+              context,
+              widget.files.indexOf(file) + 1,
+              _readState(file),
+            ),
+            title: Text(
+              file.title,
+              style: documentChapterTitleStyle(context, _readState(file)),
+            ),
             subtitle: Text(file.relativePath),
             trailing: const Icon(Icons.open_in_new),
-            onTap: () => onOpen(file),
+            onTap: () => widget.onOpen(file),
           ),
       ],
     ),
   );
-
-  static IconData _fileIcon(String filename) => switch (filename
-      .toLowerCase()
-      .split('.')
-      .last) {
-    'pdf' => Icons.picture_as_pdf_outlined,
-    'jpg' || 'jpeg' || 'png' || 'webp' || 'gif' => Icons.image_outlined,
-    'zip' || 'cbz' || '7z' || 'rar' || 'tar' || 'gz' => Icons.archive_outlined,
-    _ => Icons.insert_drive_file_outlined,
-  };
 }
 
 class _AudioCompatibilityPanel extends StatelessWidget {
@@ -4109,7 +4169,11 @@ class _DetailPanelState extends State<_DetailPanel> {
               ),
               const SizedBox(height: 10),
             ],
-            _DocumentFilesPanel(files: workFiles, onOpen: _openDocument),
+            _DocumentFilesPanel(
+              files: workFiles,
+              progress: widget.library?.loadProgress(selectedWork.id),
+              onOpen: _openDocument,
+            ),
           ],
         ],
         if (selectedWork.kind == 'audiobook' &&

@@ -31,6 +31,35 @@ enum _RemoteGrouping { books, authors, series, narrators }
 
 enum _RemoteLibrarySection { media, playlists }
 
+enum _DocumentTrackSort { oldestFirst, newestFirst, titleAscending }
+
+List<({FundusRemoteTrack track, int originalIndex})> _orderedRemoteTracks(
+  List<FundusRemoteTrack> tracks,
+  _DocumentTrackSort sort,
+) {
+  final result = [
+    for (var index = 0; index < tracks.length; index++)
+      (track: tracks[index], originalIndex: index),
+  ];
+  switch (sort) {
+    case _DocumentTrackSort.oldestFirst:
+      result.sort(
+        (left, right) => left.track.position.compareTo(right.track.position),
+      );
+    case _DocumentTrackSort.newestFirst:
+      result.sort(
+        (left, right) => right.track.position.compareTo(left.track.position),
+      );
+    case _DocumentTrackSort.titleAscending:
+      result.sort(
+        (left, right) => left.track.title.toLowerCase().compareTo(
+          right.track.title.toLowerCase(),
+        ),
+      );
+  }
+  return result;
+}
+
 enum DocumentChapterReadState { unread, current, read }
 
 DocumentChapterReadState documentChapterReadState({
@@ -1780,192 +1809,269 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     final documentProgressIndex = detailTracks.indexWhere(
       (track) => track.id == documentProgressFileId,
     );
+    var trackSort = _DocumentTrackSort.oldestFirst;
     if (!mounted) return;
     final action = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    width: 120,
-                    height: 170,
-                    child: work.hasCover
-                        ? _remoteCover(
-                            server,
-                            library,
-                            work,
-                            borderRadius: BorderRadius.circular(10),
-                          )
-                        : const Icon(Icons.audiotrack, size: 72),
-                  ),
-                  const SizedBox(width: 18),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          work.title,
-                          style: Theme.of(context).textTheme.headlineSmall,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(work.authors.join(', ')),
-                        if (work.subtitle case final subtitle?) ...[
-                          const SizedBox(height: 4),
-                          Text(subtitle),
-                        ],
-                        if (work.series case final series?) ...[
-                          const SizedBox(height: 6),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 120,
+                      height: 170,
+                      child: work.hasCover
+                          ? _remoteCover(
+                              server,
+                              library,
+                              work,
+                              borderRadius: BorderRadius.circular(10),
+                            )
+                          : const Icon(Icons.audiotrack, size: 72),
+                    ),
+                    const SizedBox(width: 18),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
                           Text(
-                            work.seriesSequence == null
-                                ? series
-                                : '$series · Band '
-                                      '${_formatRemoteSequence(work.seriesSequence!)}',
+                            work.title,
+                            style: Theme.of(context).textTheme.headlineSmall,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(work.authors.join(', ')),
+                          if (work.subtitle case final subtitle?) ...[
+                            const SizedBox(height: 4),
+                            Text(subtitle),
+                          ],
+                          if (work.series case final series?) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              work.seriesSequence == null
+                                  ? series
+                                  : '$series · Band '
+                                        '${_formatRemoteSequence(work.seriesSequence!)}',
+                            ),
+                          ],
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              for (final narrator in work.narrators)
+                                Chip(
+                                  avatar: const Icon(Icons.mic_none, size: 16),
+                                  label: Text(narrator),
+                                ),
+                              if (work.language case final language?)
+                                Chip(label: Text(_remoteLanguage(language))),
+                              if (work.publisher case final publisher?)
+                                Chip(
+                                  label: Text(
+                                    work.publishedYear == null
+                                        ? publisher
+                                        : '$publisher · ${work.publishedYear}',
+                                  ),
+                                )
+                              else if (work.publishedYear case final year?)
+                                Chip(label: Text('$year')),
+                              Chip(label: Text('${work.fileCount} Datei(en)')),
+                            ],
                           ),
                         ],
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: [
-                            for (final narrator in work.narrators)
-                              Chip(
-                                avatar: const Icon(Icons.mic_none, size: 16),
-                                label: Text(narrator),
-                              ),
-                            if (work.language case final language?)
-                              Chip(label: Text(_remoteLanguage(language))),
-                            if (work.publisher case final publisher?)
-                              Chip(
-                                label: Text(
-                                  work.publishedYear == null
-                                      ? publisher
-                                      : '$publisher · ${work.publishedYear}',
-                                ),
-                              )
-                            else if (work.publishedYear case final year?)
-                              Chip(label: Text('$year')),
-                            Chip(label: Text('${work.fileCount} Datei(en)')),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              if (work.progressPosition case final position?) ...[
-                const SizedBox(height: 16),
-                Text(
-                  work.progressDuration == null
-                      ? 'Fortsetzen bei ${_formatRemoteDuration(position)}'
-                      : '${_formatRemoteDuration(position)} / '
-                            '${_formatRemoteDuration(work.progressDuration!)}',
-                  style: Theme.of(context).textTheme.labelLarge,
-                ),
-              ],
-              if (isDocument && detailTracks.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: () => Navigator.pop(context, 'open:resume'),
-                    icon: const Icon(Icons.menu_book_outlined),
-                    label: Text(
-                      documentPosition == null ? 'Lesen' : 'Fortsetzen',
-                    ),
-                  ),
-                ),
-              ],
-              if (work.description case final description?) ...[
-                const SizedBox(height: 20),
-                Text(description),
-              ],
-              if (detailTracks.isNotEmpty) ...[
-                const SizedBox(height: 20),
-                Text('Dateien', style: Theme.of(context).textTheme.titleMedium),
-                for (var index = 0; index < detailTracks.length; index++)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: _documentChapterLeading(
-                      context,
-                      index + 1,
-                      documentChapterReadState(
-                        chapterIndex: index,
-                        currentChapterIndex: documentProgressIndex,
-                        workFinished: work.progressFinished,
-                        currentPosition: documentPosition,
                       ),
                     ),
-                    title: Text(
-                      detailTracks[index].title,
-                      style: _documentChapterTitleStyle(
+                  ],
+                ),
+                if (work.progressPosition case final position?) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    work.progressDuration == null
+                        ? 'Fortsetzen bei ${_formatRemoteDuration(position)}'
+                        : '${_formatRemoteDuration(position)} / '
+                              '${_formatRemoteDuration(work.progressDuration!)}',
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
+                ],
+                if (isDocument && detailTracks.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: () =>
+                              Navigator.pop(context, 'open:resume'),
+                          icon: const Icon(Icons.menu_book_outlined),
+                          label: Text(
+                            documentPosition == null ? 'Lesen' : 'Fortsetzen',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      if (isOffline)
+                        PopupMenuButton<String>(
+                          tooltip: 'Offline-Kopie verwalten',
+                          icon: const Icon(Icons.download_done),
+                          onSelected: (value) => Navigator.pop(context, value),
+                          itemBuilder: (context) => const [
+                            PopupMenuItem(
+                              value: 'download',
+                              child: ListTile(
+                                leading: Icon(Icons.add_to_photos_outlined),
+                                title: Text('Weitere Kapitel laden'),
+                              ),
+                            ),
+                            PopupMenuItem(
+                              value: 'remove_download',
+                              child: ListTile(
+                                leading: Icon(Icons.delete_outline),
+                                title: Text('Offline-Kopie löschen'),
+                              ),
+                            ),
+                          ],
+                        )
+                      else
+                        IconButton.filledTonal(
+                          onPressed: () => Navigator.pop(context, 'download'),
+                          tooltip: 'Kapitel offline speichern',
+                          icon: const Icon(Icons.download_outlined),
+                        ),
+                    ],
+                  ),
+                ],
+                if (work.description case final description?) ...[
+                  const SizedBox(height: 20),
+                  Text(description),
+                ],
+                if (detailTracks.isNotEmpty) ...[
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Text(
+                        'Dateien',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const Spacer(),
+                      PopupMenuButton<_DocumentTrackSort>(
+                        tooltip: 'Dateien sortieren',
+                        initialValue: trackSort,
+                        onSelected: (value) =>
+                            setSheetState(() => trackSort = value),
+                        itemBuilder: (context) => const [
+                          PopupMenuItem(
+                            value: _DocumentTrackSort.oldestFirst,
+                            child: Text('Älteste Kapitel zuerst'),
+                          ),
+                          PopupMenuItem(
+                            value: _DocumentTrackSort.newestFirst,
+                            child: Text('Neueste Kapitel zuerst'),
+                          ),
+                          PopupMenuItem(
+                            value: _DocumentTrackSort.titleAscending,
+                            child: Text('Name A–Z'),
+                          ),
+                        ],
+                        icon: const Icon(Icons.sort),
+                      ),
+                    ],
+                  ),
+                  for (final entry in _orderedRemoteTracks(
+                    detailTracks,
+                    trackSort,
+                  ))
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: documentChapterLeading(
                         context,
+                        entry.originalIndex + 1,
                         documentChapterReadState(
-                          chapterIndex: index,
+                          chapterIndex: entry.originalIndex,
                           currentChapterIndex: documentProgressIndex,
                           workFinished: work.progressFinished,
                           currentPosition: documentPosition,
                         ),
                       ),
-                    ),
-                    subtitle: _remoteTechnicalSubtitle(detailTracks[index]),
-                    trailing: isDocument
-                        ? const Icon(Icons.open_in_new)
-                        : detailTracks[index].duration == null
-                        ? null
-                        : Text(
-                            _formatRemoteDuration(
-                              detailTracks[index].duration!,
-                            ),
+                      title: Text(
+                        entry.track.title,
+                        style: documentChapterTitleStyle(
+                          context,
+                          documentChapterReadState(
+                            chapterIndex: entry.originalIndex,
+                            currentChapterIndex: documentProgressIndex,
+                            workFinished: work.progressFinished,
+                            currentPosition: documentPosition,
                           ),
-                    onTap: isDocument
-                        ? () => Navigator.pop(context, 'open:$index')
-                        : null,
-                  ),
-              ],
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  if (!isDocument) ...[
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: detailTracks.isEmpty
-                            ? null
-                            : () => Navigator.pop(context, 'play'),
-                        icon: const Icon(Icons.play_arrow),
-                        label: const Text('Abspielen / fortsetzen'),
+                        ),
                       ),
+                      subtitle: _remoteTechnicalSubtitle(entry.track),
+                      trailing: isDocument
+                          ? const Icon(Icons.open_in_new)
+                          : entry.track.duration == null
+                          ? null
+                          : Text(_formatRemoteDuration(entry.track.duration!)),
+                      onTap: isDocument
+                          ? () => Navigator.pop(
+                              context,
+                              'open:${entry.originalIndex}',
+                            )
+                          : null,
                     ),
-                    const SizedBox(width: 10),
-                  ],
-                  IconButton.filledTonal(
-                    onPressed: () => Navigator.pop(
-                      context,
-                      isOffline ? 'remove_download' : 'download',
-                    ),
-                    tooltip: isOffline
-                        ? 'Offline-Kopie löschen'
-                        : 'Offline speichern',
-                    icon: Icon(
-                      isOffline ? Icons.download_done : Icons.download_outlined,
-                    ),
-                  ),
                 ],
-              ),
-            ],
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    if (!isDocument) ...[
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: detailTracks.isEmpty
+                              ? null
+                              : () => Navigator.pop(context, 'play'),
+                          icon: const Icon(Icons.play_arrow),
+                          label: const Text('Abspielen / fortsetzen'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                    ],
+                    if (!isDocument)
+                      IconButton.filledTonal(
+                        onPressed: () => Navigator.pop(
+                          context,
+                          isOffline ? 'remove_download' : 'download',
+                        ),
+                        tooltip: isOffline
+                            ? 'Offline-Kopie löschen'
+                            : 'Offline speichern',
+                        icon: Icon(
+                          isOffline
+                              ? Icons.download_done
+                              : Icons.download_outlined,
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
     if (action == 'download') {
-      await _downloadWork(server, library, work);
+      final selectedTrackIds = isDocument
+          ? await _selectDownloadTracks(
+              detailTracks,
+              currentTrackIndex: documentProgressIndex,
+            )
+          : null;
+      if (isDocument && selectedTrackIds == null) return;
+      await _downloadWork(server, library, work, trackIds: selectedTrackIds);
       return;
     }
     if (action == 'remove_download') {
@@ -2061,8 +2167,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   Future<void> _downloadWork(
     FundusRemoteServer server,
     FundusRemoteLibrary library,
-    FundusRemoteWork work,
-  ) async {
+    FundusRemoteWork work, {
+    Set<String>? trackIds,
+  }) async {
     final key = _offlineKey(server, library, work);
     setState(() {
       _downloadingKey = key;
@@ -2087,6 +2194,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           active,
           library,
           work,
+          trackIds: trackIds,
           onProgress: (completed, total) {
             if (!mounted) return;
             setState(() {
@@ -2154,6 +2262,109 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     } finally {
       if (mounted) setState(() => _downloadingKey = null);
     }
+  }
+
+  Future<Set<String>?> _selectDownloadTracks(
+    List<FundusRemoteTrack> tracks, {
+    required int currentTrackIndex,
+  }) async {
+    if (tracks.isEmpty || !mounted) return null;
+    final firstUnread = currentTrackIndex < 0
+        ? 0
+        : currentTrackIndex.clamp(0, tracks.length - 1);
+    var range = RangeValues(
+      firstUnread.toDouble(),
+      (firstUnread + 99).clamp(0, tracks.length - 1).toDouble(),
+    );
+    final selected = await showDialog<RangeValues>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          void select(int start, int end) => setDialogState(
+            () => range = RangeValues(
+              start.clamp(0, tracks.length - 1).toDouble(),
+              end.clamp(0, tracks.length - 1).toDouble(),
+            ),
+          );
+          final start = range.start.round();
+          final end = range.end.round();
+          return AlertDialog(
+            icon: const Icon(Icons.download_for_offline_outlined),
+            title: const Text('Kapitel offline speichern'),
+            content: SizedBox(
+              width: 520,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Wähle einen zusammenhängenden Bereich. Bereits gelesene '
+                    'Kapitel lassen sich so überspringen, ohne tausende Dateien '
+                    'einzeln markieren zu müssen.',
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ActionChip(
+                        label: const Text('Nächste 100'),
+                        onPressed: () => select(firstUnread, firstUnread + 99),
+                      ),
+                      ActionChip(
+                        label: const Text('Ab aktuellem Kapitel'),
+                        onPressed: () => select(firstUnread, tracks.length - 1),
+                      ),
+                      ActionChip(
+                        label: const Text('Alle'),
+                        onPressed: () => select(0, tracks.length - 1),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Kapitel ${start + 1} bis ${end + 1} '
+                    '(${end - start + 1} Dateien)',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  RangeSlider(
+                    values: range,
+                    min: 0,
+                    max: (tracks.length - 1).toDouble(),
+                    divisions: tracks.length > 1 ? tracks.length - 1 : null,
+                    labels: RangeLabels('${start + 1}', '${end + 1}'),
+                    onChanged: tracks.length > 1
+                        ? (value) => setDialogState(() => range = value)
+                        : null,
+                  ),
+                  Text(
+                    '${tracks[start].title}\n–\n${tracks[end].title}',
+                    maxLines: 5,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Abbrechen'),
+              ),
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, range),
+                icon: const Icon(Icons.download),
+                label: Text('${end - start + 1} herunterladen'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (selected == null) return null;
+    final start = selected.start.round();
+    final end = selected.end.round();
+    return {for (var index = start; index <= end; index++) tracks[index].id};
   }
 
   double? get _downloadProgress {
@@ -3016,7 +3227,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 for (var index = 0; index < offline.tracks.length; index++)
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: _documentChapterLeading(
+                    leading: documentChapterLeading(
                       context,
                       index + 1,
                       documentChapterReadState(
@@ -3030,7 +3241,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                     ),
                     title: Text(
                       offline.tracks[index].title,
-                      style: _documentChapterTitleStyle(
+                      style: documentChapterTitleStyle(
                         context,
                         documentChapterReadState(
                           chapterIndex: index,
@@ -3561,7 +3772,7 @@ Widget? _remoteTechnicalSubtitle(FundusRemoteTrack track) {
   );
 }
 
-Widget _documentChapterLeading(
+Widget documentChapterLeading(
   BuildContext context,
   int number,
   DocumentChapterReadState state,
@@ -3585,7 +3796,7 @@ Widget _documentChapterLeading(
   },
 );
 
-TextStyle? _documentChapterTitleStyle(
+TextStyle? documentChapterTitleStyle(
   BuildContext context,
   DocumentChapterReadState state,
 ) => switch (state) {

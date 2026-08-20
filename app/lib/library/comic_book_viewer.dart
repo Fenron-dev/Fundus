@@ -382,12 +382,11 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
   Future<List<ZipArchiveEntry>> _loadPages() async {
     final pages = comicBookPages(await _service.inspect(widget.archivePath));
     if (pages.isEmpty || !_continuous) return pages;
-    final anchoredPage = widget.initialElementId == null
-        ? -1
-        : pages.indexWhere((page) => page.path == widget.initialElementId);
-    final initial = (anchoredPage >= 0 ? anchoredPage : widget.initialPage)
-        .clamp(0, pages.length - 1);
-    if (initial > 0) await _preparePagesThrough(pages, initial);
+    // Continuous layouts must know every page extent before the ListView is
+    // shown. Replacing fixed-height loading placeholders with the real image
+    // heights changes the scroll extent above the viewport and made Webtoons
+    // jump backwards (or even to the chapter start) while reading.
+    await _preparePagesThrough(pages, pages.length - 1);
     return pages;
   }
 

@@ -525,23 +525,44 @@ final class FundusOfflineStore {
     FundusRemoteServer server,
     FundusRemoteLibrary library,
     FundusRemoteWork work, {
+    Set<String>? trackIds,
     OfflineDownloadProgress? onProgress,
     OfflineDownloadTransferProgress? onTransfer,
   }) async {
     final detail = await client.work(server, library.id, work);
-    if (detail.tracks.isEmpty) {
+    final selectedTracks = trackIds == null
+        ? detail.tracks
+        : detail.tracks
+              .where((track) => trackIds.contains(track.id))
+              .toList(growable: false);
+    if (selectedTracks.isEmpty) {
       throw StateError('Dieses Werk enthält keine herunterladbaren Dateien.');
     }
     final directory = await _workDirectory(server.id, library.id, work.id);
     await directory.create(recursive: true);
-    final offlineTracks = <FundusOfflineTrack>[];
+    final existing = await lookup(
+      serverId: server.id,
+      libraryId: library.id,
+      workId: work.id,
+    );
+    final offlineTracks = <FundusOfflineTrack>[
+      for (final track in existing?.tracks ?? const <FundusOfflineTrack>[])
+        if (await File(track.path).exists()) track,
+    ];
+    final existingIds = offlineTracks.map((track) => track.id).toSet();
+    final pendingTracks = selectedTracks
+        .where((track) => !existingIds.contains(track.id))
+        .toList(growable: false);
     var completed = 0;
-    onProgress?.call(completed, detail.tracks.length);
+    onProgress?.call(completed, pendingTracks.length);
     try {
-      for (var index = 0; index < detail.tracks.length; index++) {
-        final track = detail.tracks[index];
+      for (var index = 0; index < pendingTracks.length; index++) {
+        final track = pendingTracks[index];
+        final sourceIndex = detail.tracks.indexWhere(
+          (candidate) => candidate.id == track.id,
+        );
         final filename =
-            '${index.toString().padLeft(4, '0')}${_extension(track.title)}';
+            '${sourceIndex.toString().padLeft(4, '0')}${_extension(track.title)}';
         final destination = File(p.join(directory.path, filename));
         final partial = File('${destination.path}.part');
         if (await partial.exists()) await partial.delete();
@@ -557,11 +578,11 @@ final class FundusOfflineStore {
           final expected = remote.response.contentLength > 0
               ? remote.response.contentLength
               : null;
-          onTransfer?.call(index, detail.tracks.length, received, expected);
+          onTransfer?.call(index, pendingTracks.length, received, expected);
           await sink.addStream(
             remote.response.timeout(const Duration(seconds: 30)).map((chunk) {
               received += chunk.length;
-              onTransfer?.call(index, detail.tracks.length, received, expected);
+              onTransfer?.call(index, pendingTracks.length, received, expected);
               return chunk;
             }),
           );
@@ -584,8 +605,11 @@ final class FundusOfflineStore {
           ),
         );
         completed++;
-        onProgress?.call(completed, detail.tracks.length);
+        onProgress?.call(completed, pendingTracks.length);
       }
+      offlineTracks.sort(
+        (left, right) => left.position.compareTo(right.position),
+      );
       String? coverPath;
       if (work.hasCover) {
         try {
