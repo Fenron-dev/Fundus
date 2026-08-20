@@ -47,6 +47,8 @@ final class LibraryWorkSummary {
     this.tags = const [],
     this.lastListenedAt,
     this.offline = false,
+    this.sourceServerName,
+    this.sourceLibraryName,
   });
 
   final String id;
@@ -80,6 +82,8 @@ final class LibraryWorkSummary {
   final List<String> tags;
   final DateTime? lastListenedAt;
   final bool offline;
+  final String? sourceServerName;
+  final String? sourceLibraryName;
 
   bool get available => status == 'available';
 }

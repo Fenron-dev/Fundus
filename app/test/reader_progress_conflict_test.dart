@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/library/reader_progress_conflict.dart';
+import 'package:fundus/server/remote_servers_view.dart';
 import 'package:fundus_core/fundus_core.dart';
 
 void main() {
@@ -71,5 +72,42 @@ void main() {
     await tester.tap(find.text('Serverstand übernehmen'));
     await tester.pumpAndSettle();
     expect(choice, ReaderProgressConflictChoice.useServer);
+  });
+
+  test('chapter read state follows the synchronized reader position', () {
+    const current = MediaPosition(
+      kind: MediaPositionKind.imageIndex,
+      numericValue: 6,
+      total: 15,
+      fileId: 'chapter-3',
+    );
+
+    expect(
+      documentChapterReadState(
+        chapterIndex: 1,
+        currentChapterIndex: 2,
+        workFinished: false,
+        currentPosition: current,
+      ),
+      DocumentChapterReadState.read,
+    );
+    expect(
+      documentChapterReadState(
+        chapterIndex: 2,
+        currentChapterIndex: 2,
+        workFinished: false,
+        currentPosition: current,
+      ),
+      DocumentChapterReadState.current,
+    );
+    expect(
+      documentChapterReadState(
+        chapterIndex: 3,
+        currentChapterIndex: 2,
+        workFinished: false,
+        currentPosition: current,
+      ),
+      DocumentChapterReadState.unread,
+    );
   });
 }

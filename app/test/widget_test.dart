@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/main.dart';
+import 'package:fundus/server/fundus_offline_store.dart';
 import 'package:fundus_core/fundus_core.dart';
 
 final testWorks = [
@@ -494,5 +495,51 @@ void main() {
     await tester.tap(find.byTooltip('Tabelle'));
     await tester.pumpAndSettle();
     expect(find.text('Sprache'), findsOneWidget);
+  });
+
+  testWidgets('downloaded works appear in the regular local library', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    FundusOfflineWork? opened;
+    final offline = FundusOfflineWork(
+      serverId: 'server',
+      libraryId: 'library',
+      workId: 'work',
+      title: 'Offline Hörbuch',
+      downloadedAt: DateTime(2026),
+      sourceServerName: 'Wohnzimmer-Mac',
+      sourceLibraryName: 'Medien',
+      authors: const ['Autor'],
+      tracks: const [
+        FundusOfflineTrack(
+          id: 'track',
+          title: 'Kapitel.mp3',
+          path: '/tmp/Kapitel.mp3',
+          position: 0,
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LibraryShell(
+          works: const [],
+          offlineWorks: [offline],
+          onOpenOfflineWork: (work) => opened = work,
+          onToggleTheme: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Wohnzimmer-Mac · Medien'), findsOneWidget);
+
+    expect(find.text('Offline Hörbuch'), findsOneWidget);
+    expect(find.text('Offline'), findsOneWidget);
+    await tester.tap(find.text('Offline Hörbuch'));
+    expect(opened, same(offline));
   });
 }

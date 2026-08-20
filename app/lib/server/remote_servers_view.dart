@@ -31,12 +31,34 @@ enum _RemoteGrouping { books, authors, series, narrators }
 
 enum _RemoteLibrarySection { media, playlists }
 
+enum DocumentChapterReadState { unread, current, read }
+
+DocumentChapterReadState documentChapterReadState({
+  required int chapterIndex,
+  required int currentChapterIndex,
+  required bool workFinished,
+  MediaPosition? currentPosition,
+}) {
+  if (workFinished ||
+      (currentChapterIndex >= 0 && chapterIndex < currentChapterIndex)) {
+    return DocumentChapterReadState.read;
+  }
+  if (chapterIndex != currentChapterIndex) {
+    return DocumentChapterReadState.unread;
+  }
+  if ((currentPosition?.fraction ?? 0) >= .98) {
+    return DocumentChapterReadState.read;
+  }
+  return DocumentChapterReadState.current;
+}
+
 Future<void> showFundusRemoteServers(
   BuildContext context, {
   String? initialServerId,
   String? initialLibraryId,
   FundusPeerServerController? peerServer,
   FundusOfflineStore? offlineStore,
+  FundusOfflineWork? initialOfflineWork,
 }) => Navigator.of(context).push(
   MaterialPageRoute<void>(
     builder: (_) => FundusRemoteServersView(
@@ -44,6 +66,7 @@ Future<void> showFundusRemoteServers(
       initialLibraryId: initialLibraryId,
       peerServer: peerServer,
       offlineStore: offlineStore,
+      initialOfflineWork: initialOfflineWork,
     ),
   ),
 );
@@ -55,12 +78,14 @@ class FundusRemoteServersView extends StatefulWidget {
     this.initialLibraryId,
     this.peerServer,
     this.offlineStore,
+    this.initialOfflineWork,
   });
 
   final String? initialServerId;
   final String? initialLibraryId;
   final FundusPeerServerController? peerServer;
   final FundusOfflineStore? offlineStore;
+  final FundusOfflineWork? initialOfflineWork;
 
   @override
   State<FundusRemoteServersView> createState() =>
@@ -139,6 +164,21 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         );
         _busy = false;
       });
+      if (widget.initialOfflineWork case final initial?) {
+        final current = offlineWorks
+            .where(
+              (work) =>
+                  work.serverId == initial.serverId &&
+                  work.libraryId == initial.libraryId &&
+                  work.workId == initial.workId,
+            )
+            .firstOrNull;
+        if (current != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) unawaited(_showOfflineWork(current));
+          });
+        }
+      }
       servers = await _peerDiscovery.relocate(servers);
       await _store.save(servers);
       if (!mounted) return;
@@ -694,7 +734,12 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                     ),
                     title: Text(offline.title),
                     subtitle: Text(_offlineSubtitle(offline)),
-                    trailing: const Icon(Icons.chevron_right),
+                    trailing: offline.incomplete
+                        ? const Tooltip(
+                            message: 'Download unvollständig',
+                            child: Icon(Icons.warning_amber_rounded),
+                          )
+                        : const Icon(Icons.chevron_right),
                     onTap: () => _showOfflineWork(offline),
                   ),
                 );
@@ -733,11 +778,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                   _kindLabel(offline.kind),
                   style: Theme.of(context).textTheme.labelSmall,
                 ),
-                const Row(
+                Row(
                   children: [
-                    Icon(Icons.download_done, size: 15),
-                    SizedBox(width: 4),
-                    Text('Offline'),
+                    Icon(
+                      offline.incomplete
+                          ? Icons.warning_amber_rounded
+                          : Icons.download_done,
+                      size: 15,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(offline.incomplete ? 'Unvollständig' : 'Offline'),
                   ],
                 ),
               ],
@@ -1687,6 +1737,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         // Offline reading remains available without the server.
       }
     }
+    final documentProgressIndex = detailTracks.indexWhere(
+      (track) => track.id == documentProgressFileId,
+    );
     if (!mounted) return;
     final action = await showModalBottomSheet<String>(
       context: context,
@@ -1800,8 +1853,28 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 for (var index = 0; index < detailTracks.length; index++)
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: Text('${index + 1}'),
-                    title: Text(detailTracks[index].title),
+                    leading: _documentChapterLeading(
+                      context,
+                      index + 1,
+                      documentChapterReadState(
+                        chapterIndex: index,
+                        currentChapterIndex: documentProgressIndex,
+                        workFinished: work.progressFinished,
+                        currentPosition: documentPosition,
+                      ),
+                    ),
+                    title: Text(
+                      detailTracks[index].title,
+                      style: _documentChapterTitleStyle(
+                        context,
+                        documentChapterReadState(
+                          chapterIndex: index,
+                          currentChapterIndex: documentProgressIndex,
+                          workFinished: work.progressFinished,
+                          currentPosition: documentPosition,
+                        ),
+                      ),
+                    ),
                     subtitle: _remoteTechnicalSubtitle(detailTracks[index]),
                     trailing: isDocument
                         ? const Icon(Icons.open_in_new)
@@ -2225,25 +2298,6 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     'ttrpg_product',
     'archive',
   }.contains(kind);
-
-  static IconData _documentFileIcon(String filename) {
-    final lower = filename.toLowerCase();
-    if (lower.endsWith('.pdf')) return Icons.picture_as_pdf_outlined;
-    if ({
-      '.jpg',
-      '.jpeg',
-      '.png',
-      '.webp',
-      '.gif',
-      '.bmp',
-    }.any(lower.endsWith)) {
-      return Icons.image_outlined;
-    }
-    if (lower.endsWith('.zip') || lower.endsWith('.cbz')) {
-      return Icons.archive_outlined;
-    }
-    return Icons.description_outlined;
-  }
 
   Future<void> _openRemoteDocument(
     FundusRemoteServer server,
@@ -2744,7 +2798,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     final values = <String>[
       if (work.authors.isNotEmpty) work.authors.join(', '),
       if (work.series != null) work.series!,
-      'Offline',
+      '${work.sourceServerName ?? work.serverId} / '
+          '${work.sourceLibraryName ?? work.libraryId}',
     ];
     return values.join(' · ');
   }
@@ -2833,6 +2888,15 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 ],
               ),
               const SizedBox(height: 16),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.dns_outlined),
+                title: Text(offline.sourceServerName ?? offline.serverId),
+                subtitle: Text(
+                  'Quellbibliothek: '
+                  '${offline.sourceLibraryName ?? offline.libraryId}',
+                ),
+              ),
               Wrap(
                 spacing: 6,
                 runSpacing: 6,
@@ -2859,6 +2923,13 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                     avatar: Icon(Icons.download_done, size: 16),
                     label: Text('Offline'),
                   ),
+                  if (offline.incomplete)
+                    Chip(
+                      avatar: const Icon(Icons.warning_amber_rounded, size: 16),
+                      label: Text(
+                        '${offline.missingTrackTitles.length} Datei(en) fehlen',
+                      ),
+                    ),
                 ],
               ),
               if (progress != null &&
@@ -2905,10 +2976,32 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 for (var index = 0; index < offline.tracks.length; index++)
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      _documentFileIcon(offline.tracks[index].title),
+                    leading: _documentChapterLeading(
+                      context,
+                      index + 1,
+                      documentChapterReadState(
+                        chapterIndex: index,
+                        currentChapterIndex: offline.tracks.indexWhere(
+                          (track) => track.id == progress?.fileId,
+                        ),
+                        workFinished: progress?.finished ?? false,
+                        currentPosition: progress?.mediaPosition,
+                      ),
                     ),
-                    title: Text(offline.tracks[index].title),
+                    title: Text(
+                      offline.tracks[index].title,
+                      style: _documentChapterTitleStyle(
+                        context,
+                        documentChapterReadState(
+                          chapterIndex: index,
+                          currentChapterIndex: offline.tracks.indexWhere(
+                            (track) => track.id == progress?.fileId,
+                          ),
+                          workFinished: progress?.finished ?? false,
+                          currentPosition: progress?.mediaPosition,
+                        ),
+                      ),
+                    ),
                     trailing: const Icon(Icons.open_in_new),
                     onTap: () => Navigator.pop(context, 'open:$index'),
                   ),
@@ -3427,6 +3520,45 @@ Widget? _remoteTechnicalSubtitle(FundusRemoteTrack track) {
     '${parts.join(' · ')}\n${Platform.isAndroid ? 'Android' : 'Desktop'}: $label',
   );
 }
+
+Widget _documentChapterLeading(
+  BuildContext context,
+  int number,
+  DocumentChapterReadState state,
+) => SizedBox(
+  width: 32,
+  child: switch (state) {
+    DocumentChapterReadState.read => Icon(
+      Icons.check_circle,
+      color: Theme.of(context).colorScheme.primary,
+      semanticLabel: 'Gelesen',
+    ),
+    DocumentChapterReadState.current => Icon(
+      Icons.adjust,
+      color: Theme.of(context).colorScheme.tertiary,
+      semanticLabel: 'Angefangen',
+    ),
+    DocumentChapterReadState.unread => Text(
+      '$number',
+      textAlign: TextAlign.center,
+    ),
+  },
+);
+
+TextStyle? _documentChapterTitleStyle(
+  BuildContext context,
+  DocumentChapterReadState state,
+) => switch (state) {
+  DocumentChapterReadState.read => Theme.of(
+    context,
+  ).textTheme.bodyLarge?.copyWith(color: Theme.of(context).colorScheme.outline),
+  DocumentChapterReadState.current => Theme.of(
+    context,
+  ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+  DocumentChapterReadState.unread => Theme.of(
+    context,
+  ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold),
+};
 
 class _PairingScanner extends StatefulWidget {
   const _PairingScanner();

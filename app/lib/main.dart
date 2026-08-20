@@ -42,6 +42,7 @@ typedef PlaylistPlaybackCallback = Future<void> Function(String playlistId);
 typedef MissingWorkDeleteCallback =
     Future<void> Function(LibraryWorkSummary work);
 typedef WorkMetadataChangedCallback = void Function(LibraryWorkSummary work);
+typedef OfflineWorkOpenCallback = void Function(FundusOfflineWork work);
 
 const _publicationFormats = PublicationFormatRegistry();
 
@@ -77,6 +78,46 @@ String _displayLanguage(String? language) {
   };
 }
 
+String _offlineSummaryId(FundusOfflineWork work) =>
+    'offline:${work.serverId}/${work.libraryId}/${work.workId}';
+
+LibraryWorkSummary _offlineLibrarySummary(FundusOfflineWork work) {
+  final progress = work.progress;
+  final progressTrackIndex = progress?.fileId == null
+      ? null
+      : work.tracks.indexWhere((track) => track.id == progress!.fileId);
+  return LibraryWorkSummary(
+    id: _offlineSummaryId(work),
+    kind: work.kind,
+    title: work.title,
+    author: work.authors.firstOrNull ?? 'Unbekannt',
+    authors: work.authors,
+    fileCount: work.tracks.length,
+    addedAt: work.downloadedAt,
+    series: work.series,
+    seriesSequence: work.seriesSequence?.toDouble(),
+    coverPath: work.coverPath,
+    language: work.language,
+    subtitle: work.subtitle,
+    description: work.description,
+    narrators: work.narrators,
+    publisher: work.publisher,
+    publishedYear: work.publishedYear,
+    progressPosition: progress?.position,
+    progressDuration: progress?.duration,
+    mediaProgress: progress?.mediaPosition,
+    progressTrackIndex: progressTrackIndex != null && progressTrackIndex >= 0
+        ? progressTrackIndex
+        : null,
+    progressFinished: progress?.finished ?? false,
+    status: work.incomplete ? 'incomplete' : 'available',
+    tags: work.tags,
+    offline: true,
+    sourceServerName: work.sourceServerName ?? work.serverId,
+    sourceLibraryName: work.sourceLibraryName ?? work.libraryId,
+  );
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
@@ -108,7 +149,8 @@ class _FundusAppState extends State<FundusApp> {
   late final Future<void> _recentStoreReady;
   final _remoteStore = FundusRemoteServerStore();
   final _remoteClient = const FundusRemoteClient();
-  FundusOfflineStore _offlineStore = FundusOfflineStore();
+  final _deviceOfflineStore = FundusOfflineStore();
+  late FundusOfflineStore _offlineStore;
   final _peerDiscovery = FundusPeerDiscovery();
   late final FundusPeerServerController _peerServer;
   List<RecentLibraryEntry> _recentLibraries = const [];
@@ -120,6 +162,7 @@ class _FundusAppState extends State<FundusApp> {
   @override
   void initState() {
     super.initState();
+    _offlineStore = _deviceOfflineStore;
     _peerServer = FundusPeerServerController();
     _recentStoreReady = _initializeRecentStore();
     _works = widget.initialWorks;
@@ -205,6 +248,7 @@ class _FundusAppState extends State<FundusApp> {
               offlineStore: _offlineStore,
               offlineWorks: _offlineWorks,
               onOpenDownloads: _openOfflineMedia,
+              onOpenOfflineWork: _openOfflineWork,
             ),
     );
   }
@@ -329,12 +373,17 @@ class _FundusAppState extends State<FundusApp> {
       await _stopPlayer();
       _library?.close();
       _library = library;
-      _offlineStore = FundusOfflineStore.forLibrary(library.root);
+      _offlineStore = FundusOfflineStore.forLibrary(
+        library.root,
+        fallbacks: [_deviceOfflineStore],
+      );
+      final adoptedDownloads = await _offlineStore.adoptFallbackDownloads();
       _offlineWorks = await _offlineStore.listAll();
       await FundusDiagnostics.instance.configure(library.root);
       await FundusDiagnostics.instance.record('library.opened', {
         'library_id': library.manifest.libraryId,
         'create': create,
+        'adopted_downloads': adoptedDownloads,
       });
       _works = library.listWorks(includeMissing: true);
       await _recentStoreReady;
@@ -393,6 +442,19 @@ class _FundusAppState extends State<FundusApp> {
       entries = resolved;
     }
     _recentLibraries = entries;
+    if (_library == null) {
+      final portableRoot = entries
+          .where((entry) => entry.available)
+          .map((entry) => Directory(entry.path))
+          .firstOrNull;
+      _offlineStore = portableRoot == null
+          ? _deviceOfflineStore
+          : FundusOfflineStore.forLibrary(
+              portableRoot,
+              fallbacks: [_deviceOfflineStore],
+            );
+      _offlineWorks = await _offlineStore.listAll();
+    }
     await _syncPeerSources();
     if (mounted) setState(() {});
   }
@@ -401,6 +463,7 @@ class _FundusAppState extends State<FundusApp> {
     if (_loadingRemoteLibraries) return;
     _loadingRemoteLibraries = true;
     try {
+      await _recentStoreReady;
       var servers = await _remoteStore.load();
       var references = await _remoteStore.loadLibraryReferences();
       final offline = await _offlineStore.listAll();
@@ -541,6 +604,18 @@ class _FundusAppState extends State<FundusApp> {
       dialogContext,
       peerServer: _peerServer,
       offlineStore: _offlineStore,
+    );
+    await _loadRemoteLibraries();
+  }
+
+  Future<void> _openOfflineWork(FundusOfflineWork work) async {
+    final dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null) return;
+    await showFundusRemoteServers(
+      dialogContext,
+      peerServer: _peerServer,
+      offlineStore: _offlineStore,
+      initialOfflineWork: work,
     );
     await _loadRemoteLibraries();
   }
@@ -1090,6 +1165,7 @@ class LibraryShell extends StatefulWidget {
     this.offlineStore,
     this.offlineWorks = const [],
     this.onOpenDownloads,
+    this.onOpenOfflineWork,
   });
 
   final List<LibraryWorkSummary> works;
@@ -1111,6 +1187,7 @@ class LibraryShell extends StatefulWidget {
   final FundusOfflineStore? offlineStore;
   final List<FundusOfflineWork> offlineWorks;
   final VoidCallback? onOpenDownloads;
+  final OfflineWorkOpenCallback? onOpenOfflineWork;
 
   @override
   State<LibraryShell> createState() => _LibraryShellState();
@@ -1153,8 +1230,17 @@ class _LibraryShellState extends State<LibraryShell> {
     super.dispose();
   }
 
+  Map<String, FundusOfflineWork> get _offlineBySummaryId => {
+    for (final work in widget.offlineWorks) _offlineSummaryId(work): work,
+  };
+
+  List<LibraryWorkSummary> get _allWorks => [
+    ...widget.works,
+    for (final work in widget.offlineWorks) _offlineLibrarySummary(work),
+  ];
+
   List<LibraryWorkSummary> get _visibleWorks {
-    final works = LibraryWorkSearch.apply(widget.works, _query);
+    final works = LibraryWorkSearch.apply(_allWorks, _query);
     final kinds = _section.workKinds;
     return kinds == null
         ? works
@@ -1218,9 +1304,14 @@ class _LibraryShellState extends State<LibraryShell> {
 
   Widget _desktop(BuildContext context) {
     final works = _displayedWorks;
-    final selected = _showingGroups || works.isEmpty
+    final selectedCandidate = _showingGroups || works.isEmpty
         ? null
         : works[_selectedIndex.clamp(0, works.length - 1)];
+    final selected =
+        selectedCandidate != null &&
+            !_offlineBySummaryId.containsKey(selectedCandidate.id)
+        ? selectedCandidate
+        : null;
     return Scaffold(
       bottomNavigationBar: widget.player == null || _playerExpanded
           ? null
@@ -1428,9 +1519,12 @@ class _LibraryShellState extends State<LibraryShell> {
                               ),
                             ),
                       title: Text(offline.title),
-                      subtitle: const Text('Offline verfügbar'),
+                      subtitle: Text(
+                        '${offline.sourceServerName ?? offline.serverId} · '
+                        '${offline.sourceLibraryName ?? offline.libraryId}',
+                      ),
                       trailing: const Icon(Icons.chevron_right),
-                      onTap: widget.onOpenDownloads,
+                      onTap: () => widget.onOpenOfflineWork?.call(offline),
                     ),
                   ),
               ],
@@ -1965,12 +2059,7 @@ class _LibraryShellState extends State<LibraryShell> {
                       work: work,
                       player: widget.player,
                       selected: !detailAsDialog && index == _selectedIndex,
-                      onTap: () {
-                        setState(() => _selectedIndex = index);
-                        if (detailAsDialog || !_detailPaneVisible) {
-                          _openWorkDetails(work);
-                        }
-                      },
+                      onTap: () => _selectWork(work, index, detailAsDialog),
                     );
                   },
                 )
@@ -2019,7 +2108,7 @@ class _LibraryShellState extends State<LibraryShell> {
     children: [
       _AdvancedFilterButton(
         query: _query,
-        works: widget.works,
+        works: _allWorks,
         onChanged: (query) => setState(() {
           _query = query;
           _selectedIndex = 0;
@@ -2337,7 +2426,25 @@ class _LibraryShellState extends State<LibraryShell> {
                       ),
                       DataCell(Text(works[index].title)),
                       DataCell(
-                        works[index].available
+                        works[index].offline
+                            ? Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    works[index].available
+                                        ? Icons.download_done
+                                        : Icons.warning_amber_rounded,
+                                    size: 18,
+                                  ),
+                                  const SizedBox(width: 5),
+                                  Text(
+                                    works[index].available
+                                        ? 'Offline'
+                                        : 'Offline unvollständig',
+                                  ),
+                                ],
+                              )
+                            : works[index].available
                             ? const Text('Verfügbar')
                             : const Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -2375,6 +2482,11 @@ class _LibraryShellState extends State<LibraryShell> {
   }
 
   void _selectWork(LibraryWorkSummary work, int index, bool detailAsDialog) {
+    final offline = _offlineBySummaryId[work.id];
+    if (offline != null) {
+      widget.onOpenOfflineWork?.call(offline);
+      return;
+    }
     setState(() => _selectedIndex = index);
     if (!detailAsDialog && _detailPaneVisible) return;
     _openWorkDetails(work);
@@ -3251,7 +3363,7 @@ class _WorkCard extends StatelessWidget {
                               label: Text('Band ${_formatSequence(sequence)}'),
                             ),
                           ),
-                        if (!work.available)
+                        if (!work.available && !work.offline)
                           Positioned(
                             right: 8,
                             top: 8,
@@ -3263,6 +3375,22 @@ class _WorkCard extends StatelessWidget {
                                 horizontal: 8,
                               ),
                               label: const Text('Fehlend'),
+                            ),
+                          ),
+                        if (work.offline)
+                          Positioned(
+                            right: 8,
+                            top: work.available ? 8 : 42,
+                            child: Badge(
+                              backgroundColor: scheme.tertiaryContainer,
+                              textColor: scheme.onTertiaryContainer,
+                              largeSize: 28,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
+                              label: Text(
+                                work.available ? 'Offline' : 'Unvollständig',
+                              ),
                             ),
                           ),
                       ],
@@ -3280,6 +3408,14 @@ class _WorkCard extends StatelessWidget {
                             '${work.seriesSequence == null ? '' : ' · Band ${_formatSequence(work.seriesSequence!)}'}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
+                if (work.offline)
+                  Text(
+                    '${work.sourceServerName ?? 'Unbekannter Server'} · '
+                    '${work.sourceLibraryName ?? 'Unbekannte Bibliothek'}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
               ],
             ),
           ),

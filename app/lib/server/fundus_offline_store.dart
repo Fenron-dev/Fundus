@@ -34,6 +34,8 @@ final class FundusOfflineWork {
     required this.title,
     required this.downloadedAt,
     required this.tracks,
+    this.sourceServerName,
+    this.sourceLibraryName,
     this.chapters = const [],
     this.kind = 'audiobook',
     this.authors = const [],
@@ -47,6 +49,8 @@ final class FundusOfflineWork {
     this.publishedYear,
     this.coverPath,
     this.tags = const [],
+    this.progress,
+    this.missingTrackTitles = const [],
   });
 
   final String serverId;
@@ -55,6 +59,8 @@ final class FundusOfflineWork {
   final String title;
   final DateTime downloadedAt;
   final List<FundusOfflineTrack> tracks;
+  final String? sourceServerName;
+  final String? sourceLibraryName;
   final List<FundusRemoteChapter> chapters;
   final String kind;
   final List<String> authors;
@@ -68,6 +74,10 @@ final class FundusOfflineWork {
   final int? publishedYear;
   final String? coverPath;
   final List<String> tags;
+  final FundusRemoteProgress? progress;
+  final List<String> missingTrackTitles;
+
+  bool get incomplete => missingTrackTitles.isNotEmpty;
 
   String get directoryPath => p.dirname(tracks.first.path);
 
@@ -109,16 +119,24 @@ typedef OfflineDownloadTransferProgress =
     );
 
 final class FundusOfflineStore {
-  FundusOfflineStore({Directory? root}) : _configuredRoot = root;
+  FundusOfflineStore({
+    Directory? root,
+    List<FundusOfflineStore> fallbacks = const [],
+  }) : _configuredRoot = root,
+       _fallbacks = List.unmodifiable(fallbacks);
 
-  factory FundusOfflineStore.forLibrary(Directory libraryRoot) =>
-      FundusOfflineStore(
-        root: Directory(
-          p.join(libraryRoot.absolute.path, '_fundus', 'offline-media'),
-        ),
-      );
+  factory FundusOfflineStore.forLibrary(
+    Directory libraryRoot, {
+    List<FundusOfflineStore> fallbacks = const [],
+  }) => FundusOfflineStore(
+    root: Directory(
+      p.join(libraryRoot.absolute.path, '_fundus', 'offline-media'),
+    ),
+    fallbacks: fallbacks,
+  );
 
   final Directory? _configuredRoot;
+  final List<FundusOfflineStore> _fallbacks;
 
   Future<Directory> _root() async {
     final configured = _configuredRoot;
@@ -134,13 +152,24 @@ final class FundusOfflineStore {
   }) async {
     final directory = await _workDirectory(serverId, libraryId, workId);
     final manifest = File(p.join(directory.path, 'manifest.json'));
-    if (!await manifest.exists()) return null;
+    if (!await manifest.exists()) {
+      for (final fallback in _fallbacks) {
+        final work = await fallback.lookup(
+          serverId: serverId,
+          libraryId: libraryId,
+          workId: workId,
+        );
+        if (work != null) return work;
+      }
+      return null;
+    }
     try {
       final value = jsonDecode(await manifest.readAsString());
       if (value is! Map) return null;
       final tracksValue = value['tracks'];
       if (tracksValue is! List) return null;
       final tracks = <FundusOfflineTrack>[];
+      final missingTrackTitles = <String>[];
       for (final item in tracksValue.whereType<Map>()) {
         final relativePath = item['path'];
         if (item['id'] is! String ||
@@ -151,7 +180,8 @@ final class FundusOfflineStore {
         final absolutePath = p.normalize(p.join(directory.path, relativePath));
         if (!p.isWithin(directory.path, absolutePath) ||
             !await File(absolutePath).exists()) {
-          return null;
+          missingTrackTitles.add(item['title'] as String);
+          continue;
         }
         tracks.add(
           FundusOfflineTrack(
@@ -168,18 +198,19 @@ final class FundusOfflineStore {
       }
       if (tracks.isEmpty) return null;
       tracks.sort((a, b) => a.position.compareTo(b.position));
+      final trackIndexById = <String, int>{
+        for (var index = 0; index < tracks.length; index++)
+          tracks[index].id: index,
+      };
       final chapters = <FundusRemoteChapter>[];
       for (final item
           in (value['chapters'] as List? ?? const []).whereType<Map>()) {
         final fileId = item['file_id'];
-        final trackIndex = item['track_index'];
+        final trackIndex = fileId is String ? trackIndexById[fileId] : null;
         final positionMs = item['position_ms'];
         if (item['title'] is! String ||
             fileId is! String ||
-            trackIndex is! int ||
-            trackIndex < 0 ||
-            trackIndex >= tracks.length ||
-            tracks[trackIndex].id != fileId ||
+            trackIndex == null ||
             positionMs is! int ||
             positionMs < 0) {
           continue;
@@ -201,11 +232,18 @@ final class FundusOfflineStore {
       final coverPath = coverValue is String
           ? p.normalize(p.join(directory.path, coverValue))
           : null;
+      final progress = await _loadProgressFromDirectory(directory);
       return FundusOfflineWork(
         serverId: serverId,
         libraryId: libraryId,
         workId: workId,
         title: value['title'] is String ? value['title'] as String : 'Medium',
+        sourceServerName: value['server_name'] is String
+            ? value['server_name'] as String
+            : null,
+        sourceLibraryName: value['library_name'] is String
+            ? value['library_name'] as String
+            : null,
         kind: value['kind'] is String ? value['kind'] as String : 'audiobook',
         authors: (value['authors'] as List? ?? const [])
             .whereType<String>()
@@ -246,6 +284,8 @@ final class FundusOfflineStore {
                 await File(coverPath).exists()
             ? coverPath
             : null,
+        progress: progress,
+        missingTrackTitles: List.unmodifiable(missingTrackTitles),
       );
     } on FileSystemException {
       return null;
@@ -256,34 +296,107 @@ final class FundusOfflineStore {
 
   Future<List<FundusOfflineWork>> listAll() async {
     final root = await _root();
-    if (!await root.exists()) return const [];
-    final result = <FundusOfflineWork>[];
-    await for (final entity in root.list()) {
-      if (entity is! Directory) continue;
-      final manifest = File(p.join(entity.path, 'manifest.json'));
-      if (!await manifest.exists()) continue;
-      try {
-        final value = jsonDecode(await manifest.readAsString());
-        if (value is! Map ||
-            value['server_id'] is! String ||
-            value['library_id'] is! String ||
-            value['work_id'] is! String) {
+    final byKey = <String, FundusOfflineWork>{};
+    if (await root.exists()) {
+      await for (final entity in root.list()) {
+        if (entity is! Directory) continue;
+        final manifest = File(p.join(entity.path, 'manifest.json'));
+        if (!await manifest.exists()) continue;
+        try {
+          final value = jsonDecode(await manifest.readAsString());
+          if (value is! Map ||
+              value['server_id'] is! String ||
+              value['library_id'] is! String ||
+              value['work_id'] is! String) {
+            continue;
+          }
+          final work = await lookup(
+            serverId: value['server_id'] as String,
+            libraryId: value['library_id'] as String,
+            workId: value['work_id'] as String,
+          );
+          if (work != null) byKey[_workKey(work)] = work;
+        } on FormatException {
+          continue;
+        } on FileSystemException {
           continue;
         }
-        final work = await lookup(
-          serverId: value['server_id'] as String,
-          libraryId: value['library_id'] as String,
-          workId: value['work_id'] as String,
-        );
-        if (work != null) result.add(work);
-      } on FormatException {
-        continue;
-      } on FileSystemException {
-        continue;
       }
     }
+    for (final fallback in _fallbacks) {
+      for (final work in await fallback.listAll()) {
+        byKey.putIfAbsent(_workKey(work), () => work);
+      }
+    }
+    final result = byKey.values.toList();
     result.sort((a, b) => b.downloadedAt.compareTo(a.downloadedAt));
     return result;
+  }
+
+  Future<int> adoptFallbackDownloads() async {
+    if (_configuredRoot == null || _fallbacks.isEmpty) return 0;
+    final root = await _root();
+    await root.create(recursive: true);
+    var adopted = 0;
+    for (final fallback in _fallbacks) {
+      for (final work in await fallback.listAll()) {
+        final destination = await _workDirectory(
+          work.serverId,
+          work.libraryId,
+          work.workId,
+        );
+        if (await File(p.join(destination.path, 'manifest.json')).exists()) {
+          continue;
+        }
+        final source = await fallback._workDirectory(
+          work.serverId,
+          work.libraryId,
+          work.workId,
+        );
+        if (!await source.exists()) continue;
+        final temporary = Directory('${destination.path}.adopting');
+        try {
+          if (await temporary.exists()) await temporary.delete(recursive: true);
+          await _copyDirectory(source, temporary);
+          if (!await File(p.join(temporary.path, 'manifest.json')).exists()) {
+            throw const FileSystemException(
+              'Der übernommene Download enthält kein Manifest.',
+            );
+          }
+          if (await destination.exists()) {
+            await destination.delete(recursive: true);
+          }
+          await temporary.rename(destination.path);
+          adopted++;
+          await _appendLedger('adopted', {
+            'server_id': work.serverId,
+            'library_id': work.libraryId,
+            'work_id': work.workId,
+            'title': work.title,
+          });
+        } on FileSystemException {
+          if (await temporary.exists()) {
+            await temporary.delete(recursive: true);
+          }
+        }
+      }
+    }
+    return adopted;
+  }
+
+  static Future<void> _copyDirectory(
+    Directory source,
+    Directory destination,
+  ) async {
+    await destination.create(recursive: true);
+    await for (final entity in source.list(followLinks: false)) {
+      final targetPath = p.join(destination.path, p.basename(entity.path));
+      if (entity is File) {
+        await entity.copy(targetPath);
+      } else if (entity is Directory) {
+        await _copyDirectory(entity, Directory(targetPath));
+      }
+    }
   }
 
   Future<FundusOfflineWork?> refreshMetadata({
@@ -293,7 +406,17 @@ final class FundusOfflineStore {
   }) async {
     final directory = await _workDirectory(serverId, libraryId, work.id);
     final manifest = File(p.join(directory.path, 'manifest.json'));
-    if (!await manifest.exists()) return null;
+    if (!await manifest.exists()) {
+      for (final fallback in _fallbacks) {
+        final refreshed = await fallback.refreshMetadata(
+          serverId: serverId,
+          libraryId: libraryId,
+          work: work,
+        );
+        if (refreshed != null) return refreshed;
+      }
+      return null;
+    }
     try {
       final decoded = jsonDecode(await manifest.readAsString());
       if (decoded is! Map) return null;
@@ -436,7 +559,9 @@ final class FundusOfflineStore {
         const JsonEncoder.withIndent('  ').convert({
           'version': 1,
           'server_id': server.id,
+          'server_name': server.name,
           'library_id': library.id,
+          'library_name': library.name,
           'work_id': work.id,
           'title': work.title,
           'kind': work.kind,
@@ -545,6 +670,13 @@ final class FundusOfflineStore {
   }) async {
     final directory = await _workDirectory(serverId, libraryId, workId);
     if (await directory.exists()) await directory.delete(recursive: true);
+    for (final fallback in _fallbacks) {
+      await fallback.remove(
+        serverId: serverId,
+        libraryId: libraryId,
+        workId: workId,
+      );
+    }
     await _appendLedger('removed', {
       'server_id': serverId,
       'library_id': libraryId,
@@ -558,6 +690,24 @@ final class FundusOfflineStore {
     required String workId,
   }) async {
     final directory = await _workDirectory(serverId, libraryId, workId);
+    final file = File(p.join(directory.path, 'progress.json'));
+    if (!await file.exists()) {
+      for (final fallback in _fallbacks) {
+        final progress = await fallback.loadProgress(
+          serverId: serverId,
+          libraryId: libraryId,
+          workId: workId,
+        );
+        if (progress != null) return progress;
+      }
+      return null;
+    }
+    return _loadProgressFromDirectory(directory);
+  }
+
+  Future<FundusRemoteProgress?> _loadProgressFromDirectory(
+    Directory directory,
+  ) async {
     final file = File(p.join(directory.path, 'progress.json'));
     if (!await file.exists()) return null;
     try {
@@ -589,6 +739,16 @@ final class FundusOfflineStore {
     required String workId,
     required FundusRemoteProgress progress,
   }) async {
+    final fallback = await _fallbackContaining(serverId, libraryId, workId);
+    if (fallback != null) {
+      await fallback.cacheProgress(
+        serverId: serverId,
+        libraryId: libraryId,
+        workId: workId,
+        progress: progress,
+      );
+      return;
+    }
     final directory = await _workDirectory(serverId, libraryId, workId);
     await directory.create(recursive: true);
     final destination = File(p.join(directory.path, 'progress.json'));
@@ -626,6 +786,17 @@ final class FundusOfflineStore {
     required Duration position,
     required bool finished,
   }) async {
+    final fallback = await _fallbackContaining(serverId, libraryId, workId);
+    if (fallback != null) {
+      return fallback.saveProgress(
+        serverId: serverId,
+        libraryId: libraryId,
+        workId: workId,
+        fileId: fileId,
+        position: position,
+        finished: finished,
+      );
+    }
     final directory = await _workDirectory(serverId, libraryId, workId);
     await directory.create(recursive: true);
     final destination = File(p.join(directory.path, 'progress.json'));
@@ -671,6 +842,17 @@ final class FundusOfflineStore {
     required MediaPosition position,
     required bool finished,
   }) async {
+    final fallback = await _fallbackContaining(serverId, libraryId, workId);
+    if (fallback != null) {
+      return fallback.saveMediaProgress(
+        serverId: serverId,
+        libraryId: libraryId,
+        workId: workId,
+        fileId: fileId,
+        position: position,
+        finished: finished,
+      );
+    }
     final directory = await _workDirectory(serverId, libraryId, workId);
     await directory.create(recursive: true);
     final destination = File(p.join(directory.path, 'progress.json'));
@@ -710,7 +892,7 @@ final class FundusOfflineStore {
   }
 
   Future<List<FundusOfflinePendingProgress>> pendingProgress() async {
-    final result = <FundusOfflinePendingProgress>[];
+    final byOperation = <String, FundusOfflinePendingProgress>{};
     for (final work in await listAll()) {
       final directory = await _workDirectory(
         work.serverId,
@@ -727,31 +909,35 @@ final class FundusOfflineStore {
             value['operation_id'] is! String) {
           continue;
         }
-        result.add(
-          FundusOfflinePendingProgress(
-            serverId: work.serverId,
-            libraryId: work.libraryId,
-            workId: work.workId,
-            fileId: value['file_id'] as String,
-            position: Duration(
-              milliseconds: value['position_ms'] is int
-                  ? value['position_ms'] as int
-                  : 0,
-            ),
-            finished: value['finished'] == true,
-            operationId: value['operation_id'] as String,
-            mediaPosition: value['position'] is Map
-                ? _mediaPosition(value['position'] as Map)
-                : null,
+        final pending = FundusOfflinePendingProgress(
+          serverId: work.serverId,
+          libraryId: work.libraryId,
+          workId: work.workId,
+          fileId: value['file_id'] as String,
+          position: Duration(
+            milliseconds: value['position_ms'] is int
+                ? value['position_ms'] as int
+                : 0,
           ),
+          finished: value['finished'] == true,
+          operationId: value['operation_id'] as String,
+          mediaPosition: value['position'] is Map
+              ? _mediaPosition(value['position'] as Map)
+              : null,
         );
+        byOperation[pending.operationId] = pending;
       } on FileSystemException {
         continue;
       } on FormatException {
         continue;
       }
     }
-    return result;
+    for (final fallback in _fallbacks) {
+      for (final pending in await fallback.pendingProgress()) {
+        byOperation.putIfAbsent(pending.operationId, () => pending);
+      }
+    }
+    return byOperation.values.toList(growable: false);
   }
 
   Future<void> markProgressSynced(FundusOfflinePendingProgress pending) async {
@@ -761,7 +947,12 @@ final class FundusOfflineStore {
       pending.workId,
     );
     final destination = File(p.join(directory.path, 'progress.json'));
-    if (!await destination.exists()) return;
+    if (!await destination.exists()) {
+      for (final fallback in _fallbacks) {
+        await fallback.markProgressSynced(pending);
+      }
+      return;
+    }
     try {
       final value = jsonDecode(await destination.readAsString());
       if (value is! Map || value['operation_id'] != pending.operationId) return;
@@ -791,6 +982,26 @@ final class FundusOfflineStore {
     return Directory(p.join(root.path, key));
   }
 
+  Future<FundusOfflineStore?> _fallbackContaining(
+    String serverId,
+    String libraryId,
+    String workId,
+  ) async {
+    final primary = await _workDirectory(serverId, libraryId, workId);
+    if (await File(p.join(primary.path, 'manifest.json')).exists()) return null;
+    for (final fallback in _fallbacks) {
+      if (await fallback.lookup(
+            serverId: serverId,
+            libraryId: libraryId,
+            workId: workId,
+          ) !=
+          null) {
+        return fallback;
+      }
+    }
+    return null;
+  }
+
   static String _extension(String title) {
     final extension = p.extension(title).toLowerCase();
     return RegExp(r'^\.[a-z0-9]{1,5}$').hasMatch(extension)
@@ -805,6 +1016,9 @@ final class FundusOfflineStore {
       return null;
     }
   }
+
+  static String _workKey(FundusOfflineWork work) =>
+      '${work.serverId}\u0000${work.libraryId}\u0000${work.workId}';
 
   Future<void> _appendLedger(String event, Map<String, Object?> details) async {
     try {
