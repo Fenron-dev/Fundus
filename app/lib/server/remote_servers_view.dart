@@ -1777,6 +1777,19 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                   style: Theme.of(context).textTheme.labelLarge,
                 ),
               ],
+              if (isDocument && detailTracks.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () => Navigator.pop(context, 'open:resume'),
+                    icon: const Icon(Icons.menu_book_outlined),
+                    label: Text(
+                      documentPosition == null ? 'Lesen' : 'Fortsetzen',
+                    ),
+                  ),
+                ),
+              ],
               if (work.description case final description?) ...[
                 const SizedBox(height: 20),
                 Text(description),
@@ -1807,29 +1820,18 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
               const SizedBox(height: 24),
               Row(
                 children: [
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: detailTracks.isEmpty
-                          ? null
-                          : () => Navigator.pop(
-                              context,
-                              isDocument ? 'open:resume' : 'play',
-                            ),
-                      icon: Icon(
-                        isDocument
-                            ? Icons.visibility_outlined
-                            : Icons.play_arrow,
-                      ),
-                      label: Text(
-                        isDocument
-                            ? documentPosition == null
-                                  ? 'Lesen'
-                                  : 'Fortsetzen'
-                            : 'Abspielen / fortsetzen',
+                  if (!isDocument) ...[
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: detailTracks.isEmpty
+                            ? null
+                            : () => Navigator.pop(context, 'play'),
+                        icon: const Icon(Icons.play_arrow),
+                        label: const Text('Abspielen / fortsetzen'),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
+                    const SizedBox(width: 10),
+                  ],
                   IconButton.filledTonal(
                     onPressed: () => Navigator.pop(
                       context,
@@ -2330,6 +2332,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     List<FundusRemoteTrack> tracks, {
     required FundusOfflineWork? offlineWork,
     String? startFileId,
+    bool skipServerLookup = false,
   }) async {
     final comics =
         tracks
@@ -2344,14 +2347,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       workId: work.id,
     );
     FundusRemoteProgress? serverProgress;
-    try {
-      final result = await _runWithReconnect(
-        server,
-        (active) => _client.progress(active, library.id, work.id),
-      );
-      server = result.server;
-      serverProgress = result.value;
-    } catch (_) {}
+    if (!skipServerLookup) {
+      try {
+        final result = await _runWithReconnect(
+          server,
+          (active) => _client.progress(active, library.id, work.id),
+        );
+        server = result.server;
+        serverProgress = result.value;
+      } catch (_) {}
+    }
     var progress = serverProgress ?? localProgress;
     var selectedDeviceProgress = false;
     final localPosition = localProgress?.mediaPosition;
@@ -2482,6 +2487,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
               mediaPosition,
               deviceId: deviceId,
               finished: chapterIndex + 1 == comics.length && page + 1 >= total,
+              syncRemote: !skipServerLookup,
             ),
           );
         },
@@ -2516,6 +2522,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     MediaPosition position, {
     required String deviceId,
     required bool finished,
+    bool syncRemote = true,
   }) async {
     try {
       final pending = await _offlineStore.saveMediaProgress(
@@ -2526,6 +2533,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         position: position,
         finished: finished,
       );
+      if (!syncRemote) return;
       await _runWithReconnect(
         server,
         (active) => _client.saveMediaProgress(
@@ -2553,6 +2561,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     List<FundusRemoteTrack> tracks, {
     required FundusOfflineWork? offlineWork,
     String? startFileId,
+    bool skipServerLookup = false,
   }) async {
     final pdfs =
         tracks
@@ -2567,14 +2576,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       workId: work.id,
     );
     FundusRemoteProgress? serverProgress;
-    try {
-      final result = await _runWithReconnect(
-        server,
-        (active) => _client.progress(active, library.id, work.id),
-      );
-      server = result.server;
-      serverProgress = result.value;
-    } catch (_) {}
+    if (!skipServerLookup) {
+      try {
+        final result = await _runWithReconnect(
+          server,
+          (active) => _client.progress(active, library.id, work.id),
+        );
+        server = result.server;
+        serverProgress = result.value;
+      } catch (_) {}
+    }
 
     final localPosition = localProgress?.mediaPosition;
     final serverPosition = serverProgress?.mediaPosition;
@@ -2678,6 +2689,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
               position,
               deviceId: deviceId,
               finished: page + 1 >= total,
+              syncRemote: !skipServerLookup,
             ),
           );
         },
@@ -2858,6 +2870,19 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                   style: Theme.of(context).textTheme.labelLarge,
                 ),
               ],
+              if (isDocument) ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () => Navigator.pop(context, 'open:resume'),
+                    icon: const Icon(Icons.menu_book_outlined),
+                    label: Text(
+                      progress?.mediaPosition == null ? 'Lesen' : 'Fortsetzen',
+                    ),
+                  ),
+                ),
+              ],
               if (offline.description case final description?) ...[
                 const SizedBox(height: 20),
                 Text(
@@ -2889,27 +2914,19 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                   ),
               ],
               const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: () => Navigator.pop(
-                    context,
-                    isDocument ? 'open:resume' : 'play',
-                  ),
-                  icon: Icon(
-                    isDocument ? Icons.visibility_outlined : Icons.play_arrow,
-                  ),
-                  label: Text(
-                    isDocument
-                        ? progress?.mediaPosition == null
-                              ? 'Lesen'
-                              : 'Fortsetzen'
-                        : progress != null && progress.position > Duration.zero
-                        ? 'Weiterhören'
-                        : 'Abspielen',
+              if (!isDocument)
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () => Navigator.pop(context, 'play'),
+                    icon: const Icon(Icons.play_arrow),
+                    label: Text(
+                      progress != null && progress.position > Duration.zero
+                          ? 'Weiterhören'
+                          : 'Abspielen',
+                    ),
                   ),
                 ),
-              ),
               const SizedBox(height: 8),
               SizedBox(
                 width: double.infinity,
@@ -2985,6 +3002,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             tracks,
             offlineWork: offline,
             startFileId: resume ? null : selected.id,
+            skipServerLookup: true,
           );
         } else if (selected.title.toLowerCase().endsWith('.pdf')) {
           await _openRemotePdfWork(
@@ -2994,6 +3012,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             tracks,
             offlineWork: offline,
             startFileId: resume ? null : selected.id,
+            skipServerLookup: true,
           );
         } else {
           await _openDocumentPath(selected.path);

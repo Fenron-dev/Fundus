@@ -65,6 +65,11 @@ final class ZipArchiveService {
     ZipArchiveEntry target,
   ) => Isolate.run(() => _extractSync(archivePath, target));
 
+  Future<Map<String, String>> extractToTemporaryFiles(
+    String archivePath,
+    List<ZipArchiveEntry> targets,
+  ) => Isolate.run(() => _extractManySync(archivePath, targets));
+
   ZipArchiveSnapshot _inspectSync(String archivePath) {
     final archiveFile = File(archivePath);
     if (!archiveFile.existsSync()) {
@@ -123,45 +128,67 @@ final class ZipArchiveService {
   }
 
   String _extractSync(String archivePath, ZipArchiveEntry target) {
-    if (target.isDirectory) {
-      throw const ZipArchiveException(
-        'Ordner können nicht als Datei geöffnet werden.',
-      );
-    }
-    final canonicalTarget = _canonicalPath(target.archiveName);
-    if (canonicalTarget != target.path || target.size > maxEntryBytes) {
-      throw const ZipArchiveException('Der ZIP-Eintrag ist nicht mehr gültig.');
+    final result = _extractManySync(archivePath, [target]);
+    return result[target.path]!;
+  }
+
+  Map<String, String> _extractManySync(
+    String archivePath,
+    List<ZipArchiveEntry> targets,
+  ) {
+    if (targets.isEmpty) return const {};
+    final canonicalTargets = <String, ZipArchiveEntry>{};
+    for (final target in targets) {
+      if (target.isDirectory) {
+        throw const ZipArchiveException(
+          'Ordner können nicht als Datei geöffnet werden.',
+        );
+      }
+      final canonicalTarget = _canonicalPath(target.archiveName);
+      if (canonicalTarget != target.path || target.size > maxEntryBytes) {
+        throw const ZipArchiveException(
+          'Der ZIP-Eintrag ist nicht mehr gültig.',
+        );
+      }
+      canonicalTargets[target.archiveName] = target;
     }
     final archive = _decode(archivePath);
     Directory? targetDirectory;
     try {
-      final file = archive.find(target.archiveName);
-      if (file == null || !file.isFile || file.isSymbolicLink) {
-        throw const ZipArchiveException(
-          'Der ZIP-Eintrag konnte nicht gefunden werden.',
-        );
-      }
-      if (file.size > maxEntryBytes) {
-        throw const ZipArchiveException('Der ZIP-Eintrag ist zu groß.');
-      }
       final previewRoot = Directory(
         p.join(Directory.systemTemp.path, 'fundus-archive-preview'),
       )..createSync(recursive: true);
       _removeStalePreviews(previewRoot);
-      targetDirectory = previewRoot.createTempSync('entry-');
-      final output = File(p.join(targetDirectory.path, target.name));
-      final stream = OutputFileStream(output.path);
-      try {
-        file.writeContent(stream);
-      } finally {
-        stream.closeSync();
-      }
-      if (output.lengthSync() > maxEntryBytes) {
-        throw const ZipArchiveException(
-          'Der ZIP-Eintrag überschreitet beim Entpacken die Größenbegrenzung.',
+      targetDirectory = previewRoot.createTempSync('entries-');
+      final result = <String, String>{};
+      for (final entry in canonicalTargets.entries) {
+        final target = entry.value;
+        final file = archive.find(entry.key);
+        if (file == null || !file.isFile || file.isSymbolicLink) {
+          throw const ZipArchiveException(
+            'Der ZIP-Eintrag konnte nicht gefunden werden.',
+          );
+        }
+        if (file.size > maxEntryBytes) {
+          throw const ZipArchiveException('Der ZIP-Eintrag ist zu groß.');
+        }
+        final output = File(
+          p.join(targetDirectory.path, '${result.length}-${target.name}'),
         );
+        final stream = OutputFileStream(output.path);
+        try {
+          file.writeContent(stream);
+        } finally {
+          stream.closeSync();
+        }
+        if (output.lengthSync() > maxEntryBytes) {
+          throw const ZipArchiveException(
+            'Der ZIP-Eintrag überschreitet beim Entpacken die Größenbegrenzung.',
+          );
+        }
+        result[target.path] = output.path;
       }
-      return output.path;
+      return result;
     } on ZipArchiveException {
       if (targetDirectory?.existsSync() ?? false) {
         targetDirectory!.deleteSync(recursive: true);

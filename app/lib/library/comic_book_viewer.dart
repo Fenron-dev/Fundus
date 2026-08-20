@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -95,6 +96,50 @@ bool comicShouldEvictCachedPage({
   required int currentPage,
   required int preloadCount,
 }) => !continuous && (cachedPage - currentPage).abs() > preloadCount;
+
+double comicContinuousRestoreOffset({
+  required int page,
+  required double pageOffset,
+  required List<Size?> pageSizes,
+  required Size viewport,
+  required PublicationReaderProfile profile,
+  bool horizontal = false,
+}) {
+  if (pageSizes.isEmpty) return 0;
+  final restoredPage = page.clamp(0, pageSizes.length - 1);
+  double pageExtent(Size? size) {
+    if (size == null || size.width <= 0 || size.height <= 0) return 600;
+    final gap = profile.layout == PublicationReaderLayout.webtoon
+        ? 0.0
+        : profile.pageGap;
+    if (horizontal) {
+      return switch (profile.pageScale) {
+            PublicationPageScale.fitHeight =>
+              viewport.height * size.width / size.height,
+            PublicationPageScale.fitWidth ||
+            PublicationPageScale.fitScreen => viewport.width,
+            PublicationPageScale.original => size.width,
+          } +
+          gap;
+    }
+    return switch (profile.pageScale) {
+          PublicationPageScale.fitWidth =>
+            viewport.width * size.height / size.width,
+          PublicationPageScale.fitHeight ||
+          PublicationPageScale.fitScreen => viewport.height,
+          PublicationPageScale.original => size.height,
+        } +
+        gap;
+  }
+
+  var offset = 0.0;
+  for (var index = 0; index < restoredPage; index++) {
+    offset += pageExtent(pageSizes[index]);
+  }
+  offset += pageOffset.clamp(0, 1) * pageExtent(pageSizes[restoredPage]);
+  offset -= horizontal ? viewport.width / 2 : viewport.height / 2;
+  return offset.clamp(0, double.infinity);
+}
 
 final class ComicChapterSequenceReport {
   const ComicChapterSequenceReport({
@@ -309,9 +354,9 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
   final _service = const ZipArchiveService();
   final Map<int, Future<String>> _extractedPages = {};
   final Map<int, String> _extractedPagePaths = {};
-  late final Future<List<ZipArchiveEntry>> _pagesFuture = _service
-      .inspect(widget.archivePath)
-      .then(comicBookPages);
+  final Map<int, Size> _pageSizes = {};
+  final GlobalKey _continuousViewportKey = GlobalKey();
+  late final Future<List<ZipArchiveEntry>> _pagesFuture;
   PageController? _controller;
   ScrollController? _continuousController;
   final Map<int, GlobalKey> _continuousPageKeys = {};
@@ -331,6 +376,56 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     _profile = widget.initialProfile;
     _bookmarks = List.of(widget.initialBookmarks);
     _currentScrollOffset = widget.initialScrollOffset;
+    _pagesFuture = _loadPages();
+  }
+
+  Future<List<ZipArchiveEntry>> _loadPages() async {
+    final pages = comicBookPages(await _service.inspect(widget.archivePath));
+    if (pages.isEmpty || !_continuous) return pages;
+    final anchoredPage = widget.initialElementId == null
+        ? -1
+        : pages.indexWhere((page) => page.path == widget.initialElementId);
+    final initial = (anchoredPage >= 0 ? anchoredPage : widget.initialPage)
+        .clamp(0, pages.length - 1);
+    if (initial > 0) await _preparePagesThrough(pages, initial);
+    return pages;
+  }
+
+  Future<void> _preparePagesThrough(
+    List<ZipArchiveEntry> pages,
+    int targetPage,
+  ) async {
+    final end = (targetPage + _profile.preloadCount).clamp(0, pages.length - 1);
+    final targets = [
+      for (var index = 0; index <= end; index++)
+        if (!_extractedPagePaths.containsKey(index)) pages[index],
+    ];
+    if (targets.isEmpty) return;
+    final extracted = await _service.extractToTemporaryFiles(
+      widget.archivePath,
+      targets,
+    );
+    for (var index = 0; index <= end; index++) {
+      final path = extracted[pages[index].path];
+      if (path == null) continue;
+      _extractedPagePaths[index] = path;
+      _extractedPages[index] = Future.value(path);
+      _pageSizes[index] = await _readImageSize(path);
+    }
+  }
+
+  static Future<Size> _readImageSize(String path) async {
+    final buffer = await ui.ImmutableBuffer.fromFilePath(path);
+    try {
+      final descriptor = await ui.ImageDescriptor.encoded(buffer);
+      try {
+        return Size(descriptor.width.toDouble(), descriptor.height.toDouble());
+      } finally {
+        descriptor.dispose();
+      }
+    } finally {
+      buffer.dispose();
+    }
   }
 
   bool get _rightToLeft =>
@@ -879,6 +974,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
           entry,
         );
         _extractedPagePaths[page] = path;
+        _pageSizes[page] = await _readImageSize(path);
         return path;
       });
 
@@ -1019,9 +1115,13 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
 
   void _trackContinuousPosition(List<ZipArchiveEntry> pages) {
     if (!mounted || !(_continuousController?.hasClients ?? false)) return;
+    final viewportBox = _continuousViewportKey.currentContext
+        ?.findRenderObject();
+    if (viewportBox is! RenderBox || !viewportBox.attached) return;
+    final viewportOrigin = viewportBox.localToGlobal(Offset.zero);
     final viewportCenter = _continuousHorizontal
-        ? MediaQuery.sizeOf(context).width / 2
-        : MediaQuery.sizeOf(context).height / 2;
+        ? viewportOrigin.dx + viewportBox.size.width / 2
+        : viewportOrigin.dy + viewportBox.size.height / 2;
     int? closestPage;
     double? closestOffset;
     var closestDistance = double.infinity;
@@ -1072,6 +1172,9 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
   Widget _buildContinuousReader(List<ZipArchiveEntry> pages) => LayoutBuilder(
     builder: (context, constraints) {
       final viewport = Size(constraints.maxWidth, constraints.maxHeight);
+      _continuousController ??= ScrollController(
+        initialScrollOffset: _continuousInitialOffset(viewport),
+      )..addListener(() => _trackContinuousPosition(pages));
       final nextOverscrollSign = _continuousHorizontal && _rightToLeft ? -1 : 1;
       return NotificationListener<OverscrollNotification>(
         onNotification: (notification) {
@@ -1090,6 +1193,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
           return false;
         },
         child: ListView.builder(
+          key: _continuousViewportKey,
           controller: _continuousController,
           scrollDirection: _continuousHorizontal
               ? Axis.horizontal
@@ -1111,6 +1215,19 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
       );
     },
   );
+
+  double _continuousInitialOffset(Size viewport) {
+    return comicContinuousRestoreOffset(
+      page: _currentPage,
+      pageOffset: _currentScrollOffset ?? 0,
+      pageSizes: [
+        for (var page = 0; page < _pageCount; page++) _pageSizes[page],
+      ],
+      viewport: viewport,
+      profile: _profile,
+      horizontal: _continuousHorizontal,
+    );
+  }
 
   Widget _buildContinuousImage(
     File file,
@@ -1745,9 +1862,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
             firstPageIsCover: _profile.firstPageIsCover,
           );
           if (_continuous) {
-            _continuousController ??= ScrollController(
-              initialScrollOffset: initial * 600,
-            )..addListener(() => _trackContinuousPosition(pages));
+            if (_currentPage == 0 && initial > 0) _currentPage = initial;
           } else {
             _controller ??= PageController(
               initialPage: comicPageGroupIndex(groups, initial),
@@ -1765,15 +1880,6 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
                 widget.initialScrollOffset,
               );
               _preloadAround(initial, pages);
-              if (_continuous) {
-                final target = _continuousPageKeys[initial]?.currentContext;
-                if (target != null) {
-                  Scrollable.ensureVisible(
-                    target,
-                    alignment: (widget.initialScrollOffset ?? 0).clamp(0, 1),
-                  );
-                }
-              }
             });
           }
           final progressValue = comicOverallProgress(

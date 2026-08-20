@@ -1,3 +1,5 @@
+import 'dart:ui' show Size;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/library/comic_book_viewer.dart';
 import 'package:fundus/library/zip_archive_browser.dart';
@@ -174,6 +176,21 @@ void main() {
       );
     },
   );
+
+  test('webtoon restore uses measured page heights and inner offset', () {
+    final offset = comicContinuousRestoreOffset(
+      page: 2,
+      pageOffset: .5,
+      pageSizes: const [Size(100, 1000), Size(100, 800), Size(100, 1200)],
+      viewport: const Size(500, 800),
+      profile: const PublicationReaderProfile(
+        layout: PublicationReaderLayout.webtoon,
+        pageScale: PublicationPageScale.fitWidth,
+      ),
+    );
+
+    expect(offset, 11600);
+  });
 
   test('chapter sequence reports missing and duplicate chapter numbers', () {
     final report = comicChapterSequenceReport([
