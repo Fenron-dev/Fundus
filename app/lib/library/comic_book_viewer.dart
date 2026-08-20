@@ -107,38 +107,56 @@ double comicContinuousRestoreOffset({
 }) {
   if (pageSizes.isEmpty) return 0;
   final restoredPage = page.clamp(0, pageSizes.length - 1);
-  double pageExtent(Size? size) {
-    if (size == null || size.width <= 0 || size.height <= 0) return 600;
-    final gap = profile.layout == PublicationReaderLayout.webtoon
-        ? 0.0
-        : profile.pageGap;
-    if (horizontal) {
-      return switch (profile.pageScale) {
-            PublicationPageScale.fitHeight =>
-              viewport.height * size.width / size.height,
-            PublicationPageScale.fitWidth ||
-            PublicationPageScale.fitScreen => viewport.width,
-            PublicationPageScale.original => size.width,
-          } +
-          gap;
-    }
-    return switch (profile.pageScale) {
-          PublicationPageScale.fitWidth =>
-            viewport.width * size.height / size.width,
-          PublicationPageScale.fitHeight ||
-          PublicationPageScale.fitScreen => viewport.height,
-          PublicationPageScale.original => size.height,
-        } +
-        gap;
-  }
 
   var offset = 0.0;
   for (var index = 0; index < restoredPage; index++) {
-    offset += pageExtent(pageSizes[index]);
+    offset += comicContinuousPageExtent(
+      pageSizes[index],
+      viewport: viewport,
+      profile: profile,
+      horizontal: horizontal,
+    );
   }
-  offset += pageOffset.clamp(0, 1) * pageExtent(pageSizes[restoredPage]);
+  offset +=
+      pageOffset.clamp(0, 1) *
+      comicContinuousPageExtent(
+        pageSizes[restoredPage],
+        viewport: viewport,
+        profile: profile,
+        horizontal: horizontal,
+      );
   offset -= horizontal ? viewport.width / 2 : viewport.height / 2;
   return offset.clamp(0, double.infinity);
+}
+
+double comicContinuousPageExtent(
+  Size? size, {
+  required Size viewport,
+  required PublicationReaderProfile profile,
+  bool horizontal = false,
+}) {
+  if (size == null || size.width <= 0 || size.height <= 0) return 600;
+  final gap = profile.layout == PublicationReaderLayout.webtoon
+      ? 0.0
+      : profile.pageGap;
+  if (horizontal) {
+    return switch (profile.pageScale) {
+          PublicationPageScale.fitHeight =>
+            viewport.height * size.width / size.height,
+          PublicationPageScale.fitWidth ||
+          PublicationPageScale.fitScreen => viewport.width,
+          PublicationPageScale.original => size.width,
+        } +
+        gap;
+  }
+  return switch (profile.pageScale) {
+        PublicationPageScale.fitWidth =>
+          viewport.width * size.height / size.width,
+        PublicationPageScale.fitHeight ||
+        PublicationPageScale.fitScreen => viewport.height,
+        PublicationPageScale.original => size.height,
+      } +
+      gap;
 }
 
 final class ComicChapterSequenceReport {
@@ -367,6 +385,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
   bool _immersive = false;
   bool _controlsVisible = true;
   bool _chapterTransitionPending = false;
+  bool _continuousTrackingReady = false;
   late PublicationReaderProfile _profile;
   late List<LibraryBookmark> _bookmarks;
 
@@ -482,13 +501,20 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     final structureChanged =
         profile.layout != _profile.layout ||
         profile.firstPageIsCover != _profile.firstPageIsCover;
+    final continuousExtentChanged =
+        _continuous &&
+        (profile.pageScale != _profile.pageScale ||
+            profile.pageGap != _profile.pageGap ||
+            profile.readerWidth != _profile.readerWidth ||
+            profile.layout != _profile.layout);
     setState(() => _profile = profile);
-    if (structureChanged) {
+    if (structureChanged || continuousExtentChanged) {
       _controller?.dispose();
       _controller = null;
       _continuousController?.dispose();
       _continuousController = null;
       _continuousPageKeys.clear();
+      _continuousTrackingReady = false;
     }
     widget.onProfileChanged?.call(profile);
   }
@@ -1113,7 +1139,11 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
   }
 
   void _trackContinuousPosition(List<ZipArchiveEntry> pages) {
-    if (!mounted || !(_continuousController?.hasClients ?? false)) return;
+    if (!mounted ||
+        !_continuousTrackingReady ||
+        !(_continuousController?.hasClients ?? false)) {
+      return;
+    }
     final viewportBox = _continuousViewportKey.currentContext
         ?.findRenderObject();
     if (viewportBox is! RenderBox || !viewportBox.attached) return;
@@ -1174,6 +1204,15 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
       _continuousController ??= ScrollController(
         initialScrollOffset: _continuousInitialOffset(viewport),
       )..addListener(() => _trackContinuousPosition(pages));
+      if (!_continuousTrackingReady) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || !_continuous) return;
+            _continuousTrackingReady = true;
+            _trackContinuousPosition(pages);
+          });
+        });
+      }
       final nextOverscrollSign = _continuousHorizontal && _rightToLeft ? -1 : 1;
       return NotificationListener<OverscrollNotification>(
         onNotification: (notification) {
@@ -1200,6 +1239,12 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
           reverse: _continuousHorizontal && _rightToLeft,
           padding: EdgeInsets.zero,
           itemCount: pages.length,
+          itemExtentBuilder: (page, _) => comicContinuousPageExtent(
+            _pageSizes[page],
+            viewport: viewport,
+            profile: _profile,
+            horizontal: _continuousHorizontal,
+          ),
           itemBuilder: (context, page) => KeyedSubtree(
             key: _continuousPageKeys.putIfAbsent(page, GlobalKey.new),
             child: _buildPage(

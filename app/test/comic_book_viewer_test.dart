@@ -192,6 +192,44 @@ void main() {
     expect(offset, 11600);
   });
 
+  test(
+    'continuous extents follow the active device width deterministically',
+    () {
+      const page = Size(100, 1000);
+      const profile = PublicationReaderProfile(
+        layout: PublicationReaderLayout.webtoon,
+        pageScale: PublicationPageScale.fitWidth,
+      );
+
+      expect(
+        comicContinuousPageExtent(
+          page,
+          viewport: const Size(400, 800),
+          profile: profile,
+        ),
+        4000,
+      );
+      expect(
+        comicContinuousPageExtent(
+          page,
+          viewport: const Size(800, 800),
+          profile: profile,
+        ),
+        8000,
+      );
+      expect(
+        comicContinuousRestoreOffset(
+          page: 1,
+          pageOffset: .25,
+          pageSizes: const [page, page, page],
+          viewport: const Size(400, 800),
+          profile: profile,
+        ),
+        4600,
+      );
+    },
+  );
+
   test('chapter sequence reports missing and duplicate chapter numbers', () {
     final report = comicChapterSequenceReport([
       'Serie – Kapitel 0280',
