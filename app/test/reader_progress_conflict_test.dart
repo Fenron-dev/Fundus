@@ -110,4 +110,15 @@ void main() {
       DocumentChapterReadState.unread,
     );
   });
+
+  test('chapter range accepts exact one-based bounds in either order', () {
+    expect(chapterSelectionRange(total: 4000, start: 101, end: 200), {
+      for (var index = 100; index < 200; index++) index,
+    });
+    expect(chapterSelectionRange(total: 10, start: 8, end: 5), {4, 5, 6, 7});
+    expect(chapterSelectionRange(total: 10, start: -5, end: 99), {
+      for (var index = 0; index < 10; index++) index,
+    });
+    expect(chapterSelectionRange(total: 0, start: 1, end: 1), isEmpty);
+  });
 }

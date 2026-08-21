@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -32,6 +32,25 @@ enum _RemoteGrouping { books, authors, series, narrators }
 enum _RemoteLibrarySection { media, playlists }
 
 enum _DocumentTrackSort { oldestFirst, newestFirst, titleAscending }
+
+enum _ChapterSelectionMode { range, individual }
+
+Set<int> chapterSelectionRange({
+  required int total,
+  required int start,
+  required int end,
+}) {
+  if (total <= 0) return const {};
+  final normalizedStart = start.clamp(1, total) - 1;
+  final normalizedEnd = end.clamp(1, total) - 1;
+  final first = normalizedStart < normalizedEnd
+      ? normalizedStart
+      : normalizedEnd;
+  final last = normalizedStart > normalizedEnd
+      ? normalizedStart
+      : normalizedEnd;
+  return {for (var index = first; index <= last; index++) index};
+}
 
 List<({FundusRemoteTrack track, int originalIndex})> _orderedRemoteTracks(
   List<FundusRemoteTrack> tracks,
@@ -2068,6 +2087,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           ? await _selectDownloadTracks(
               detailTracks,
               currentTrackIndex: documentProgressIndex,
+              alreadyDownloadedIds: {
+                for (final track
+                    in offlineWork?.tracks ?? const <FundusOfflineTrack>[])
+                  track.id,
+              },
             )
           : null;
       if (isDocument && selectedTrackIds == null) return;
@@ -2267,6 +2291,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   Future<Set<String>?> _selectDownloadTracks(
     List<FundusRemoteTrack> tracks, {
     required int currentTrackIndex,
+    Set<String> alreadyDownloadedIds = const {},
   }) async {
     if (tracks.isEmpty || !mounted) return null;
     final firstUnread = currentTrackIndex < 0
@@ -2276,19 +2301,54 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       firstUnread.toDouble(),
       (firstUnread + 99).clamp(0, tracks.length - 1).toDouble(),
     );
-    final selected = await showDialog<RangeValues>(
+    var mode = _ChapterSelectionMode.range;
+    final individual = <int>{};
+    final startController = TextEditingController(text: '${firstUnread + 1}');
+    final endController = TextEditingController(
+      text: '${range.end.round() + 1}',
+    );
+    final selected = await showDialog<Set<String>>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) {
-          void select(int start, int end) => setDialogState(
-            () => range = RangeValues(
+          void select(int start, int end) => setDialogState(() {
+            range = RangeValues(
               start.clamp(0, tracks.length - 1).toDouble(),
               end.clamp(0, tracks.length - 1).toDouble(),
-            ),
-          );
+            );
+            startController.text = '${range.start.round() + 1}';
+            endController.text = '${range.end.round() + 1}';
+          });
+
+          void applyExactRange() {
+            final start = int.tryParse(startController.text.trim());
+            final end = int.tryParse(endController.text.trim());
+            if (start == null || end == null) return;
+            final indexes = chapterSelectionRange(
+              total: tracks.length,
+              start: start,
+              end: end,
+            ).toList()..sort();
+            select(indexes.first, indexes.last);
+          }
+
           final start = range.start.round();
           final end = range.end.round();
+          final rangeIndexes = chapterSelectionRange(
+            total: tracks.length,
+            start: start + 1,
+            end: end + 1,
+          );
+          final selectedIndexes = mode == _ChapterSelectionMode.range
+              ? rangeIndexes
+              : individual;
+          final newIndexes = selectedIndexes
+              .where(
+                (index) => !alreadyDownloadedIds.contains(tracks[index].id),
+              )
+              .toSet();
           return AlertDialog(
+            scrollable: true,
             icon: const Icon(Icons.download_for_offline_outlined),
             title: const Text('Kapitel offline speichern'),
             content: SizedBox(
@@ -2298,9 +2358,32 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Wähle einen zusammenhängenden Bereich. Bereits gelesene '
-                    'Kapitel lassen sich so überspringen, ohne tausende Dateien '
-                    'einzeln markieren zu müssen.',
+                    'Wähle einen Bereich oder stelle eine individuelle '
+                    'Kapitelauswahl zusammen. Bereits vorhandene Downloads '
+                    'werden dabei nicht erneut übertragen.',
+                  ),
+                  const SizedBox(height: 12),
+                  SegmentedButton<_ChapterSelectionMode>(
+                    segments: const [
+                      ButtonSegment(
+                        value: _ChapterSelectionMode.range,
+                        icon: Icon(Icons.linear_scale),
+                        label: Text('Bereich'),
+                      ),
+                      ButtonSegment(
+                        value: _ChapterSelectionMode.individual,
+                        icon: Icon(Icons.checklist),
+                        label: Text('Einzeln'),
+                      ),
+                    ],
+                    selected: {mode},
+                    onSelectionChanged: (selection) => setDialogState(() {
+                      mode = selection.single;
+                      if (mode == _ChapterSelectionMode.individual &&
+                          individual.isEmpty) {
+                        individual.addAll(rangeIndexes);
+                      }
+                    }),
                   ),
                   const SizedBox(height: 16),
                   Wrap(
@@ -2309,39 +2392,132 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                     children: [
                       ActionChip(
                         label: const Text('Nächste 100'),
-                        onPressed: () => select(firstUnread, firstUnread + 99),
+                        onPressed: () {
+                          mode = _ChapterSelectionMode.range;
+                          select(firstUnread, firstUnread + 99);
+                        },
                       ),
                       ActionChip(
                         label: const Text('Ab aktuellem Kapitel'),
-                        onPressed: () => select(firstUnread, tracks.length - 1),
+                        onPressed: () {
+                          mode = _ChapterSelectionMode.range;
+                          select(firstUnread, tracks.length - 1);
+                        },
                       ),
                       ActionChip(
                         label: const Text('Alle'),
-                        onPressed: () => select(0, tracks.length - 1),
+                        onPressed: () {
+                          mode = _ChapterSelectionMode.range;
+                          select(0, tracks.length - 1);
+                        },
                       ),
                     ],
                   ),
                   const SizedBox(height: 16),
+                  if (mode == _ChapterSelectionMode.range) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: startController,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            decoration: const InputDecoration(
+                              labelText: 'Von Kapitel',
+                              border: OutlineInputBorder(),
+                            ),
+                            onSubmitted: (_) => applyExactRange(),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: endController,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            decoration: const InputDecoration(
+                              labelText: 'Bis Kapitel',
+                              border: OutlineInputBorder(),
+                            ),
+                            onSubmitted: (_) => applyExactRange(),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: applyExactRange,
+                          tooltip: 'Exakten Bereich übernehmen',
+                          icon: const Icon(Icons.check),
+                        ),
+                      ],
+                    ),
+                    RangeSlider(
+                      values: range,
+                      min: 0,
+                      max: (tracks.length - 1).toDouble(),
+                      divisions: tracks.length > 1 ? tracks.length - 1 : null,
+                      labels: RangeLabels('${start + 1}', '${end + 1}'),
+                      onChanged: tracks.length > 1
+                          ? (value) =>
+                                select(value.start.round(), value.end.round())
+                          : null,
+                    ),
+                    Text(
+                      '${tracks[start].title}\n–\n${tracks[end].title}',
+                      maxLines: 5,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ] else ...[
+                    Row(
+                      children: [
+                        Text('${individual.length} Kapitel ausgewählt'),
+                        const Spacer(),
+                        TextButton(
+                          onPressed: () => setDialogState(individual.clear),
+                          child: const Text('Keine'),
+                        ),
+                      ],
+                    ),
+                    SizedBox(
+                      height: 300,
+                      child: ListView.builder(
+                        itemCount: tracks.length,
+                        itemBuilder: (context, index) {
+                          final downloaded = alreadyDownloadedIds.contains(
+                            tracks[index].id,
+                          );
+                          return CheckboxListTile(
+                            dense: true,
+                            value: individual.contains(index),
+                            secondary: downloaded
+                                ? const Icon(Icons.download_done, size: 20)
+                                : null,
+                            title: Text(
+                              tracks[index].title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: downloaded
+                                ? const Text('Bereits offline')
+                                : null,
+                            onChanged: (checked) => setDialogState(() {
+                              checked == true
+                                  ? individual.add(index)
+                                  : individual.remove(index);
+                            }),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
                   Text(
-                    'Kapitel ${start + 1} bis ${end + 1} '
-                    '(${end - start + 1} Dateien)',
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
-                  RangeSlider(
-                    values: range,
-                    min: 0,
-                    max: (tracks.length - 1).toDouble(),
-                    divisions: tracks.length > 1 ? tracks.length - 1 : null,
-                    labels: RangeLabels('${start + 1}', '${end + 1}'),
-                    onChanged: tracks.length > 1
-                        ? (value) => setDialogState(() => range = value)
-                        : null,
-                  ),
-                  Text(
-                    '${tracks[start].title}\n–\n${tracks[end].title}',
-                    maxLines: 5,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall,
+                    '${selectedIndexes.length} ausgewählt · '
+                    '${newIndexes.length} neu herunterzuladen',
+                    style: Theme.of(context).textTheme.labelLarge,
                   ),
                 ],
               ),
@@ -2352,19 +2528,22 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 child: const Text('Abbrechen'),
               ),
               FilledButton.icon(
-                onPressed: () => Navigator.pop(dialogContext, range),
+                onPressed: newIndexes.isEmpty
+                    ? null
+                    : () => Navigator.pop(dialogContext, {
+                        for (final index in newIndexes) tracks[index].id,
+                      }),
                 icon: const Icon(Icons.download),
-                label: Text('${end - start + 1} herunterladen'),
+                label: Text('${newIndexes.length} herunterladen'),
               ),
             ],
           );
         },
       ),
     );
-    if (selected == null) return null;
-    final start = selected.start.round();
-    final end = selected.end.round();
-    return {for (var index = start; index <= end; index++) tracks[index].id};
+    startController.dispose();
+    endController.dispose();
+    return selected;
   }
 
   double? get _downloadProgress {
