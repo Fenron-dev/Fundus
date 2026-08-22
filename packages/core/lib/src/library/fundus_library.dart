@@ -31,12 +31,16 @@ final class LibraryIndexEvent {
     required this.fileCount,
     this.workCount = 0,
     this.currentPath,
+    this.rootCounts = const {},
+    this.extensionCounts = const {},
   });
 
   final LibraryIndexPhase phase;
   final int fileCount;
   final int workCount;
   final String? currentPath;
+  final Map<String, int> rootCounts;
+  final Map<String, int> extensionCounts;
 }
 
 final class _PortableWorkIdentity {
@@ -675,6 +679,14 @@ final class FundusLibrary {
                   mediaRootNames: configuration.rootsFor('audiobook'),
                 ))
             .group(files);
+    final rootCounts = _countScannedFiles(
+      files,
+      (file) => p.posix.split(file.relativePath).firstOrNull ?? '(root)',
+    );
+    final extensionCounts = _countScannedFiles(
+      files,
+      (file) => file.extension.isEmpty ? '(ohne Endung)' : file.extension,
+    );
     final groupedDocumentCandidates = DocumentImporter(
       mediaRoots: configuration.mediaRoots,
     ).group(files);
@@ -774,7 +786,23 @@ final class FundusLibrary {
       phase: LibraryIndexPhase.completed,
       fileCount: files.length,
       workCount: candidates.length + documentCandidates.length,
+      rootCounts: rootCounts,
+      extensionCounts: extensionCounts,
     );
+  }
+
+  static Map<String, int> _countScannedFiles(
+    Iterable<ScannedFile> files,
+    String Function(ScannedFile file) keyFor,
+  ) {
+    final counts = <String, int>{};
+    for (final file in files) {
+      final key = keyFor(file);
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    final entries = counts.entries.toList()
+      ..sort((left, right) => right.value.compareTo(left.value));
+    return {for (final entry in entries) entry.key: entry.value};
   }
 
   Future<DocumentImportCandidate> _withEpubMetadata(

@@ -23,6 +23,8 @@ void main() {
 
     expect(events.last.phase, LibraryIndexPhase.completed);
     expect(events.last.fileCount, 3);
+    expect(events.last.rootCounts, {'Karl May': 3});
+    expect(events.last.extensionCounts, {'mp3': 2, 'jpg': 1});
     expect(works, hasLength(1));
     expect(works.single.title, 'Winnetou I');
     expect(works.single.author, 'Karl May');

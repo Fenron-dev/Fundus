@@ -685,9 +685,19 @@ class _FundusAppState extends State<FundusApp> {
     });
     try {
       await FundusDiagnostics.instance.record('library.scan_started');
+      var lastProgressMilestone = 0;
       await for (final event in library.index()) {
         if (!mounted) return;
         setState(() => _indexEvent = event);
+        final milestone = event.fileCount ~/ 1000;
+        if (event.phase == LibraryIndexPhase.scanning &&
+            milestone > lastProgressMilestone) {
+          lastProgressMilestone = milestone;
+          await FundusDiagnostics.instance.record('library.scan_progress', {
+            'file_count': event.fileCount,
+            'relative_path': event.currentPath,
+          });
+        }
       }
       await _generateDocumentCovers(library);
       if (mounted) {
@@ -697,6 +707,8 @@ class _FundusAppState extends State<FundusApp> {
       await FundusDiagnostics.instance.record('library.scan_completed', {
         'work_count': library.listWorks().length,
         'file_count': _indexEvent?.fileCount,
+        'root_counts': _indexEvent?.rootCounts,
+        'extension_counts': _indexEvent?.extensionCounts,
       });
     } catch (error) {
       await FundusDiagnostics.instance.record('library.scan_failed', {
