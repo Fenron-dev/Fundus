@@ -20,6 +20,16 @@ void main() {
     final internal = Directory(p.join(root.path, '.library'));
     await internal.create();
     await File(p.join(internal.path, 'index.db')).writeAsBytes([6]);
+    final synologyMetadata = Directory(
+      p.join(book.path, '@eaDir', 'cover.jpg'),
+    );
+    await synologyMetadata.create(recursive: true);
+    await File(
+      p.join(synologyMetadata.path, 'SYNOPHOTO_THUMB_XL.jpg'),
+    ).writeAsBytes([7]);
+    final appleMetadata = Directory(p.join(root.path, '.AppleDouble'));
+    await appleMetadata.create();
+    await File(p.join(appleMetadata.path, 'metadata')).writeAsBytes([8]);
 
     final events = await LibraryScanner().scan(root).toList();
     final files = events

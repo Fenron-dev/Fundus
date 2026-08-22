@@ -59,6 +59,17 @@ final class LibraryScanner {
       '_fundus',
       '.staging',
       '.git',
+      '@eaDir',
+      '#recycle',
+      r'$RECYCLE.BIN',
+      '.AppleDB',
+      '.AppleDesktop',
+      '.AppleDouble',
+      '.TemporaryItems',
+      '.DocumentRevisions-V100',
+      '.Spotlight-V100',
+      '.Trashes',
+      '.fseventsd',
     },
     this.ignoredFileNames = const {'.DS_Store', 'Thumbs.db'},
   });
@@ -89,6 +100,7 @@ final class LibraryScanner {
     }
 
     final pending = <Directory>[root.absolute];
+    final visitedDirectories = <String>{};
     while (pending.isNotEmpty) {
       if (cancellationToken?.isCancelled ?? false) {
         yield ScanEvent(kind: ScanEventKind.cancelled, visitedFiles: visited);
@@ -96,6 +108,8 @@ final class LibraryScanner {
       }
 
       final directory = pending.removeLast();
+      final directoryPath = p.normalize(directory.absolute.path);
+      if (!visitedDirectories.add(directoryPath)) continue;
       try {
         await for (final entity in directory.list(followLinks: false)) {
           if (cancellationToken?.isCancelled ?? false) {
@@ -107,7 +121,7 @@ final class LibraryScanner {
           }
           final name = p.basename(entity.path);
           if (entity is Directory) {
-            if (!ignoredDirectoryNames.contains(name)) pending.add(entity);
+            if (!_isIgnoredDirectory(name)) pending.add(entity);
             continue;
           }
           if (entity is! File ||
@@ -170,6 +184,14 @@ final class LibraryScanner {
     }
 
     yield ScanEvent(kind: ScanEventKind.completed, visitedFiles: visited);
+  }
+
+  bool _isIgnoredDirectory(String name) {
+    final normalized = name.toLowerCase();
+    if (normalized.startsWith('.trash-')) return true;
+    return ignoredDirectoryNames.any(
+      (ignored) => ignored.toLowerCase() == normalized,
+    );
   }
 }
 

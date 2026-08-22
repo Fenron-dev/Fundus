@@ -1,5 +1,4 @@
-import 'dart:isolate';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:path/path.dart' as p;
@@ -9,6 +8,12 @@ import 'publication_reader_settings.dart';
 
 bool supportsInternalEpubReader(String path) =>
     p.extension(path).toLowerCase() == '.epub';
+
+// Keep EPUB parsing outside the UI isolate without closing over the reader
+// callbacks. Those callbacks can retain a FundusLibrary and its native SQLite
+// handle, which cannot be transferred between isolates.
+Future<EpubPublication> _openEpubPackage(String path) =>
+    const EpubPackageAdapter().openFile(path);
 
 Future<void> showEpubReader(
   BuildContext context, {
@@ -51,9 +56,7 @@ Future<void> showEpubReader(
   await Future<void>.delayed(Duration.zero);
   late final EpubPublication publication;
   try {
-    publication = await Isolate.run(
-      () => const EpubPackageAdapter().openFile(path),
-    );
+    publication = await compute(_openEpubPackage, path);
   } finally {
     if (loadingVisible && navigator.mounted && navigator.canPop()) {
       navigator.pop();
