@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:path/path.dart' as p;
 
 import '../scan/library_scanner.dart';
@@ -9,6 +11,9 @@ final class DocumentImportCandidate {
     required this.title,
     required this.files,
     this.coverFile,
+    this.metadata = const {},
+    this.embeddedCoverBytes,
+    this.embeddedCoverMimeType,
   });
 
   final String kind;
@@ -16,6 +21,25 @@ final class DocumentImportCandidate {
   final String title;
   final List<ScannedFile> files;
   final ScannedFile? coverFile;
+  final Map<String, Object?> metadata;
+  final Uint8List? embeddedCoverBytes;
+  final String? embeddedCoverMimeType;
+
+  DocumentImportCandidate copyWith({
+    String? title,
+    Map<String, Object?>? metadata,
+    Uint8List? embeddedCoverBytes,
+    String? embeddedCoverMimeType,
+  }) => DocumentImportCandidate(
+    kind: kind,
+    directory: directory,
+    title: title ?? this.title,
+    files: files,
+    coverFile: coverFile,
+    metadata: metadata ?? this.metadata,
+    embeddedCoverBytes: embeddedCoverBytes ?? this.embeddedCoverBytes,
+    embeddedCoverMimeType: embeddedCoverMimeType ?? this.embeddedCoverMimeType,
+  );
 }
 
 /// Groups non-audio media below explicitly configured media roots.
@@ -72,8 +96,11 @@ final class DocumentImporter {
     'cover.jpg',
     'cover.jpeg',
     'cover.png',
+    'cover.webp',
     'folder.jpg',
+    'folder.jpeg',
     'folder.png',
+    'folder.webp',
   };
 
   final List<({String kind, List<String> parts})> _roots;
@@ -151,10 +178,34 @@ final class DocumentImporter {
     return null;
   }
 
-  static int _compareFiles(ScannedFile left, ScannedFile right) => left
-      .relativePath
-      .toLowerCase()
-      .compareTo(right.relativePath.toLowerCase());
+  static int _compareFiles(ScannedFile left, ScannedFile right) =>
+      _naturalCompare(left.relativePath, right.relativePath);
+
+  static int _naturalCompare(String left, String right) {
+    final pattern = RegExp(r'\d+|\D+');
+    final leftParts = pattern
+        .allMatches(left.toLowerCase())
+        .map((match) => match.group(0)!)
+        .toList(growable: false);
+    final rightParts = pattern
+        .allMatches(right.toLowerCase())
+        .map((match) => match.group(0)!)
+        .toList(growable: false);
+    final length = leftParts.length < rightParts.length
+        ? leftParts.length
+        : rightParts.length;
+    for (var index = 0; index < length; index++) {
+      final leftPart = leftParts[index];
+      final rightPart = rightParts[index];
+      final leftNumber = BigInt.tryParse(leftPart);
+      final rightNumber = BigInt.tryParse(rightPart);
+      final comparison = leftNumber != null && rightNumber != null
+          ? leftNumber.compareTo(rightNumber)
+          : leftPart.compareTo(rightPart);
+      if (comparison != 0) return comparison;
+    }
+    return leftParts.length.compareTo(rightParts.length);
+  }
 
   static List<String> _parts(String value) => p.posix
       .split(p.posix.normalize(value.replaceAll('\\', '/')))

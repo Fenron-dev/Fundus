@@ -316,17 +316,21 @@ final class FundusRemoteProgress {
     required this.finished,
     required this.revision,
     this.duration,
+    this.mediaPosition,
     this.deviceId,
     this.deviceName,
+    this.updatedAt,
   });
 
   final String? fileId;
   final Duration position;
   final Duration? duration;
+  final MediaPosition? mediaPosition;
   final bool finished;
   final int revision;
   final String? deviceId;
   final String? deviceName;
+  final DateTime? updatedAt;
 }
 
 final class FundusRemoteProgressRevision {
@@ -963,6 +967,7 @@ final class FundusRemoteClient {
     if (progress is! Map) return null;
     final position = progress['position'];
     if (position is! Map) return null;
+    final mediaPosition = _mediaPosition(position);
     final seconds = position['numeric_value'];
     final total = position['total'];
     return FundusRemoteProgress(
@@ -977,6 +982,7 @@ final class FundusRemoteClient {
       duration: total is num
           ? Duration(milliseconds: (total * 1000).round())
           : null,
+      mediaPosition: mediaPosition,
       finished: progress['finished'] == true,
       revision: progress['revision'] is int ? progress['revision'] as int : 0,
       deviceId: progress['device_id'] is String
@@ -985,6 +991,253 @@ final class FundusRemoteClient {
       deviceName: progress['device_name'] is String
           ? progress['device_name'] as String
           : null,
+      updatedAt: DateTime.tryParse('${progress['updated_at'] ?? ''}'),
+    );
+  }
+
+  Future<WorkAnnotations> annotations(
+    FundusRemoteServer server,
+    String libraryId,
+    String workId,
+  ) async => _annotationsFromJson(
+    await _json(server, '/v1/libraries/$libraryId/annotations/$workId'),
+    workId,
+  );
+
+  Future<WorkAnnotations> saveNote(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String markdown,
+  }) async {
+    final bytes = await _request(
+      server.baseUri.resolve(
+        '/v1/libraries/$libraryId/annotations/$workId/notes',
+      ),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'POST',
+      body: jsonEncode({'markdown': markdown}),
+    );
+    final value = jsonDecode(utf8.decode(bytes));
+    if (value is! Map) throw const HttpException('Ungültige Annotationen.');
+    return _annotationsFromJson(value, workId);
+  }
+
+  Future<WorkAnnotations> saveTags(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required Iterable<String> tags,
+  }) async {
+    final bytes = await _request(
+      server.baseUri.resolve(
+        '/v1/libraries/$libraryId/annotations/$workId/tags',
+      ),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'PUT',
+      body: jsonEncode({'tags': tags.toList()}),
+    );
+    final value = jsonDecode(utf8.decode(bytes));
+    if (value is! Map) throw const HttpException('Ungültige Annotationen.');
+    return _annotationsFromJson(value, workId);
+  }
+
+  Future<WorkAnnotations> saveBookmark(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    String? label,
+    String? note,
+  }) async => _saveAnnotation(
+    server,
+    path: '/v1/libraries/$libraryId/annotations/$workId/bookmarks',
+    workId: workId,
+    body: {
+      'file_id': fileId,
+      'position': position.toJson(),
+      'label': label,
+      'note': note,
+    },
+  );
+
+  Future<WorkAnnotations> saveHighlight(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    required String quote,
+    required String color,
+    String? note,
+  }) async => _saveAnnotation(
+    server,
+    path: '/v1/libraries/$libraryId/annotations/$workId/highlights',
+    workId: workId,
+    body: {
+      'file_id': fileId,
+      'position': position.toJson(),
+      'quote': quote,
+      'color': color,
+      'note': note,
+    },
+  );
+
+  Future<WorkAnnotations> _saveAnnotation(
+    FundusRemoteServer server, {
+    required String path,
+    required String workId,
+    required Map<String, Object?> body,
+  }) async {
+    final bytes = await _request(
+      server.baseUri.resolve(path),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'POST',
+      body: jsonEncode(body),
+    );
+    final value = jsonDecode(utf8.decode(bytes));
+    if (value is! Map) throw const HttpException('Ungültige Annotationen.');
+    return _annotationsFromJson(value, workId);
+  }
+
+  Future<WorkAnnotations> deleteAnnotation(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String annotationId,
+    required bool highlight,
+  }) async {
+    final kind = highlight ? 'highlights' : 'bookmarks';
+    final bytes = await _request(
+      server.baseUri.resolve(
+        '/v1/libraries/$libraryId/annotations/$workId/$kind/$annotationId',
+      ),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'DELETE',
+    );
+    final value = jsonDecode(utf8.decode(bytes));
+    if (value is! Map) throw const HttpException('Ungültige Annotationen.');
+    return _annotationsFromJson(value, workId);
+  }
+
+  Future<Map<String, Object?>?> readerProfile(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String deviceKey,
+    required String readerKind,
+  }) async {
+    final value = await _json(
+      server,
+      '/v1/libraries/$libraryId/reader-settings/$workId/$deviceKey/$readerKind',
+    );
+    final profile = value['profile'];
+    return profile is Map ? Map<String, Object?>.from(profile) : null;
+  }
+
+  Future<void> saveReaderProfile(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String deviceKey,
+    required String readerKind,
+    required Map<String, Object?> profile,
+  }) async {
+    await _request(
+      server.baseUri.resolve(
+        '/v1/libraries/$libraryId/reader-settings/$workId/$deviceKey/$readerKind',
+      ),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'PUT',
+      body: jsonEncode({'profile': profile}),
+    );
+  }
+
+  static WorkAnnotations _annotationsFromJson(Map value, String workId) {
+    final notes = <LibraryNote>[];
+    for (final item in (value['notes'] as List? ?? const []).whereType<Map>()) {
+      if (item['id'] is! String || item['markdown'] is! String) continue;
+      notes.add(
+        LibraryNote(
+          id: item['id'] as String,
+          markdown: item['markdown'] as String,
+          createdAt:
+              DateTime.tryParse('${item['created_at'] ?? ''}') ??
+              DateTime.fromMillisecondsSinceEpoch(0),
+        ),
+      );
+    }
+    final bookmarks = <LibraryBookmark>[];
+    for (final item
+        in (value['bookmarks'] as List? ?? const []).whereType<Map>()) {
+      final id = item['id'];
+      final position = item['position'];
+      if (id is! String || position is! Map) continue;
+      try {
+        bookmarks.add(
+          LibraryBookmark(
+            id: id,
+            workId: workId,
+            fileId: item['file_id'] is String
+                ? item['file_id'] as String
+                : null,
+            mediaPosition: MediaPosition.fromJson(
+              Map<String, Object?>.from(position),
+            ),
+            label: item['label'] is String ? item['label'] as String : null,
+            note: item['note'] is String ? item['note'] as String : null,
+            createdAt:
+                DateTime.tryParse('${item['created_at'] ?? ''}') ??
+                DateTime.fromMillisecondsSinceEpoch(0),
+          ),
+        );
+      } on Object {
+        // Ignore one malformed remote bookmark.
+      }
+    }
+    final highlights = <LibraryHighlight>[];
+    for (final item
+        in (value['highlights'] as List? ?? const []).whereType<Map>()) {
+      final id = item['id'];
+      final position = item['position'];
+      final quote = item['quote'];
+      if (id is! String || position is! Map || quote is! String) continue;
+      try {
+        highlights.add(
+          LibraryHighlight(
+            id: id,
+            workId: workId,
+            fileId: item['file_id'] is String
+                ? item['file_id'] as String
+                : null,
+            mediaPosition: MediaPosition.fromJson(
+              Map<String, Object?>.from(position),
+            ),
+            quote: quote,
+            color: item['color'] is String
+                ? item['color'] as String
+                : '#FFF176',
+            note: item['note'] is String ? item['note'] as String : null,
+            createdAt:
+                DateTime.tryParse('${item['created_at'] ?? ''}') ??
+                DateTime.fromMillisecondsSinceEpoch(0),
+          ),
+        );
+      } on Object {
+        // Ignore one malformed remote highlight.
+      }
+    }
+    return WorkAnnotations(
+      tags: (value['tags'] as List? ?? const []).whereType<String>().toList(),
+      notes: notes,
+      bookmarks: bookmarks,
+      highlights: highlights,
     );
   }
 
@@ -1120,6 +1373,60 @@ final class FundusRemoteClient {
       duration: total is num
           ? Duration(milliseconds: (total * 1000).round())
           : duration,
+      mediaPosition: positionValue is Map
+          ? _mediaPosition(positionValue)
+          : null,
+      finished: value['finished'] == true,
+      revision: value['revision'] is int ? value['revision'] as int : 0,
+      deviceId: value['device_id'] is String
+          ? value['device_id'] as String
+          : null,
+      deviceName: value['device_name'] is String
+          ? value['device_name'] as String
+          : null,
+    );
+  }
+
+  Future<FundusRemoteProgress> saveMediaProgress(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    required bool finished,
+    required String deviceId,
+    required String operationId,
+  }) async {
+    final bytes = await _request(
+      server.baseUri.resolve('/v1/libraries/$libraryId/progress/$workId'),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'PUT',
+      body: jsonEncode({
+        'operation_id': operationId,
+        'device_id': deviceId,
+        'file_id': fileId,
+        'position': position.toJson(),
+        'finished': finished,
+      }),
+    );
+    final value = jsonDecode(utf8.decode(bytes));
+    if (value is! Map || value['position'] is! Map) {
+      throw const HttpException('Ungültige Fortschrittsantwort.');
+    }
+    final savedPosition = _mediaPosition(value['position'] as Map);
+    if (savedPosition == null) {
+      throw const HttpException('Ungültige Medienposition in der Antwort.');
+    }
+    final numeric = savedPosition.numericValue ?? 0;
+    final total = savedPosition.total;
+    return FundusRemoteProgress(
+      fileId: value['file_id'] is String ? value['file_id'] as String : fileId,
+      position: Duration(milliseconds: (numeric * 1000).round()),
+      duration: total == null
+          ? null
+          : Duration(milliseconds: (total * 1000).round()),
+      mediaPosition: savedPosition,
       finished: value['finished'] == true,
       revision: value['revision'] is int ? value['revision'] as int : 0,
       deviceId: value['device_id'] is String
@@ -1231,4 +1538,12 @@ final class FundusRemoteClient {
 
   static String _fingerprint(X509Certificate certificate) =>
       sha256.convert(certificate.der).toString();
+
+  static MediaPosition? _mediaPosition(Map value) {
+    try {
+      return MediaPosition.fromJson(Map<String, Object?>.from(value));
+    } on Object {
+      return null;
+    }
+  }
 }

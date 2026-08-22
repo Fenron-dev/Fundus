@@ -56,9 +56,21 @@ final class LibraryScanner {
   LibraryScanner({
     this.ignoredDirectoryNames = const {
       '.library',
+      '.chapters',
       '_fundus',
       '.staging',
       '.git',
+      '@eaDir',
+      '#recycle',
+      r'$RECYCLE.BIN',
+      '.AppleDB',
+      '.AppleDesktop',
+      '.AppleDouble',
+      '.TemporaryItems',
+      '.DocumentRevisions-V100',
+      '.Spotlight-V100',
+      '.Trashes',
+      '.fseventsd',
     },
     this.ignoredFileNames = const {'.DS_Store', 'Thumbs.db'},
   });
@@ -89,6 +101,8 @@ final class LibraryScanner {
     }
 
     final pending = <Directory>[root.absolute];
+    final visitedDirectories = <String>{};
+    final visitedFiles = <String>{};
     while (pending.isNotEmpty) {
       if (cancellationToken?.isCancelled ?? false) {
         yield ScanEvent(kind: ScanEventKind.cancelled, visitedFiles: visited);
@@ -96,6 +110,8 @@ final class LibraryScanner {
       }
 
       final directory = pending.removeLast();
+      final directoryPath = p.normalize(directory.absolute.path);
+      if (!visitedDirectories.add(directoryPath)) continue;
       try {
         await for (final entity in directory.list(followLinks: false)) {
           if (cancellationToken?.isCancelled ?? false) {
@@ -107,12 +123,15 @@ final class LibraryScanner {
           }
           final name = p.basename(entity.path);
           if (entity is Directory) {
-            if (!ignoredDirectoryNames.contains(name)) pending.add(entity);
+            if (!_isIgnoredDirectory(name)) pending.add(entity);
             continue;
           }
-          if (entity is! File || ignoredFileNames.contains(name)) continue;
+          if (entity is! File ||
+              ignoredFileNames.contains(name) ||
+              name.startsWith('._')) {
+            continue;
+          }
 
-          visited++;
           try {
             final stat = await entity.stat();
             final extension = p
@@ -128,12 +147,17 @@ final class LibraryScanner {
               );
               continue;
             }
+            final portableRelative = p.posix.joinAll(p.split(relative));
+            // SMB providers can return an entry more than once while
+            // generated files are changing during a scan.
+            if (!visitedFiles.add(portableRelative)) continue;
+            visited++;
             yield ScanEvent(
               kind: ScanEventKind.file,
               visitedFiles: visited,
               file: ScannedFile(
                 absolutePath: entity.absolute.path,
-                relativePath: p.posix.joinAll(p.split(relative)),
+                relativePath: portableRelative,
                 filename: name,
                 extension: extension,
                 size: stat.size,
@@ -166,6 +190,14 @@ final class LibraryScanner {
     }
 
     yield ScanEvent(kind: ScanEventKind.completed, visitedFiles: visited);
+  }
+
+  bool _isIgnoredDirectory(String name) {
+    final normalized = name.toLowerCase();
+    if (normalized.startsWith('.trash-')) return true;
+    return ignoredDirectoryNames.any(
+      (ignored) => ignored.toLowerCase() == normalized,
+    );
   }
 }
 

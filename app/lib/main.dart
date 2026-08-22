@@ -14,10 +14,15 @@ import 'library/android_storage_access.dart';
 import 'library/comic_book_viewer.dart';
 import 'library/document_file_opener.dart';
 import 'library/document_preview.dart';
+import 'library/epub_reader.dart';
+import 'library/publication_reader_settings.dart';
+import 'library/reader_progress_conflict.dart';
 import 'library/recent_library_store.dart';
+import 'library/reflow_text_reader.dart';
 import 'library/security_scoped_bookmarks.dart';
 import 'library/zip_archive_browser.dart';
 import 'playback/fundus_player_controller.dart';
+import 'playback/track_jump_confirmation.dart';
 import 'playback/playback_conflict_settings.dart';
 import 'playback/playlist_session_conflict.dart';
 import 'playback/playback_sleep_timer_button.dart';
@@ -29,6 +34,8 @@ import 'server/fundus_remote_client.dart';
 import 'server/remote_servers_view.dart';
 import 'server/server_settings.dart';
 
+const _favoriteTag = 'Favorit';
+
 typedef WorkPlaybackCallback =
     Future<void> Function(
       LibraryWorkSummary work, {
@@ -39,6 +46,9 @@ typedef PlaylistPlaybackCallback = Future<void> Function(String playlistId);
 typedef MissingWorkDeleteCallback =
     Future<void> Function(LibraryWorkSummary work);
 typedef WorkMetadataChangedCallback = void Function(LibraryWorkSummary work);
+typedef OfflineWorkOpenCallback = void Function(FundusOfflineWork work);
+
+const _publicationFormats = PublicationFormatRegistry();
 
 final class _RemoteLibraryChoice {
   const _RemoteLibraryChoice({
@@ -72,6 +82,47 @@ String _displayLanguage(String? language) {
   };
 }
 
+String _offlineSummaryId(FundusOfflineWork work) =>
+    'offline:${work.serverId}/${work.libraryId}/${work.workId}';
+
+LibraryWorkSummary _offlineLibrarySummary(FundusOfflineWork work) {
+  final progress = work.progress;
+  final progressTrackIndex = progress?.fileId == null
+      ? null
+      : work.tracks.indexWhere((track) => track.id == progress!.fileId);
+  return LibraryWorkSummary(
+    id: _offlineSummaryId(work),
+    kind: work.kind,
+    title: work.title,
+    author: work.authors.firstOrNull ?? 'Unbekannt',
+    authors: work.authors,
+    fileCount: work.tracks.length,
+    addedAt: work.downloadedAt,
+    series: work.series,
+    seriesSequence: work.seriesSequence?.toDouble(),
+    coverPath: work.coverPath,
+    language: work.language,
+    subtitle: work.subtitle,
+    description: work.description,
+    narrators: work.narrators,
+    publisher: work.publisher,
+    publishedYear: work.publishedYear,
+    progressPosition: progress?.position,
+    progressDuration: progress?.duration,
+    mediaProgress: progress?.mediaPosition,
+    progressTrackIndex: progressTrackIndex != null && progressTrackIndex >= 0
+        ? progressTrackIndex
+        : null,
+    progressFinished: progress?.finished ?? false,
+    lastListenedAt: progress?.updatedAt,
+    status: work.incomplete ? 'incomplete' : 'available',
+    tags: work.tags,
+    offline: true,
+    sourceServerName: work.sourceServerName ?? work.serverId,
+    sourceLibraryName: work.sourceLibraryName ?? work.libraryId,
+  );
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
@@ -103,7 +154,8 @@ class _FundusAppState extends State<FundusApp> {
   late final Future<void> _recentStoreReady;
   final _remoteStore = FundusRemoteServerStore();
   final _remoteClient = const FundusRemoteClient();
-  FundusOfflineStore _offlineStore = FundusOfflineStore();
+  final _deviceOfflineStore = FundusOfflineStore();
+  late FundusOfflineStore _offlineStore;
   final _peerDiscovery = FundusPeerDiscovery();
   late final FundusPeerServerController _peerServer;
   List<RecentLibraryEntry> _recentLibraries = const [];
@@ -115,6 +167,7 @@ class _FundusAppState extends State<FundusApp> {
   @override
   void initState() {
     super.initState();
+    _offlineStore = _deviceOfflineStore;
     _peerServer = FundusPeerServerController();
     _recentStoreReady = _initializeRecentStore();
     _works = widget.initialWorks;
@@ -200,6 +253,7 @@ class _FundusAppState extends State<FundusApp> {
               offlineStore: _offlineStore,
               offlineWorks: _offlineWorks,
               onOpenDownloads: _openOfflineMedia,
+              onOpenOfflineWork: _openOfflineWork,
             ),
     );
   }
@@ -324,12 +378,17 @@ class _FundusAppState extends State<FundusApp> {
       await _stopPlayer();
       _library?.close();
       _library = library;
-      _offlineStore = FundusOfflineStore.forLibrary(library.root);
+      _offlineStore = FundusOfflineStore.forLibrary(
+        library.root,
+        fallbacks: [_deviceOfflineStore],
+      );
+      final adoptedDownloads = await _offlineStore.adoptFallbackDownloads();
       _offlineWorks = await _offlineStore.listAll();
       await FundusDiagnostics.instance.configure(library.root);
       await FundusDiagnostics.instance.record('library.opened', {
         'library_id': library.manifest.libraryId,
         'create': create,
+        'adopted_downloads': adoptedDownloads,
       });
       _works = library.listWorks(includeMissing: true);
       await _recentStoreReady;
@@ -388,6 +447,19 @@ class _FundusAppState extends State<FundusApp> {
       entries = resolved;
     }
     _recentLibraries = entries;
+    if (_library == null) {
+      final portableRoot = entries
+          .where((entry) => entry.available)
+          .map((entry) => Directory(entry.path))
+          .firstOrNull;
+      _offlineStore = portableRoot == null
+          ? _deviceOfflineStore
+          : FundusOfflineStore.forLibrary(
+              portableRoot,
+              fallbacks: [_deviceOfflineStore],
+            );
+      _offlineWorks = await _offlineStore.listAll();
+    }
     await _syncPeerSources();
     if (mounted) setState(() {});
   }
@@ -396,9 +468,11 @@ class _FundusAppState extends State<FundusApp> {
     if (_loadingRemoteLibraries) return;
     _loadingRemoteLibraries = true;
     try {
+      await _recentStoreReady;
       var servers = await _remoteStore.load();
       var references = await _remoteStore.loadLibraryReferences();
-      final offline = await _offlineStore.listAll();
+      var offline = await _offlineStore.listAll();
+      offline = await _resolveOfflineSourceLabels(offline, servers, references);
       final reachable = <String>{};
       if (mounted) {
         setState(() {
@@ -427,6 +501,7 @@ class _FundusAppState extends State<FundusApp> {
           }(),
       ]);
       references = await _remoteStore.loadLibraryReferences();
+      offline = await _resolveOfflineSourceLabels(offline, servers, references);
       if (!mounted) return;
       setState(() {
         _offlineWorks = offline;
@@ -442,6 +517,35 @@ class _FundusAppState extends State<FundusApp> {
     } finally {
       _loadingRemoteLibraries = false;
     }
+  }
+
+  Future<List<FundusOfflineWork>> _resolveOfflineSourceLabels(
+    List<FundusOfflineWork> works,
+    List<FundusRemoteServer> servers,
+    List<FundusRemoteLibraryReference> references,
+  ) async {
+    final serversById = {for (final server in servers) server.id: server};
+    final librariesByKey = {
+      for (final library in references)
+        '${library.serverId}\u0000${library.libraryId}': library,
+    };
+    return Future.wait([
+      for (final work in works)
+        () async {
+          final server = serversById[work.serverId];
+          final library =
+              librariesByKey['${work.serverId}\u0000${work.libraryId}'];
+          if (server == null || library == null) return work;
+          return await _offlineStore.updateSourceLabels(
+                serverId: work.serverId,
+                libraryId: work.libraryId,
+                workId: work.workId,
+                serverName: server.name,
+                libraryName: library.name,
+              ) ??
+              work;
+        }(),
+    ]);
   }
 
   static List<_RemoteLibraryChoice> _remoteChoices(
@@ -485,17 +589,30 @@ class _FundusAppState extends State<FundusApp> {
       final server = byId[pending.serverId];
       if (server == null) continue;
       try {
-        await _remoteClient.saveProgress(
-          server,
-          libraryId: pending.libraryId,
-          workId: pending.workId,
-          fileId: pending.fileId,
-          position: pending.position,
-          duration: null,
-          finished: pending.finished,
-          deviceId: deviceId,
-          operationId: pending.operationId,
-        );
+        if (pending.mediaPosition case final mediaPosition?) {
+          await _remoteClient.saveMediaProgress(
+            server,
+            libraryId: pending.libraryId,
+            workId: pending.workId,
+            fileId: pending.fileId,
+            position: mediaPosition,
+            finished: pending.finished,
+            deviceId: deviceId,
+            operationId: pending.operationId,
+          );
+        } else {
+          await _remoteClient.saveProgress(
+            server,
+            libraryId: pending.libraryId,
+            workId: pending.workId,
+            fileId: pending.fileId,
+            position: pending.position,
+            duration: null,
+            finished: pending.finished,
+            deviceId: deviceId,
+            operationId: pending.operationId,
+          );
+        }
         await _offlineStore.markProgressSynced(pending);
       } catch (_) {
         // Bleibt bis zum nächsten App-/Netzwerkstart in der lokalen Queue.
@@ -523,6 +640,19 @@ class _FundusAppState extends State<FundusApp> {
       dialogContext,
       peerServer: _peerServer,
       offlineStore: _offlineStore,
+    );
+    await _loadRemoteLibraries();
+  }
+
+  Future<void> _openOfflineWork(FundusOfflineWork work) async {
+    final dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null) return;
+    await showFundusRemoteServers(
+      dialogContext,
+      peerServer: _peerServer,
+      offlineStore: _offlineStore,
+      initialOfflineWork: work,
+      closeAfterInitialOfflineWork: true,
     );
     await _loadRemoteLibraries();
   }
@@ -556,9 +686,19 @@ class _FundusAppState extends State<FundusApp> {
     });
     try {
       await FundusDiagnostics.instance.record('library.scan_started');
+      var lastProgressMilestone = 0;
       await for (final event in library.index()) {
         if (!mounted) return;
         setState(() => _indexEvent = event);
+        final milestone = event.fileCount ~/ 1000;
+        if (event.phase == LibraryIndexPhase.scanning &&
+            milestone > lastProgressMilestone) {
+          lastProgressMilestone = milestone;
+          await FundusDiagnostics.instance.record('library.scan_progress', {
+            'file_count': event.fileCount,
+            'relative_path': event.currentPath,
+          });
+        }
       }
       await _generateDocumentCovers(library);
       if (mounted) {
@@ -568,6 +708,8 @@ class _FundusAppState extends State<FundusApp> {
       await FundusDiagnostics.instance.record('library.scan_completed', {
         'work_count': library.listWorks().length,
         'file_count': _indexEvent?.fileCount,
+        'root_counts': _indexEvent?.rootCounts,
+        'extension_counts': _indexEvent?.extensionCounts,
       });
     } catch (error) {
       await FundusDiagnostics.instance.record('library.scan_failed', {
@@ -1072,6 +1214,7 @@ class LibraryShell extends StatefulWidget {
     this.offlineStore,
     this.offlineWorks = const [],
     this.onOpenDownloads,
+    this.onOpenOfflineWork,
   });
 
   final List<LibraryWorkSummary> works;
@@ -1093,6 +1236,7 @@ class LibraryShell extends StatefulWidget {
   final FundusOfflineStore? offlineStore;
   final List<FundusOfflineWork> offlineWorks;
   final VoidCallback? onOpenDownloads;
+  final OfflineWorkOpenCallback? onOpenOfflineWork;
 
   @override
   State<LibraryShell> createState() => _LibraryShellState();
@@ -1135,8 +1279,17 @@ class _LibraryShellState extends State<LibraryShell> {
     super.dispose();
   }
 
+  Map<String, FundusOfflineWork> get _offlineBySummaryId => {
+    for (final work in widget.offlineWorks) _offlineSummaryId(work): work,
+  };
+
+  List<LibraryWorkSummary> get _allWorks => [
+    ...widget.works,
+    for (final work in widget.offlineWorks) _offlineLibrarySummary(work),
+  ];
+
   List<LibraryWorkSummary> get _visibleWorks {
-    final works = LibraryWorkSearch.apply(widget.works, _query);
+    final works = LibraryWorkSearch.apply(_allWorks, _query);
     final kinds = _section.workKinds;
     return kinds == null
         ? works
@@ -1200,9 +1353,14 @@ class _LibraryShellState extends State<LibraryShell> {
 
   Widget _desktop(BuildContext context) {
     final works = _displayedWorks;
-    final selected = _showingGroups || works.isEmpty
+    final selectedCandidate = _showingGroups || works.isEmpty
         ? null
         : works[_selectedIndex.clamp(0, works.length - 1)];
+    final selected =
+        selectedCandidate != null &&
+            !_offlineBySummaryId.containsKey(selectedCandidate.id)
+        ? selectedCandidate
+        : null;
     return Scaffold(
       bottomNavigationBar: widget.player == null || _playerExpanded
           ? null
@@ -1387,63 +1545,26 @@ class _LibraryShellState extends State<LibraryShell> {
 
   Widget _mobile(BuildContext context) {
     final pages = [
+      _mobileDashboard(context),
       _library(context, detailAsDialog: true),
       _library(context, detailAsDialog: true, showSearch: true),
-      _playlists(context),
-      widget.offlineWorks.isEmpty
-          ? const Center(child: Text('Noch keine Offline-Downloads.'))
-          : ListView(
-              padding: const EdgeInsets.all(12),
-              children: [
-                for (final offline in widget.offlineWorks)
-                  Card(
-                    child: ListTile(
-                      leading: offline.coverPath == null
-                          ? const Icon(Icons.download_done)
-                          : ClipRRect(
-                              borderRadius: BorderRadius.circular(4),
-                              child: Image.file(
-                                File(offline.coverPath!),
-                                width: 42,
-                                height: 52,
-                                fit: BoxFit.cover,
-                              ),
-                            ),
-                      title: Text(offline.title),
-                      subtitle: const Text('Offline verfügbar'),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: widget.onOpenDownloads,
-                    ),
-                  ),
-              ],
-            ),
       ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const Text('Medienbereiche', style: TextStyle(fontSize: 18)),
+          const Text('Fundus', style: TextStyle(fontSize: 18)),
           const SizedBox(height: 8),
           ListTile(
-            leading: const Icon(Icons.headphones_outlined),
-            title: const Text('Hörbücher & Hörspiele'),
+            leading: const Icon(Icons.queue_music_outlined),
+            title: const Text('Playlists'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => setState(() {
-              _section = _LibrarySection.library;
-              _mobileDestination = 0;
-            }),
+            onTap: () => _openMobileSubpage('Playlists', _playlists(context)),
           ),
-          for (final section in _LibrarySection.values.where(
-            (section) => section.isDocumentSection,
-          ))
-            ListTile(
-              leading: Icon(section.icon),
-              title: Text(section.label),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => setState(() {
-                _section = section;
-                _grouping = _LibraryGrouping.books;
-                _mobileDestination = 0;
-              }),
-            ),
+          ListTile(
+            leading: const Icon(Icons.download_outlined),
+            title: const Text('Downloads'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _openMobileSubpage('Downloads', _mobileDownloads()),
+          ),
           const Divider(height: 32),
           FilledButton.icon(
             onPressed: widget.peerServer == null
@@ -1461,11 +1582,11 @@ class _LibraryShellState extends State<LibraryShell> {
           _playerExpanded
               ? widget.player?.work?.title ?? 'Player'
               : _mobileDestination == 2
-              ? 'Playlists'
+              ? 'Suche'
               : _mobileDestination == 3
-              ? 'Downloads'
-              : _mobileDestination == 4
               ? 'Mehr'
+              : _mobileDestination == 0
+              ? 'Übersicht'
               : _browserTitle,
         ),
         actions: [
@@ -1516,20 +1637,17 @@ class _LibraryShellState extends State<LibraryShell> {
                       setState(() => _mobileDestination = value),
                   destinations: const [
                     NavigationDestination(
+                      icon: Icon(Icons.home_outlined),
+                      selectedIcon: Icon(Icons.home),
+                      label: 'Home',
+                    ),
+                    NavigationDestination(
                       icon: Icon(Icons.library_books_outlined),
                       label: 'Bibliothek',
                     ),
                     NavigationDestination(
                       icon: Icon(Icons.search),
                       label: 'Suche',
-                    ),
-                    NavigationDestination(
-                      icon: Icon(Icons.queue_music_outlined),
-                      label: 'Playlists',
-                    ),
-                    NavigationDestination(
-                      icon: Icon(Icons.download_outlined),
-                      label: 'Downloads',
                     ),
                     NavigationDestination(
                       icon: Icon(Icons.more_horiz),
@@ -1541,6 +1659,168 @@ class _LibraryShellState extends State<LibraryShell> {
             ),
     );
   }
+
+  Widget _mobileDashboard(BuildContext context) {
+    final available = _allWorks.where((work) => work.available).toList();
+    final continuing =
+        available
+            .where(
+              (work) =>
+                  !work.progressFinished &&
+                  (work.mediaProgress != null ||
+                      (work.progressPosition ?? Duration.zero) > Duration.zero),
+            )
+            .toList()
+          ..sort(
+            (left, right) =>
+                (right.lastListenedAt ?? DateTime.fromMillisecondsSinceEpoch(0))
+                    .compareTo(
+                      left.lastListenedAt ??
+                          DateTime.fromMillisecondsSinceEpoch(0),
+                    ),
+          );
+    if (continuing.length > 8) continuing.removeRange(8, continuing.length);
+    final recent = available.toList()
+      ..sort((left, right) => right.addedAt.compareTo(left.addedAt));
+    final sections = <_LibrarySection>[
+      _LibrarySection.library,
+      ..._LibrarySection.values.where((section) => section.isDocumentSection),
+    ];
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+      children: [
+        Text(
+          'Willkommen zurück',
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        if (continuing.isNotEmpty) ...[
+          const SizedBox(height: 22),
+          Text('Fortsetzen', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 210,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: continuing.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 12),
+              itemBuilder: (context, index) => _MobileDashboardCard(
+                work: continuing[index],
+                width: 142,
+                onTap: () => _openDashboardWork(continuing[index]),
+              ),
+            ),
+          ),
+        ],
+        const SizedBox(height: 22),
+        Text(
+          'Zuletzt hinzugefügt',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 190,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: recent.take(10).length,
+            separatorBuilder: (_, _) => const SizedBox(width: 10),
+            itemBuilder: (context, index) => _MobileDashboardCard(
+              work: recent[index],
+              width: 118,
+              onTap: () => _openDashboardWork(recent[index]),
+            ),
+          ),
+        ),
+        const SizedBox(height: 22),
+        Text('Medientypen', style: Theme.of(context).textTheme.titleLarge),
+        const SizedBox(height: 10),
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          childAspectRatio: 1.65,
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          children: [
+            for (final section in sections)
+              Card(
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => setState(() {
+                    _section = section;
+                    if (section.isDocumentSection) {
+                      _grouping = _LibraryGrouping.books;
+                    }
+                    _mobileDestination = 1;
+                  }),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        Icon(section.icon, size: 30),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            section.label,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  void _openDashboardWork(LibraryWorkSummary work) {
+    final offline = _offlineBySummaryId[work.id];
+    if (offline != null) {
+      widget.onOpenOfflineWork?.call(offline);
+      return;
+    }
+    _openWorkDetails(work);
+  }
+
+  Widget _mobileDownloads() => widget.offlineWorks.isEmpty
+      ? const Center(child: Text('Noch keine Offline-Downloads.'))
+      : ListView(
+          padding: const EdgeInsets.all(12),
+          children: [
+            for (final offline in widget.offlineWorks)
+              Card(
+                child: ListTile(
+                  leading: offline.coverPath == null
+                      ? const Icon(Icons.download_done)
+                      : Image.file(
+                          File(offline.coverPath!),
+                          width: 42,
+                          height: 52,
+                          fit: BoxFit.cover,
+                        ),
+                  title: Text(offline.title),
+                  subtitle: Text(
+                    '${offline.sourceServerName ?? offline.serverId} · '
+                    '${offline.sourceLibraryName ?? offline.libraryId}',
+                  ),
+                  onTap: () => widget.onOpenOfflineWork?.call(offline),
+                ),
+              ),
+          ],
+        );
+
+  Future<void> _openMobileSubpage(String title, Widget child) =>
+      Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (context) => Scaffold(
+            appBar: AppBar(title: Text(title)),
+            body: SafeArea(child: child),
+          ),
+        ),
+      );
 
   static const _playlistMediaTypes = {
     'audiobook': 'Hörbücher & Hörspiele',
@@ -1947,12 +2227,7 @@ class _LibraryShellState extends State<LibraryShell> {
                       work: work,
                       player: widget.player,
                       selected: !detailAsDialog && index == _selectedIndex,
-                      onTap: () {
-                        setState(() => _selectedIndex = index);
-                        if (detailAsDialog || !_detailPaneVisible) {
-                          _openWorkDetails(work);
-                        }
-                      },
+                      onTap: () => _selectWork(work, index, detailAsDialog),
                     );
                   },
                 )
@@ -1996,113 +2271,133 @@ class _LibraryShellState extends State<LibraryShell> {
     ],
   );
 
-  Widget _libraryControls() => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      _AdvancedFilterButton(
-        query: _query,
-        works: widget.works,
-        onChanged: (query) => setState(() {
-          _query = query;
-          _selectedIndex = 0;
-        }),
-      ),
-      const SizedBox(width: 4),
-      MenuAnchor(
-        builder: (context, controller, child) => IconButton(
-          onPressed: controller.isOpen ? controller.close : controller.open,
-          tooltip: 'Gespeicherte Ansichten',
-          icon: const Icon(Icons.bookmarks_outlined),
+  Widget _libraryControls() {
+    final mobile = MediaQuery.sizeOf(context).width < 760;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _AdvancedFilterButton(
+          query: _query,
+          works: _allWorks,
+          onChanged: (query) => setState(() {
+            _query = query;
+            _selectedIndex = 0;
+          }),
         ),
-        menuChildren: [
-          MenuItemButton(
-            onPressed: widget.library?.isReadOnly == false
-                ? _saveCurrentView
-                : null,
-            leadingIcon: const Icon(Icons.bookmark_add_outlined),
-            child: const Text('Aktuelle Ansicht speichern'),
+        IconButton(
+          onPressed: () => setState(() {
+            final tags = {..._query.tags};
+            tags.contains(_favoriteTag)
+                ? tags.remove(_favoriteTag)
+                : tags.add(_favoriteTag);
+            _query = _query.copyWith(tags: tags);
+            _selectedIndex = 0;
+          }),
+          tooltip: _query.tags.contains(_favoriteTag)
+              ? 'Alle Titel anzeigen'
+              : 'Nur Favoriten',
+          icon: Icon(
+            _query.tags.contains(_favoriteTag) ? Icons.star : Icons.star_border,
           ),
-          if (_savedViews.isNotEmpty) const Divider(),
-          for (final view in _savedViews)
+        ),
+        const SizedBox(width: 4),
+        MenuAnchor(
+          builder: (context, controller, child) => IconButton(
+            onPressed: controller.isOpen ? controller.close : controller.open,
+            tooltip: 'Gespeicherte Ansichten',
+            icon: const Icon(Icons.bookmarks_outlined),
+          ),
+          menuChildren: [
             MenuItemButton(
-              onPressed: () => _applySavedView(view),
-              leadingIcon: const Icon(Icons.bookmark_outline),
-              child: Text(view.name),
+              onPressed: widget.library?.isReadOnly == false
+                  ? _saveCurrentView
+                  : null,
+              leadingIcon: const Icon(Icons.bookmark_add_outlined),
+              child: const Text('Aktuelle Ansicht speichern'),
             ),
-          if (_savedViews.isNotEmpty)
-            MenuItemButton(
-              onPressed: _manageSavedViews,
-              leadingIcon: const Icon(Icons.edit_outlined),
-              child: const Text('Ansichten verwalten'),
+            if (_savedViews.isNotEmpty) const Divider(),
+            for (final view in _savedViews)
+              MenuItemButton(
+                onPressed: () => _applySavedView(view),
+                leadingIcon: const Icon(Icons.bookmark_outline),
+                child: Text(view.name),
+              ),
+            if (_savedViews.isNotEmpty)
+              MenuItemButton(
+                onPressed: _manageSavedViews,
+                leadingIcon: const Icon(Icons.edit_outlined),
+                child: const Text('Ansichten verwalten'),
+              ),
+          ],
+        ),
+        if (_section == _LibrarySection.library)
+          PopupMenuButton<_LibraryGrouping>(
+            tooltip: 'Gliederung wählen',
+            initialValue: _grouping,
+            onSelected: _setGrouping,
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: _LibraryGrouping.books,
+                child: Text('Nach Büchern'),
+              ),
+              PopupMenuItem(
+                value: _LibraryGrouping.authors,
+                child: Text('Nach Autoren'),
+              ),
+              PopupMenuItem(
+                value: _LibraryGrouping.series,
+                child: Text('Nach Serien'),
+              ),
+              PopupMenuItem(
+                value: _LibraryGrouping.narrators,
+                child: Text('Nach Sprechern'),
+              ),
+            ],
+            child: Chip(
+              avatar: const Icon(Icons.account_tree_outlined, size: 18),
+              label: Text(_groupingLabel),
             ),
-        ],
-      ),
-      if (_section == _LibrarySection.library)
-        PopupMenuButton<_LibraryGrouping>(
-          tooltip: 'Gliederung wählen',
-          initialValue: _grouping,
-          onSelected: _setGrouping,
-          itemBuilder: (context) => const [
-            PopupMenuItem(
-              value: _LibraryGrouping.books,
-              child: Text('Nach Büchern'),
+          ),
+        if (_section == _LibrarySection.library) const SizedBox(width: 8),
+        SegmentedButton<_LibraryLayout>(
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(
+              value: _LibraryLayout.grid,
+              icon: Icon(Icons.grid_view),
+              tooltip: 'Kacheln',
             ),
-            PopupMenuItem(
-              value: _LibraryGrouping.authors,
-              child: Text('Nach Autoren'),
-            ),
-            PopupMenuItem(
-              value: _LibraryGrouping.series,
-              child: Text('Nach Serien'),
-            ),
-            PopupMenuItem(
-              value: _LibraryGrouping.narrators,
-              child: Text('Nach Sprechern'),
+            ButtonSegment(
+              value: _LibraryLayout.table,
+              icon: Icon(Icons.table_rows_outlined),
+              tooltip: 'Tabelle',
             ),
           ],
-          child: Chip(
-            avatar: const Icon(Icons.account_tree_outlined, size: 18),
-            label: Text(_groupingLabel),
-          ),
+          selected: {_layout},
+          onSelectionChanged: (value) => setState(() => _layout = value.single),
         ),
-      if (_section == _LibrarySection.library) const SizedBox(width: 8),
-      SegmentedButton<_LibraryLayout>(
-        showSelectedIcon: false,
-        segments: const [
-          ButtonSegment(
-            value: _LibraryLayout.grid,
-            icon: Icon(Icons.grid_view),
-            tooltip: 'Kacheln',
-          ),
-          ButtonSegment(
-            value: _LibraryLayout.table,
-            icon: Icon(Icons.table_rows_outlined),
-            tooltip: 'Tabelle',
-          ),
-        ],
-        selected: {_layout},
-        onSelectionChanged: (value) => setState(() => _layout = value.single),
-      ),
-      const SizedBox(width: 8),
-      MenuAnchor(
-        builder: (context, controller, child) => OutlinedButton.icon(
-          onPressed: controller.isOpen ? controller.close : controller.open,
-          icon: const Icon(Icons.sort, size: 18),
-          label: Text(_sortLabel(_query.sort)),
-        ),
-        menuChildren: [
-          for (final sort in LibraryWorkSort.values)
-            MenuItemButton(
-              onPressed: () => _setSort(sort),
-              leadingIcon: _query.sort == sort
-                  ? const Icon(Icons.check)
-                  : const SizedBox(width: 24),
-              child: Text(_sortLabel(sort)),
+        if (!mobile) const SizedBox(width: 8),
+        if (!mobile)
+          MenuAnchor(
+            builder: (context, controller, child) => OutlinedButton.icon(
+              onPressed: controller.isOpen ? controller.close : controller.open,
+              icon: const Icon(Icons.sort, size: 18),
+              label: Text(_sortLabel(_query.sort)),
             ),
-        ],
-      ),
-    ],
-  );
+            menuChildren: [
+              for (final sort in LibraryWorkSort.values)
+                MenuItemButton(
+                  onPressed: () => _setSort(sort),
+                  leadingIcon: _query.sort == sort
+                      ? const Icon(Icons.check)
+                      : const SizedBox(width: 24),
+                  child: Text(_sortLabel(sort)),
+                ),
+            ],
+          ),
+      ],
+    );
+  }
 
   String get _browserTitle {
     if (_selectedSeries != null) {
@@ -2319,7 +2614,25 @@ class _LibraryShellState extends State<LibraryShell> {
                       ),
                       DataCell(Text(works[index].title)),
                       DataCell(
-                        works[index].available
+                        works[index].offline
+                            ? Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    works[index].available
+                                        ? Icons.download_done
+                                        : Icons.warning_amber_rounded,
+                                    size: 18,
+                                  ),
+                                  const SizedBox(width: 5),
+                                  Text(
+                                    works[index].available
+                                        ? 'Offline'
+                                        : 'Offline unvollständig',
+                                  ),
+                                ],
+                              )
+                            : works[index].available
                             ? const Text('Verfügbar')
                             : const Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -2357,6 +2670,11 @@ class _LibraryShellState extends State<LibraryShell> {
   }
 
   void _selectWork(LibraryWorkSummary work, int index, bool detailAsDialog) {
+    final offline = _offlineBySummaryId[work.id];
+    if (offline != null) {
+      widget.onOpenOfflineWork?.call(offline);
+      return;
+    }
     setState(() => _selectedIndex = index);
     if (!detailAsDialog && _detailPaneVisible) return;
     _openWorkDetails(work);
@@ -2843,6 +3161,7 @@ class _AdvancedFilterButton extends StatelessWidget {
     var tags = {...query.tags};
     var progress = query.progress;
     var offlineOnly = query.offlineOnly;
+    var sort = query.sort;
     final result = await showDialog<LibraryWorkQuery>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -2907,6 +3226,22 @@ class _AdvancedFilterButton extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    DropdownButtonFormField<LibraryWorkSort>(
+                      initialValue: sort,
+                      decoration: const InputDecoration(
+                        labelText: 'Sortierung',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        for (final value in LibraryWorkSort.values)
+                          DropdownMenuItem(
+                            value: value,
+                            child: Text(_LibraryShellState._sortLabel(value)),
+                          ),
+                      ],
+                      onChanged: (value) => setState(() => sort = value!),
+                    ),
+                    const SizedBox(height: 12),
                     DropdownButtonFormField<LibraryProgressFilter>(
                       initialValue: progress,
                       decoration: const InputDecoration(
@@ -2962,6 +3297,7 @@ class _AdvancedFilterButton extends StatelessWidget {
                 onPressed: () => Navigator.pop(
                   context,
                   query.copyWith(
+                    sort: LibraryWorkSort.relevance,
                     kinds: {},
                     progress: LibraryProgressFilter.any,
                     offlineOnly: false,
@@ -2982,6 +3318,7 @@ class _AdvancedFilterButton extends StatelessWidget {
                 onPressed: () => Navigator.pop(
                   context,
                   query.copyWith(
+                    sort: sort,
                     kinds: kinds,
                     progress: progress,
                     offlineOnly: offlineOnly,
@@ -3233,7 +3570,7 @@ class _WorkCard extends StatelessWidget {
                               label: Text('Band ${_formatSequence(sequence)}'),
                             ),
                           ),
-                        if (!work.available)
+                        if (!work.available && !work.offline)
                           Positioned(
                             right: 8,
                             top: 8,
@@ -3245,6 +3582,22 @@ class _WorkCard extends StatelessWidget {
                                 horizontal: 8,
                               ),
                               label: const Text('Fehlend'),
+                            ),
+                          ),
+                        if (work.offline)
+                          Positioned(
+                            right: 8,
+                            top: work.available ? 8 : 42,
+                            child: Badge(
+                              backgroundColor: scheme.tertiaryContainer,
+                              textColor: scheme.onTertiaryContainer,
+                              largeSize: 28,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
+                              label: Text(
+                                work.available ? 'Offline' : 'Unvollständig',
+                              ),
                             ),
                           ),
                       ],
@@ -3262,6 +3615,14 @@ class _WorkCard extends StatelessWidget {
                             '${work.seriesSequence == null ? '' : ' · Band ${_formatSequence(work.seriesSequence!)}'}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
+                if (work.offline)
+                  Text(
+                    '${work.sourceServerName ?? 'Unbekannter Server'} · '
+                    '${work.sourceLibraryName ?? 'Unbekannte Bibliothek'}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
               ],
             ),
           ),
@@ -3465,6 +3826,72 @@ class _DocumentHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final mobile = MediaQuery.sizeOf(context).width < 600;
+    final cover = GestureDetector(
+      onTap: () => showDialog<void>(
+        context: context,
+        builder: (dialogContext) => Dialog(
+          clipBehavior: Clip.antiAlias,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520, maxHeight: 720),
+            child: AspectRatio(
+              aspectRatio: 2 / 3,
+              child: _WorkCover(work: work, iconSize: 84),
+            ),
+          ),
+        ),
+      ),
+      child: SizedBox(
+        width: mobile ? 156 : 112,
+        height: mobile ? 220 : 112,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: _WorkCover(work: work, iconSize: 58),
+        ),
+      ),
+    );
+    final details = Column(
+      crossAxisAlignment: mobile
+          ? CrossAxisAlignment.center
+          : CrossAxisAlignment.start,
+      children: [
+        Text(
+          work.title,
+          textAlign: mobile ? TextAlign.center : TextAlign.start,
+          style: Theme.of(context).textTheme.headlineMedium,
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          alignment: mobile ? WrapAlignment.center : WrapAlignment.start,
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            Chip(
+              avatar: Icon(_workKindIcon(work.kind), size: 18),
+              label: Text(_workKindLabel(work.kind)),
+            ),
+            Chip(label: Text('${work.fileCount} Datei(en)')),
+            if (!work.available) const Chip(label: Text('Dateien fehlen')),
+          ],
+        ),
+        if (directoryPath case final path?) ...[
+          const SizedBox(height: 18),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.folder_outlined, size: 18),
+              const SizedBox(width: 7),
+              Expanded(
+                child: SelectableText(
+                  path,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
@@ -3480,70 +3907,69 @@ class _DocumentHero extends StatelessWidget {
       ),
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox.square(
-              dimension: 112,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: _WorkCover(work: work, iconSize: 58),
-              ),
-            ),
-            const SizedBox(width: 24),
-            Expanded(
-              child: Column(
+        child: mobile
+            ? Column(children: [cover, const SizedBox(height: 18), details])
+            : Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    work.title,
-                    style: Theme.of(context).textTheme.headlineMedium,
-                  ),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      Chip(
-                        avatar: Icon(_workKindIcon(work.kind), size: 18),
-                        label: Text(_workKindLabel(work.kind)),
-                      ),
-                      Chip(label: Text('${work.fileCount} Datei(en)')),
-                      if (!work.available)
-                        const Chip(label: Text('Dateien fehlen')),
-                    ],
-                  ),
-                  if (directoryPath case final path?) ...[
-                    const SizedBox(height: 18),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Icon(Icons.folder_outlined, size: 18),
-                        const SizedBox(width: 7),
-                        Expanded(
-                          child: SelectableText(
-                            path,
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                  cover,
+                  const SizedBox(width: 24),
+                  Expanded(child: details),
                 ],
               ),
-            ),
-          ],
-        ),
       ),
     );
   }
 }
 
-class _DocumentFilesPanel extends StatelessWidget {
-  const _DocumentFilesPanel({required this.files, required this.onOpen});
+enum _DocumentFileSort { oldestFirst, newestFirst, titleAscending }
+
+class _DocumentFilesPanel extends StatefulWidget {
+  const _DocumentFilesPanel({
+    required this.files,
+    required this.onOpen,
+    this.progress,
+  });
 
   final List<LibraryPlaybackTrack> files;
   final ValueChanged<LibraryPlaybackTrack> onOpen;
+  final LibraryPlaybackProgress? progress;
+
+  @override
+  State<_DocumentFilesPanel> createState() => _DocumentFilesPanelState();
+}
+
+class _DocumentFilesPanelState extends State<_DocumentFilesPanel> {
+  _DocumentFileSort _sort = _DocumentFileSort.oldestFirst;
+
+  List<LibraryPlaybackTrack> get _files {
+    final result = widget.files.toList();
+    switch (_sort) {
+      case _DocumentFileSort.oldestFirst:
+        result.sort((left, right) => left.index.compareTo(right.index));
+      case _DocumentFileSort.newestFirst:
+        result.sort((left, right) => right.index.compareTo(left.index));
+      case _DocumentFileSort.titleAscending:
+        result.sort(
+          (left, right) =>
+              left.title.toLowerCase().compareTo(right.title.toLowerCase()),
+        );
+    }
+    return result;
+  }
+
+  DocumentChapterReadState _readState(LibraryPlaybackTrack file) {
+    final progress = widget.progress;
+    final currentIndex = widget.files.indexWhere(
+      (candidate) => candidate.fileId == progress?.fileId,
+    );
+    return documentChapterReadState(
+      chapterIndex: widget.files.indexOf(file),
+      currentChapterIndex: currentIndex,
+      workFinished: progress?.finished ?? false,
+      currentPosition: progress?.position,
+    );
+  }
 
   @override
   Widget build(BuildContext context) => Card(
@@ -3552,30 +3978,47 @@ class _DocumentFilesPanel extends StatelessWidget {
       initiallyExpanded: true,
       leading: const Icon(Icons.folder_copy_outlined),
       title: const Text('Enthaltene Dateien'),
-      subtitle: Text('${files.length} Datei(en) in diesem Werk'),
+      subtitle: Text('${widget.files.length} Datei(en) in diesem Werk'),
+      trailing: PopupMenuButton<_DocumentFileSort>(
+        tooltip: 'Dateien sortieren',
+        initialValue: _sort,
+        onSelected: (value) => setState(() => _sort = value),
+        itemBuilder: (context) => const [
+          PopupMenuItem(
+            value: _DocumentFileSort.oldestFirst,
+            child: Text('Älteste Kapitel zuerst'),
+          ),
+          PopupMenuItem(
+            value: _DocumentFileSort.newestFirst,
+            child: Text('Neueste Kapitel zuerst'),
+          ),
+          PopupMenuItem(
+            value: _DocumentFileSort.titleAscending,
+            child: Text('Name A–Z'),
+          ),
+        ],
+        icon: const Icon(Icons.sort),
+      ),
       children: [
-        for (final file in files)
+        for (final file in _files)
           ListTile(
             dense: true,
-            leading: Icon(_fileIcon(file.title)),
-            title: Text(file.title),
+            leading: documentChapterLeading(
+              context,
+              widget.files.indexOf(file) + 1,
+              _readState(file),
+            ),
+            title: Text(
+              file.title,
+              style: documentChapterTitleStyle(context, _readState(file)),
+            ),
             subtitle: Text(file.relativePath),
             trailing: const Icon(Icons.open_in_new),
-            onTap: () => onOpen(file),
+            onTap: () => widget.onOpen(file),
           ),
       ],
     ),
   );
-
-  static IconData _fileIcon(String filename) => switch (filename
-      .toLowerCase()
-      .split('.')
-      .last) {
-    'pdf' => Icons.picture_as_pdf_outlined,
-    'jpg' || 'jpeg' || 'png' || 'webp' || 'gif' => Icons.image_outlined,
-    'zip' || 'cbz' || '7z' || 'rar' || 'tar' || 'gz' => Icons.archive_outlined,
-    _ => Icons.insert_drive_file_outlined,
-  };
 }
 
 class _AudioCompatibilityPanel extends StatelessWidget {
@@ -3736,6 +4179,9 @@ class _DetailPanelState extends State<_DetailPanel> {
   bool _workIsPlaying = false;
   bool _workIsQueued = false;
   LibraryWorkSummary? _editedWork;
+  int _mobileDetailTab = 0;
+  int _mobileNotesTab = 0;
+  final Map<String, Future<EpubPublication>> _epubPublicationRequests = {};
 
   @override
   void initState() {
@@ -3827,6 +4273,15 @@ class _DetailPanelState extends State<_DetailPanel> {
     final workFiles = selectedWork.available
         ? widget.library?.playbackTracks(selectedWork.id)
         : null;
+    final mobilePlatform = Platform.isAndroid || Platform.isIOS;
+    if (selectedWork.kind != 'audiobook' &&
+        (mobilePlatform || MediaQuery.sizeOf(context).width < 760)) {
+      return _buildMobilePublicationDetail(
+        selectedWork,
+        directoryPath,
+        workFiles ?? const [],
+      );
+    }
     return ListView(
       key: const ValueKey('detail-panel-scroll'),
       padding: const EdgeInsets.all(20),
@@ -3923,7 +4378,11 @@ class _DetailPanelState extends State<_DetailPanel> {
               ),
               const SizedBox(height: 10),
             ],
-            _DocumentFilesPanel(files: workFiles, onOpen: _openDocument),
+            _DocumentFilesPanel(
+              files: workFiles,
+              progress: widget.library?.loadProgress(selectedWork.id),
+              onOpen: _openDocument,
+            ),
           ],
         ],
         if (selectedWork.kind == 'audiobook' &&
@@ -4003,8 +4462,12 @@ class _DetailPanelState extends State<_DetailPanel> {
             ListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
-              onTap: _saving ? null : () => _jumpToBookmark(bookmark),
-              leading: Text(_time(bookmark.position)),
+              onTap:
+                  _saving ||
+                      bookmark.mediaPosition.kind != MediaPositionKind.time
+                  ? null
+                  : () => _jumpToBookmark(bookmark),
+              leading: Text(bookmark.displayPosition),
               title: Text(bookmark.label ?? 'Lesezeichen'),
               subtitle: bookmark.note == null ? null : Text(bookmark.note!),
               trailing: IconButton(
@@ -4070,9 +4533,443 @@ class _DetailPanelState extends State<_DetailPanel> {
     );
   }
 
-  Future<void> _openDocument(LibraryPlaybackTrack file) async {
+  Widget _buildMobilePublicationDetail(
+    LibraryWorkSummary work,
+    String? directoryPath,
+    List<LibraryPlaybackTrack> files,
+  ) {
+    final readable = _readableDocumentFiles(files);
+    final progress = widget.library?.loadProgress(work.id);
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+          child: Column(
+            children: [
+              _DocumentHero(work: work, directoryPath: directoryPath),
+              Align(
+                alignment: Alignment.centerRight,
+                child: IconButton(
+                  onPressed: widget.library == null || _saving
+                      ? null
+                      : _toggleFavorite,
+                  tooltip: _annotations.tags.contains(_favoriteTag)
+                      ? 'Aus Favoriten entfernen'
+                      : 'Als Favorit markieren',
+                  icon: Icon(
+                    _annotations.tags.contains(_favoriteTag)
+                        ? Icons.star
+                        : Icons.star_border,
+                  ),
+                ),
+              ),
+              if (readable.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () => _openDocumentWork(work, files),
+                    icon: const Icon(Icons.menu_book_outlined),
+                    label: Text(progress == null ? 'Lesen' : 'Fortsetzen'),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SegmentedButton<int>(
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(value: 0, label: Text('Info')),
+                    ButtonSegment(value: 1, label: Text('Dateien')),
+                    ButtonSegment(value: 2, label: Text('Kapitel')),
+                    ButtonSegment(value: 3, label: Text('Notizen')),
+                    ButtonSegment(value: 4, label: Text('Ähnlich')),
+                  ],
+                  selected: {_mobileDetailTab},
+                  onSelectionChanged: (value) =>
+                      setState(() => _mobileDetailTab = value.single),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: switch (_mobileDetailTab) {
+            0 => ListView(
+              padding: const EdgeInsets.all(18),
+              children: [
+                if (work.description case final description?) ...[
+                  Text(
+                    'Zusammenfassung',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  SelectableText(description),
+                  const SizedBox(height: 20),
+                ],
+                Text('Details', style: Theme.of(context).textTheme.titleMedium),
+                if ((work.authors.isEmpty ? [work.author] : work.authors)
+                    .isNotEmpty)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.person_outline),
+                    title: const Text('Autor'),
+                    subtitle: Text(
+                      (work.authors.isEmpty ? [work.author] : work.authors)
+                          .join(', '),
+                    ),
+                  ),
+                if (work.series case final series?)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.library_books_outlined),
+                    title: const Text('Serie'),
+                    subtitle: Text(series),
+                  ),
+                if (work.language case final language?)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.language),
+                    title: const Text('Sprache'),
+                    subtitle: Text(language),
+                  ),
+                if (_annotations.tags.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final tag in _annotations.tags)
+                        Chip(label: Text('#$tag')),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+            1 =>
+              files.isEmpty
+                  ? const Center(child: Text('Keine Dateien gefunden.'))
+                  : _DocumentFilesPanel(
+                      files: files,
+                      progress: progress,
+                      onOpen: _openDocument,
+                    ),
+            2 => _publicationChapters(work, readable, progress),
+            3 => Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: SegmentedButton<int>(
+                    showSelectedIcon: false,
+                    segments: const [
+                      ButtonSegment(value: 0, label: Text('Notizen')),
+                      ButtonSegment(
+                        value: 1,
+                        label: Text('Lesezeichen & Highlights'),
+                      ),
+                    ],
+                    selected: {_mobileNotesTab},
+                    onSelectionChanged: (value) =>
+                        setState(() => _mobileNotesTab = value.single),
+                  ),
+                ),
+                Expanded(
+                  child: _mobileNotesTab == 0
+                      ? ListView(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                          children: [
+                            for (final note in _annotations.notes)
+                              Card(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: SelectableText(note.markdown),
+                                ),
+                              ),
+                            TextField(
+                              controller: _noteController,
+                              minLines: 3,
+                              maxLines: 8,
+                              decoration: const InputDecoration(
+                                hintText: 'Notiz schreiben …',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            FilledButton.icon(
+                              onPressed: widget.library == null || _saving
+                                  ? null
+                                  : _saveNote,
+                              icon: const Icon(Icons.save_outlined),
+                              label: const Text('Notiz speichern'),
+                            ),
+                          ],
+                        )
+                      : ListView(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          children: [
+                            if (_annotations.bookmarks.isEmpty &&
+                                _annotations.highlights.isEmpty)
+                              const Padding(
+                                padding: EdgeInsets.all(24),
+                                child: Text(
+                                  'Noch keine Lesezeichen oder Highlights vorhanden.',
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            for (final bookmark in _annotations.bookmarks)
+                              ListTile(
+                                leading: const Icon(Icons.bookmark_outline),
+                                title: Text(
+                                  bookmark.label ?? bookmark.displayPosition,
+                                ),
+                                subtitle: Text(
+                                  bookmark.mediaPosition.chapterId ??
+                                      'Textstelle',
+                                ),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: () => unawaited(
+                                  _openPublicationAnnotation(
+                                    work,
+                                    readable,
+                                    bookmark.mediaPosition,
+                                  ),
+                                ),
+                              ),
+                            for (final highlight in _annotations.highlights)
+                              ListTile(
+                                leading: const Icon(
+                                  Icons.border_color_outlined,
+                                ),
+                                title: Text(
+                                  highlight.quote,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                subtitle: highlight.note == null
+                                    ? null
+                                    : Text(highlight.note!),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: () => unawaited(
+                                  _openPublicationAnnotation(
+                                    work,
+                                    readable,
+                                    highlight.mediaPosition,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                ),
+              ],
+            ),
+            _ => _similarWorks(work),
+          },
+        ),
+      ],
+    );
+  }
+
+  List<LibraryPlaybackTrack> _chapterDocumentFiles(
+    List<LibraryPlaybackTrack> files,
+  ) => files
+      .where((file) {
+        final extension = p.extension(file.absolutePath).toLowerCase();
+        final name = p
+            .basenameWithoutExtension(file.absolutePath)
+            .toLowerCase();
+        if (name == 'cover' || name.endsWith('_cover')) return false;
+        return const {
+          '.cbz',
+          '.pdf',
+          '.epub',
+          '.html',
+          '.htm',
+          '.md',
+          '.txt',
+        }.contains(extension);
+      })
+      .toList(growable: false);
+
+  Widget _publicationChapters(
+    LibraryWorkSummary work,
+    List<LibraryPlaybackTrack> readable,
+    LibraryPlaybackProgress? progress,
+  ) {
+    final epub = readable
+        .where(
+          (file) => p.extension(file.absolutePath).toLowerCase() == '.epub',
+        )
+        .firstOrNull;
+    if (epub == null) {
+      final chapters = _chapterDocumentFiles(readable);
+      return chapters.isEmpty
+          ? const Center(child: Text('Keine Kapitel gefunden.'))
+          : _DocumentFilesPanel(
+              files: chapters,
+              progress: progress,
+              onOpen: _openDocument,
+            );
+    }
+    final future = _epubPublicationRequests.putIfAbsent(
+      epub.absolutePath,
+      () => loadEpubPublication(epub.absolutePath),
+    );
+    return FutureBuilder<EpubPublication>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return const Center(
+            child: Text(
+              'Das EPUB-Inhaltsverzeichnis konnte nicht geladen werden.',
+            ),
+          );
+        }
+        final publication = snapshot.data;
+        if (publication == null) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          itemCount: publication.chapters.length,
+          itemBuilder: (context, index) {
+            final chapter = publication.chapters[index];
+            return ListTile(
+              contentPadding: EdgeInsets.only(
+                left: 8.0 + chapter.depth * 16,
+                right: 8,
+              ),
+              leading: CircleAvatar(child: Text('${index + 1}')),
+              title: Text(chapter.title),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => unawaited(
+                _openEpubWork(
+                  work,
+                  epub,
+                  progress,
+                  resolveConflict: false,
+                  initialChapterIndex: index,
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _openPublicationAnnotation(
+    LibraryWorkSummary work,
+    List<LibraryPlaybackTrack> readable,
+    MediaPosition position,
+  ) async {
+    final file = readable
+        .where((candidate) => candidate.fileId == position.fileId)
+        .firstOrNull;
+    if (file == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Die zugehörige Datei fehlt.')),
+      );
+      return;
+    }
+    final progress = LibraryPlaybackProgress(
+      workId: work.id,
+      fileId: file.fileId,
+      position: position,
+      finished: false,
+      revision: 0,
+      updatedAt: DateTime.now().toUtc(),
+    );
     final extension = p.extension(file.absolutePath).toLowerCase();
-    if (extension == '.cbz') {
+    if (extension == '.epub') {
+      await _openEpubWork(work, file, progress, resolveConflict: false);
+      return;
+    }
+    await _openDocument(file);
+  }
+
+  Widget _similarWorks(LibraryWorkSummary work) {
+    final sourceTags = {...work.tags, ..._annotations.tags}
+      ..remove(_favoriteTag);
+    final candidates = <({LibraryWorkSummary work, int score})>[];
+    for (final candidate
+        in widget.library?.listWorks(includeMissing: false) ??
+            const <LibraryWorkSummary>[]) {
+      if (candidate.id == work.id || candidate.kind != work.kind) continue;
+      final score = candidate.tags.where(sourceTags.contains).length;
+      if (score > 0) candidates.add((work: candidate, score: score));
+    }
+    candidates.sort((left, right) {
+      final score = right.score.compareTo(left.score);
+      return score != 0 ? score : left.work.title.compareTo(right.work.title);
+    });
+    if (candidates.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text('Noch keine Titel mit übereinstimmenden Tags.'),
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        for (final candidate in candidates)
+          ListTile(
+            leading: candidate.work.coverPath == null
+                ? const Icon(Icons.auto_awesome_outlined)
+                : ClipRRect(
+                    borderRadius: BorderRadius.circular(5),
+                    child: Image.file(
+                      File(candidate.work.coverPath!),
+                      width: 42,
+                      height: 58,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+            title: Text(candidate.work.title),
+            subtitle: Text('${candidate.score} gemeinsame Tag(s)'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (context) => Scaffold(
+                  appBar: AppBar(title: Text(candidate.work.title)),
+                  body: _DetailPanel(
+                    work: candidate.work,
+                    library: widget.library,
+                    player: widget.player,
+                    onPlay: widget.onPlay,
+                    onMetadataChanged: widget.onMetadataChanged,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _toggleFavorite() async {
+    final work = _editedWork ?? widget.work;
+    final library = widget.library;
+    if (work == null || library == null) return;
+    final tags = {..._annotations.tags};
+    tags.contains(_favoriteTag)
+        ? tags.remove(_favoriteTag)
+        : tags.add(_favoriteTag);
+    await _runSave(() => library.replaceWorkTags(work.id, tags));
+    final refreshed = library
+        .listWorks(includeMissing: true)
+        .where((candidate) => candidate.id == work.id)
+        .firstOrNull;
+    if (refreshed != null) widget.onMetadataChanged?.call(refreshed);
+  }
+
+  Future<void> _openDocument(LibraryPlaybackTrack file) async {
+    final descriptor = _publicationFormats.probe(file.absolutePath);
+    if (descriptor?.renderer == PublicationRendererKind.comic) {
       final work = _editedWork ?? widget.work;
       final files = work == null
           ? <LibraryPlaybackTrack>[file]
@@ -4080,14 +4977,43 @@ class _DetailPanelState extends State<_DetailPanel> {
       await _openComicWork(work, files, startFileId: file.fileId);
       return;
     }
-    if (extension == '.pdf') {
+    if (descriptor?.renderer == PublicationRendererKind.fixedDocument) {
       final work = _editedWork ?? widget.work;
       if (work != null) {
         await _openPdf(work, file, widget.library?.loadProgress(work.id));
         return;
       }
     }
-    if (extension == '.zip') {
+    if (supportsInternalEpubReader(file.absolutePath)) {
+      final work = _editedWork ?? widget.work;
+      if (work != null) {
+        await _openEpubWork(work, file, widget.library?.loadProgress(work.id));
+      } else {
+        await _openEpubPath(file.absolutePath);
+      }
+      return;
+    }
+    if (supportsInternalReflowTextReader(file.absolutePath)) {
+      final work = _editedWork ?? widget.work;
+      if (work != null) {
+        final files = widget.library?.playbackTracks(work.id) ?? [file];
+        await _openReflowWork(work, files, startFileId: file.fileId);
+      } else {
+        final profile = await PublicationReaderSettings.loadReflowProfile();
+        if (!mounted) return;
+        await showReflowTextReader(
+          context,
+          path: file.absolutePath,
+          title: file.title,
+          initialProfile: profile,
+          onProfileChanged: (updated) =>
+              unawaited(PublicationReaderSettings.saveReflowProfile(updated)),
+          onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
+        );
+      }
+      return;
+    }
+    if (p.extension(file.absolutePath).toLowerCase() == '.zip') {
       await showZipArchiveBrowser(
         context,
         archivePath: file.absolutePath,
@@ -4101,11 +5027,14 @@ class _DetailPanelState extends State<_DetailPanel> {
   List<LibraryPlaybackTrack> _readableDocumentFiles(
     List<LibraryPlaybackTrack> files,
   ) => files
-      .where(
-        (file) =>
-            p.extension(file.absolutePath).toLowerCase() == '.cbz' ||
-            supportsInternalDocumentPreview(file.absolutePath),
-      )
+      .where((file) {
+        final renderer = _publicationFormats.probe(file.absolutePath)?.renderer;
+        return renderer == PublicationRendererKind.comic ||
+            renderer == PublicationRendererKind.fixedDocument ||
+            supportsInternalEpubReader(file.absolutePath) ||
+            supportsInternalReflowTextReader(file.absolutePath) ||
+            supportsInternalDocumentPreview(file.absolutePath);
+      })
       .toList(growable: false);
 
   Future<void> _openDocumentWork(
@@ -4115,17 +5044,44 @@ class _DetailPanelState extends State<_DetailPanel> {
     final readable = _readableDocumentFiles(files);
     if (readable.isEmpty) return;
     final comics = readable
-        .where((file) => p.extension(file.absolutePath).toLowerCase() == '.cbz')
+        .where(
+          (file) =>
+              _publicationFormats.probe(file.absolutePath)?.renderer ==
+              PublicationRendererKind.comic,
+        )
         .toList(growable: false);
     if (comics.isNotEmpty) {
       await _openComicWork(work, comics);
+      return;
+    }
+    final epubs = readable
+        .where((file) => supportsInternalEpubReader(file.absolutePath))
+        .toList(growable: false);
+    if (epubs.isNotEmpty) {
+      var progress = widget.library?.loadProgress(work.id);
+      if (widget.library != null) {
+        progress = await _resolveLocalReaderProgress(work, progress);
+        if (!mounted) return;
+      }
+      final selected =
+          epubs.where((file) => file.fileId == progress?.fileId).firstOrNull ??
+          epubs.first;
+      await _openEpubWork(work, selected, progress, resolveConflict: false);
+      return;
+    }
+    final reflow = readable
+        .where((file) => supportsInternalReflowTextReader(file.absolutePath))
+        .toList(growable: false);
+    if (work.kind == 'webnovel' && reflow.isNotEmpty) {
+      await _openReflowWork(work, reflow);
       return;
     }
     final progress = widget.library?.loadProgress(work.id);
     final selected =
         readable.where((file) => file.fileId == progress?.fileId).firstOrNull ??
         readable.first;
-    if (p.extension(selected.absolutePath).toLowerCase() == '.pdf') {
+    if (_publicationFormats.probe(selected.absolutePath)?.renderer ==
+        PublicationRendererKind.fixedDocument) {
       await _openPdf(work, selected, progress);
     } else {
       await _openDocument(selected);
@@ -4133,8 +5089,41 @@ class _DetailPanelState extends State<_DetailPanel> {
   }
 
   Future<void> _openDocumentPath(String path) async {
-    if (p.extension(path).toLowerCase() == '.cbz') {
-      await showComicBookViewer(context, archivePath: path);
+    if (_publicationFormats.probe(path)?.renderer ==
+        PublicationRendererKind.comic) {
+      final profile = await PublicationReaderSettings.loadComicProfile();
+      if (!mounted) return;
+      await showComicBookViewer(
+        context,
+        archivePath: path,
+        initialProfile: profile,
+        onProfileChanged: (updated) =>
+            unawaited(PublicationReaderSettings.saveComicProfile(updated)),
+      );
+      return;
+    }
+    if (supportsInternalEpubReader(path)) {
+      await _openEpubPath(path);
+      return;
+    }
+    if (supportsInternalReflowTextReader(path)) {
+      try {
+        final profile = await PublicationReaderSettings.loadReflowProfile();
+        if (!mounted) return;
+        await showReflowTextReader(
+          context,
+          path: path,
+          title: p.basenameWithoutExtension(path),
+          initialProfile: profile,
+          onProfileChanged: (updated) =>
+              unawaited(PublicationReaderSettings.saveReflowProfile(updated)),
+        );
+      } on ReflowTextReaderException catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
       return;
     }
     if (!supportsInternalDocumentPreview(path)) {
@@ -4155,6 +5144,368 @@ class _DetailPanelState extends State<_DetailPanel> {
     }
   }
 
+  Future<void> _openEpubPath(String path) async {
+    try {
+      final profile = await PublicationReaderSettings.loadReflowProfile();
+      if (!mounted) return;
+      await showEpubReader(
+        context,
+        path: path,
+        initialProfile: profile,
+        onProfileChanged: (updated) =>
+            unawaited(PublicationReaderSettings.saveReflowProfile(updated)),
+        onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
+      );
+    } on EpubPackageException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('EPUB konnte nicht geöffnet werden: $error')),
+      );
+    }
+  }
+
+  Future<void> _openEpubWork(
+    LibraryWorkSummary work,
+    LibraryPlaybackTrack file,
+    LibraryPlaybackProgress? progress, {
+    bool resolveConflict = true,
+    int? initialChapterIndex,
+  }) async {
+    final library = widget.library;
+    var resolvedProgress = progress;
+    if (resolveConflict && library != null) {
+      resolvedProgress = await _resolveLocalReaderProgress(work, progress);
+      if (!mounted) return;
+    }
+    try {
+      final portableProfile = library == null
+          ? null
+          : await library.loadPortableReaderProfile(
+              workId: work.id,
+              deviceKey: Platform.operatingSystem,
+              readerKind: 'epub',
+            );
+      final readerProfile = portableProfile == null
+          ? await PublicationReaderSettings.loadReflowProfile(workId: work.id)
+          : ReflowReaderProfile.fromJson(portableProfile);
+      var publicationAnnotations =
+          library?.loadAnnotations(work.id) ?? const WorkAnnotations();
+      if (!mounted) return;
+      await showEpubReader(
+        context,
+        path: file.absolutePath,
+        initialChapterIndex: initialChapterIndex,
+        initialPosition:
+            initialChapterIndex == null &&
+                resolvedProgress?.fileId == file.fileId &&
+                resolvedProgress?.position.kind == MediaPositionKind.epubCfi
+            ? resolvedProgress?.position
+            : null,
+        fileId: file.fileId,
+        relativePath: file.relativePath,
+        initialProfile: readerProfile,
+        onProfileChanged: (updated) {
+          unawaited(
+            PublicationReaderSettings.saveReflowProfile(
+              updated,
+              workId: work.id,
+            ),
+          );
+          if (library != null && !library.isReadOnly) {
+            unawaited(
+              library.savePortableReaderProfile(
+                workId: work.id,
+                deviceKey: Platform.operatingSystem,
+                readerKind: 'epub',
+                profile: updated.toJson(),
+              ),
+            );
+          }
+        },
+        onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
+        onResetWorkProfile: () =>
+            PublicationReaderSettings.clearReflowProfile(work.id),
+        initialBookmarks: publicationAnnotations.bookmarks,
+        initialHighlights: publicationAnnotations.highlights,
+        onAddBookmark: library == null || library.isReadOnly
+            ? null
+            : (position, label) async {
+                publicationAnnotations = await library.addMediaBookmark(
+                  workId: work.id,
+                  fileId: file.fileId,
+                  position: position,
+                  label: label,
+                );
+                return publicationAnnotations;
+              },
+        onAddHighlight: library == null || library.isReadOnly
+            ? null
+            : (position, quote, color, note) async {
+                publicationAnnotations = await library.addTextHighlight(
+                  workId: work.id,
+                  fileId: file.fileId,
+                  position: position,
+                  quote: quote,
+                  color: color,
+                  note: note,
+                );
+                return publicationAnnotations;
+              },
+        onDeleteBookmark: library == null || library.isReadOnly
+            ? null
+            : (id) async {
+                publicationAnnotations = await library.deleteBookmark(
+                  work.id,
+                  id,
+                );
+                return publicationAnnotations;
+              },
+        onDeleteHighlight: library == null || library.isReadOnly
+            ? null
+            : (id) async {
+                publicationAnnotations = await library.deleteHighlight(
+                  work.id,
+                  id,
+                );
+                return publicationAnnotations;
+              },
+        onExportAnnotations: () =>
+            _exportPublicationAnnotations(work, publicationAnnotations),
+        onPositionChanged: library == null || library.isReadOnly
+            ? null
+            : (position) {
+                library.saveMediaProgress(
+                  workId: work.id,
+                  fileId: file.fileId,
+                  position: position,
+                  finished: false,
+                );
+                unawaited(
+                  PublicationReaderSettings.saveDevicePosition(
+                    libraryId: library.manifest.libraryId,
+                    workId: work.id,
+                    position: position,
+                  ),
+                );
+              },
+      );
+    } on EpubPackageException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('EPUB konnte nicht geöffnet werden: $error')),
+      );
+    }
+    if (library != null) {
+      final refreshed = library
+          .listWorks(includeMissing: true)
+          .where((candidate) => candidate.id == work.id)
+          .firstOrNull;
+      if (refreshed != null) widget.onMetadataChanged?.call(refreshed);
+    }
+  }
+
+  Future<void> _exportPublicationAnnotations(
+    LibraryWorkSummary work,
+    WorkAnnotations annotations,
+  ) async {
+    if (annotations.bookmarks.isEmpty && annotations.highlights.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Es sind noch keine Annotationen vorhanden.'),
+        ),
+      );
+      return;
+    }
+    final format = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('Annotationen exportieren'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(dialogContext, 'md'),
+            child: const ListTile(
+              leading: Icon(Icons.description_outlined),
+              title: Text('Markdown'),
+              subtitle: Text('Gut lesbar und für Notizprogramme geeignet'),
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(dialogContext, 'json'),
+            child: const ListTile(
+              leading: Icon(Icons.data_object),
+              title: Text('JSON'),
+              subtitle: Text(
+                'Strukturiert für Sicherung und Weiterverarbeitung',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (format == null) return;
+    final safeTitle = work.title.replaceAll(
+      RegExp(r'[^\p{L}\p{N}._-]+', unicode: true),
+      '_',
+    );
+    final destination = await FilePicker.saveFile(
+      dialogTitle: 'Fundus-Annotationen exportieren',
+      fileName: '${safeTitle}_annotationen.$format',
+      type: FileType.custom,
+      allowedExtensions: [format],
+    );
+    if (destination == null) return;
+    final contents = format == 'json'
+        ? exportAnnotationsAsJson(
+            workId: work.id,
+            workTitle: work.title,
+            annotations: annotations,
+          )
+        : exportAnnotationsAsMarkdown(
+            workTitle: work.title,
+            annotations: annotations,
+          );
+    await File(destination).writeAsString(contents, flush: true);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Annotationen als ${format.toUpperCase()} exportiert.'),
+      ),
+    );
+  }
+
+  Future<void> _openReflowWork(
+    LibraryWorkSummary work,
+    List<LibraryPlaybackTrack> files, {
+    String? startFileId,
+  }) async {
+    final library = widget.library;
+    final chapters =
+        files
+            .where(
+              (file) => supportsInternalReflowTextReader(file.absolutePath),
+            )
+            .toList(growable: false)
+          ..sort((left, right) => left.index.compareTo(right.index));
+    if (chapters.isEmpty) return;
+    var progress = library?.loadProgress(work.id);
+    if (library != null) {
+      progress = await _resolveLocalReaderProgress(work, progress);
+      if (!mounted) return;
+    }
+    var chapterIndex = chapters.indexWhere(
+      (chapter) => chapter.fileId == (startFileId ?? progress?.fileId),
+    );
+    if (chapterIndex < 0) chapterIndex = 0;
+    MediaPosition? initialPosition =
+        progress?.position.kind == MediaPositionKind.epubCfi &&
+            progress?.fileId == chapters[chapterIndex].fileId
+        ? progress?.position
+        : null;
+    var readerProfile = await PublicationReaderSettings.loadReflowProfile(
+      workId: work.id,
+    );
+    if (!mounted) return;
+    while (mounted) {
+      final chapter = chapters[chapterIndex];
+      try {
+        final result = await showReflowTextReader(
+          context,
+          path: chapter.absolutePath,
+          title: chapter.title,
+          initialPosition: initialPosition,
+          fileId: chapter.fileId,
+          relativePath: chapter.relativePath,
+          chapterIndex: chapterIndex,
+          chapterCount: chapters.length,
+          chapterTitles: chapters.map((item) => item.title).toList(),
+          hasPreviousChapter: chapterIndex > 0,
+          hasNextChapter: chapterIndex + 1 < chapters.length,
+          initialProfile: readerProfile,
+          onProfileChanged: (updated) {
+            readerProfile = updated;
+            unawaited(
+              PublicationReaderSettings.saveReflowProfile(
+                updated,
+                workId: work.id,
+              ),
+            );
+          },
+          onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
+          onResetWorkProfile: () =>
+              PublicationReaderSettings.clearReflowProfile(work.id),
+          onPositionChanged: library == null || library.isReadOnly
+              ? null
+              : (position) {
+                  library.saveMediaProgress(
+                    workId: work.id,
+                    fileId: chapter.fileId,
+                    position: position,
+                    finished:
+                        chapterIndex + 1 == chapters.length &&
+                        (position.fraction ?? 0) >= .999,
+                  );
+                  unawaited(
+                    PublicationReaderSettings.saveDevicePosition(
+                      libraryId: library.manifest.libraryId,
+                      workId: work.id,
+                      position: position,
+                    ),
+                  );
+                },
+        );
+        if (!mounted || result == null) break;
+        if (result.action == ReflowTextReaderAction.selectChapter &&
+            result.chapterIndex != null &&
+            result.chapterIndex! >= 0 &&
+            result.chapterIndex! < chapters.length) {
+          chapterIndex = result.chapterIndex!;
+          initialPosition = null;
+          continue;
+        }
+        if (result.action == ReflowTextReaderAction.nextChapter &&
+            chapterIndex + 1 < chapters.length) {
+          chapterIndex++;
+          initialPosition = null;
+          continue;
+        }
+        if (result.action == ReflowTextReaderAction.previousChapter &&
+            chapterIndex > 0) {
+          chapterIndex--;
+          initialPosition = const MediaPosition(
+            kind: MediaPositionKind.epubCfi,
+            numericValue: 1e18,
+          );
+          continue;
+        }
+        break;
+      } on ReflowTextReaderException catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+        break;
+      }
+    }
+    if (library != null) {
+      final refreshed = library
+          .listWorks(includeMissing: true)
+          .where((candidate) => candidate.id == work.id)
+          .firstOrNull;
+      if (refreshed != null) widget.onMetadataChanged?.call(refreshed);
+    }
+  }
+
   Future<void> _openComicWork(
     LibraryWorkSummary? work,
     List<LibraryPlaybackTrack> files, {
@@ -4164,14 +5515,20 @@ class _DetailPanelState extends State<_DetailPanel> {
     final comics =
         files
             .where(
-              (file) => p.extension(file.absolutePath).toLowerCase() == '.cbz',
+              (file) =>
+                  _publicationFormats.probe(file.absolutePath)?.renderer ==
+                  PublicationRendererKind.comic,
             )
             .toList(growable: false)
           ..sort((left, right) => left.index.compareTo(right.index));
     if (comics.isEmpty) return;
-    final progress = work == null || library == null
+    var progress = work == null || library == null
         ? null
         : library.loadProgress(work.id);
+    if (work != null && library != null) {
+      progress = await _resolveLocalReaderProgress(work, progress);
+      if (!mounted) return;
+    }
     final storedPosition = progress?.position;
     var chapterIndex = comics.indexWhere(
       (file) => file.fileId == (startFileId ?? progress?.fileId),
@@ -4182,44 +5539,157 @@ class _DetailPanelState extends State<_DetailPanel> {
             storedPosition?.fileId == comics[chapterIndex].fileId
         ? ((storedPosition!.numericValue ?? 1).round() - 1).clamp(0, 1 << 30)
         : 0;
+    var initialElementId = storedPosition?.fileId == comics[chapterIndex].fileId
+        ? storedPosition?.elementId
+        : null;
+    var initialScrollOffset =
+        storedPosition?.fileId == comics[chapterIndex].fileId
+        ? storedPosition?.scrollOffset
+        : null;
+    var publicationBookmarks = library == null || work == null
+        ? <LibraryBookmark>[]
+        : library.loadAnnotations(work.id).bookmarks;
+    final portableProfile = work == null || library == null
+        ? null
+        : await library.loadPortableReaderProfile(
+            workId: work.id,
+            deviceKey: Platform.operatingSystem,
+            readerKind: 'comic',
+          );
+    var readerProfile = portableProfile == null
+        ? await PublicationReaderSettings.loadComicProfile(workId: work?.id)
+        : PublicationReaderProfile.fromJson(portableProfile);
+    if (!mounted) return;
     while (mounted) {
       final file = comics[chapterIndex];
       final result = await showComicBookViewer(
         context,
         archivePath: file.absolutePath,
         initialPage: initialPage,
+        initialElementId: initialElementId,
+        initialScrollOffset: initialScrollOffset,
+        initialProfile: readerProfile,
         hasPreviousChapter: chapterIndex > 0,
         hasNextChapter: chapterIndex + 1 < comics.length,
-        onPageChanged: library == null || work == null || library.isReadOnly
+        chapterTitle: file.title,
+        chapterIndex: chapterIndex,
+        chapterCount: comics.length,
+        chapterTitles: comics.map((chapter) => chapter.title).toList(),
+        chapterFileId: file.fileId,
+        initialBookmarks: publicationBookmarks,
+        onAddBookmark: library == null || work == null || library.isReadOnly
             ? null
-            : (page, total) {
+            : (position, label) async {
+                final annotations = await library.addMediaBookmark(
+                  workId: work.id,
+                  fileId: file.fileId,
+                  position: position,
+                  label: label,
+                );
+                publicationBookmarks = annotations.bookmarks;
+                return annotations;
+              },
+        onDeleteBookmark: library == null || work == null || library.isReadOnly
+            ? null
+            : (bookmarkId) async {
+                final annotations = await library.deleteBookmark(
+                  work.id,
+                  bookmarkId,
+                );
+                publicationBookmarks = annotations.bookmarks;
+                return annotations;
+              },
+        onPositionChanged: library == null || work == null || library.isReadOnly
+            ? null
+            : (page, total, elementId, scrollOffset) {
+                final position = MediaPosition(
+                  kind: MediaPositionKind.imageIndex,
+                  numericValue: page + 1,
+                  total: total.toDouble(),
+                  fileId: file.fileId,
+                  chapterId: file.title,
+                  elementId: elementId,
+                  scrollOffset: scrollOffset,
+                  key: file.relativePath,
+                  label:
+                      'Kapitel ${chapterIndex + 1}/${comics.length} · Seite ${page + 1}',
+                );
                 library.saveMediaProgress(
                   workId: work.id,
                   fileId: file.fileId,
-                  position: MediaPosition(
-                    kind: MediaPositionKind.imageIndex,
-                    numericValue: page + 1,
-                    total: total.toDouble(),
-                    fileId: file.fileId,
-                    key: file.relativePath,
-                    label:
-                        'Kapitel ${chapterIndex + 1}/${comics.length} · Seite ${page + 1}',
-                  ),
+                  position: position,
                   finished:
                       chapterIndex + 1 == comics.length && page + 1 >= total,
                 );
+                unawaited(
+                  PublicationReaderSettings.saveDevicePosition(
+                    libraryId: library.manifest.libraryId,
+                    workId: work.id,
+                    position: position,
+                  ),
+                );
               },
+        onProfileChanged: (profile) {
+          readerProfile = profile;
+          unawaited(
+            PublicationReaderSettings.saveComicProfile(
+              profile,
+              workId: work?.id,
+            ),
+          );
+          if (library != null && work != null && !library.isReadOnly) {
+            unawaited(
+              library.savePortableReaderProfile(
+                workId: work.id,
+                deviceKey: Platform.operatingSystem,
+                readerKind: 'comic',
+                profile: profile.toJson(),
+              ),
+            );
+          }
+        },
       );
       if (!mounted || result == null) break;
-      if (result == ComicBookViewerResult.nextChapter &&
+      if (result.action == ComicBookViewerAction.selectChapter &&
+          result.chapterIndex != null &&
+          result.chapterIndex! >= 0 &&
+          result.chapterIndex! < comics.length) {
+        chapterIndex = result.chapterIndex!;
+        initialPage = 0;
+        initialElementId = null;
+        initialScrollOffset = null;
+        continue;
+      }
+      if (result.action == ComicBookViewerAction.selectBookmark &&
+          result.position != null) {
+        final position = result.position!;
+        final targetChapter = comics.indexWhere(
+          (chapter) => chapter.fileId == position.fileId,
+        );
+        if (targetChapter < 0) break;
+        chapterIndex = targetChapter;
+        initialPage = ((position.numericValue ?? 1).round() - 1).clamp(
+          0,
+          1 << 30,
+        );
+        initialElementId = position.elementId;
+        initialScrollOffset = position.scrollOffset;
+        continue;
+      }
+      if (result.action == ComicBookViewerAction.nextChapter &&
           chapterIndex + 1 < comics.length) {
         chapterIndex++;
         initialPage = 0;
+        initialElementId = null;
+        initialScrollOffset = null;
         continue;
       }
-      if (result == ComicBookViewerResult.previousChapter && chapterIndex > 0) {
+      if (result.action == ComicBookViewerAction.previousChapter &&
+          chapterIndex > 0) {
         chapterIndex--;
         initialPage = 1 << 30;
+        initialElementId = null;
+        initialScrollOffset = null;
         continue;
       }
       break;
@@ -4239,6 +5709,8 @@ class _DetailPanelState extends State<_DetailPanel> {
     LibraryPlaybackProgress? progress,
   ) async {
     final library = widget.library;
+    progress = await _resolveLocalReaderProgress(work, progress);
+    if (!mounted) return;
     final position = progress?.position;
     final initialPage =
         position?.kind == MediaPositionKind.page &&
@@ -4254,18 +5726,26 @@ class _DetailPanelState extends State<_DetailPanel> {
         onPageChanged: library == null || library.isReadOnly
             ? null
             : (page, total) {
+                final position = MediaPosition(
+                  kind: MediaPositionKind.page,
+                  numericValue: page + 1,
+                  total: total.toDouble(),
+                  fileId: file.fileId,
+                  key: file.relativePath,
+                  label: 'Seite ${page + 1}',
+                );
                 library.saveMediaProgress(
                   workId: work.id,
                   fileId: file.fileId,
-                  position: MediaPosition(
-                    kind: MediaPositionKind.page,
-                    numericValue: page + 1,
-                    total: total.toDouble(),
-                    fileId: file.fileId,
-                    key: file.relativePath,
-                    label: 'Seite ${page + 1}',
-                  ),
+                  position: position,
                   finished: page + 1 >= total,
+                );
+                unawaited(
+                  PublicationReaderSettings.saveDevicePosition(
+                    libraryId: library.manifest.libraryId,
+                    workId: work.id,
+                    position: position,
+                  ),
                 );
               },
       );
@@ -4282,6 +5762,49 @@ class _DetailPanelState extends State<_DetailPanel> {
           .firstOrNull;
       if (refreshed != null) widget.onMetadataChanged?.call(refreshed);
     }
+  }
+
+  Future<LibraryPlaybackProgress?> _resolveLocalReaderProgress(
+    LibraryWorkSummary work,
+    LibraryPlaybackProgress? sharedProgress,
+  ) async {
+    final library = widget.library;
+    if (library == null || sharedProgress == null) return sharedProgress;
+    final localPosition = await PublicationReaderSettings.loadDevicePosition(
+      libraryId: library.manifest.libraryId,
+      workId: work.id,
+    );
+    final sharedPosition = sharedProgress.position;
+    if (localPosition != null &&
+        sharedProgress.deviceId != 'desktop-local' &&
+        readerPositionsDiffer(localPosition, sharedPosition)) {
+      if (!mounted) return sharedProgress;
+      final choice = await resolveReaderProgressConflict(
+        context,
+        devicePosition: localPosition,
+        serverPosition: sharedPosition,
+        deviceName: Platform.localHostname.isEmpty
+            ? 'Dieser Mac'
+            : Platform.localHostname,
+        serverDeviceName: 'Anderes Gerät',
+      );
+      if (choice == ReaderProgressConflictChoice.keepDevice &&
+          localPosition.fileId != null &&
+          !library.isReadOnly) {
+        return library.saveMediaProgress(
+          workId: work.id,
+          fileId: localPosition.fileId!,
+          position: localPosition,
+          finished: false,
+        );
+      }
+    }
+    await PublicationReaderSettings.saveDevicePosition(
+      libraryId: library.manifest.libraryId,
+      workId: work.id,
+      position: sharedPosition,
+    );
+    return sharedProgress;
   }
 
   Future<void> _openFileWithSystemApp(String path) async {
@@ -4928,6 +6451,53 @@ class _WorkMetadataDialogState extends State<_WorkMetadataDialog> {
 
 enum _BookmarkJumpAction { jumpDirectly, rememberAndJump }
 
+class _MobileDashboardCard extends StatelessWidget {
+  const _MobileDashboardCard({
+    required this.work,
+    required this.width,
+    required this.onTap,
+  });
+
+  final LibraryWorkSummary work;
+  final double width;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: width,
+    child: Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: _WorkCover(work: work, iconSize: 36)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 7, 8, 3),
+              child: Text(
+                work.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 7),
+              child: Text(
+                _workKindLabel(work.kind),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class _WorkCover extends StatelessWidget {
   const _WorkCover({required this.work, required this.iconSize, this.player});
 
@@ -5445,7 +7015,21 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
                   trailing: index == widget.controller.currentIndex
                       ? const Icon(Icons.graphic_eq)
                       : null,
-                  onTap: () => widget.controller.jumpToTrack(index),
+                  onTap: index == widget.controller.currentIndex
+                      ? null
+                      : () async {
+                          final current = widget.controller.track;
+                          if (current == null ||
+                              !await confirmPlaybackTrackJump(
+                                context,
+                                currentTitle: current.title,
+                                targetTitle: tracks[index].title,
+                                currentPosition: widget.controller.position,
+                              )) {
+                            return;
+                          }
+                          await widget.controller.jumpToTrack(index);
+                        },
                 ),
               const SizedBox(height: 24),
             ],
@@ -5853,7 +7437,21 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
             ? null
             : Text(_PlayerBar._time(track.duration!)),
         trailing: selected ? const Icon(Icons.graphic_eq) : null,
-        onTap: () => widget.controller.jumpToTrack(trackIndex),
+        onTap: selected
+            ? null
+            : () async {
+                final current = widget.controller.track;
+                if (current == null ||
+                    !await confirmPlaybackTrackJump(
+                      context,
+                      currentTitle: current.title,
+                      targetTitle: track.title,
+                      currentPosition: widget.controller.position,
+                    )) {
+                  return;
+                }
+                await widget.controller.jumpToTrack(trackIndex);
+              },
       );
     },
   );

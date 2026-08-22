@@ -32,6 +32,23 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Restore preview signing key
+        uses: actions/cache@v5
+        with:
+          path: ~/.android/debug.keystore
+          key: fundus-android-preview-signing-v1
+
+      - name: Create preview signing key when missing
+        run: |
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            mkdir -p "$HOME/.android"
+            keytool -genkeypair -v \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Fundus Preview,O=Fundus,C=DE"
+          fi
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2.23.0
         with:
@@ -44,7 +61,7 @@ jobs:
 
       - name: Build Android APK
         working-directory: app
-        run: flutter build apk --release
+        run: flutter build apk --release --build-number=${{ github.run_number }}
 
       - name: Upload preview
         uses: actions/upload-artifact@v7

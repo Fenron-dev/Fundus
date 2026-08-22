@@ -217,6 +217,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.14"
+  epubx_kuebiko:
+    dependency: transitive
+    description:
+      name: epubx_kuebiko
+      sha256: a1a65e625b530fbef30b88b21250116deb66812b6114bdb521ff2806911e19a1
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.2.1"
   fake_async:
     dependency: transitive
     description:
@@ -752,6 +760,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.1.0"
+  quiver:
+    dependency: transitive
+    description:
+      name: quiver
+      sha256: ea0b925899e64ecdfbf9c7becb60d5b50e706ade44a85b2363be2a22d88117d2
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.2.2"
   record_use:
     dependency: transitive
     description:

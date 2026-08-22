@@ -145,6 +145,79 @@ void main() {
     expect(restoredHistory.position, const Duration(seconds: 2));
     expect(restoredHistory.duration, const Duration(seconds: 3));
 
+    final readerPosition = MediaPosition(
+      kind: MediaPositionKind.imageIndex,
+      numericValue: 7,
+      total: 18,
+      fileId: detail.tracks.single.id,
+      chapterId: 'Kapitel 1',
+      elementId: '007.webp',
+      scrollOffset: .35,
+      label: 'Seite 7',
+    );
+    final savedReader = await client.saveMediaProgress(
+      profile,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+      fileId: detail.tracks.single.id,
+      position: readerPosition,
+      finished: false,
+      deviceId: 'client-test',
+      operationId: 'remote-reader-progress-test',
+    );
+    final loadedReader = await client.progress(
+      profile,
+      libraries.single.id,
+      works.single.id,
+    );
+    expect(savedReader.mediaPosition?.kind, MediaPositionKind.imageIndex);
+    expect(loadedReader?.mediaPosition?.numericValue, 7);
+    expect(loadedReader?.mediaPosition?.elementId, '007.webp');
+    expect(loadedReader?.mediaPosition?.scrollOffset, .35);
+
+    final bookmarkAnnotations = await client.saveBookmark(
+      profile,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+      fileId: detail.tracks.single.id,
+      position: readerPosition,
+      label: 'Remote-Lesezeichen',
+    );
+    expect(bookmarkAnnotations.bookmarks.single.label, 'Remote-Lesezeichen');
+    final highlightAnnotations = await client.saveHighlight(
+      profile,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+      fileId: detail.tracks.single.id,
+      position: readerPosition,
+      quote: 'Remote-Markierung',
+      color: '#FFF176',
+    );
+    expect(highlightAnnotations.highlights.single.quote, 'Remote-Markierung');
+    final loadedAnnotations = await client.annotations(
+      profile,
+      libraries.single.id,
+      works.single.id,
+    );
+    expect(loadedAnnotations.bookmarks, hasLength(1));
+    expect(loadedAnnotations.highlights, hasLength(1));
+    final withoutBookmark = await client.deleteAnnotation(
+      profile,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+      annotationId: loadedAnnotations.bookmarks.single.id,
+      highlight: false,
+    );
+    expect(withoutBookmark.bookmarks, isEmpty);
+    final withoutHighlight = await client.deleteAnnotation(
+      profile,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+      annotationId: loadedAnnotations.highlights.single.id,
+      highlight: true,
+    );
+    expect(withoutHighlight.highlights, isEmpty);
+
     final queueSession = await client.savePlaybackSession(
       profile,
       libraryId: libraries.single.id,
@@ -251,14 +324,16 @@ void main() {
     expect(offline.chapters, hasLength(1));
     expect(offline.chapters.single.fileId, offline.tracks.single.id);
     expect(transferredBytes, containsAllInOrder([0, 3]));
-    expect(
-      (await offlineStore.loadProgress(
-        serverId: profile.id,
-        libraryId: libraries.single.id,
-        workId: works.single.id,
-      ))?.position,
-      const Duration(seconds: 2),
+    final cachedReaderProgress = await offlineStore.loadProgress(
+      serverId: profile.id,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
     );
+    expect(
+      cachedReaderProgress?.mediaPosition?.kind,
+      MediaPositionKind.imageIndex,
+    );
+    expect(cachedReaderProgress?.mediaPosition?.numericValue, 7);
     final refreshed = await offlineStore.refreshMetadata(
       serverId: profile.id,
       libraryId: libraries.single.id,

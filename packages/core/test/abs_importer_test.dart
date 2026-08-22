@@ -70,6 +70,15 @@ void main() {
     expect(candidates.single.identity.title, 'Mein Hörbuch');
     expect(candidates.single.audioFiles, hasLength(2));
   });
+
+  test('uses neighboring WebP artwork as audiobook cover', () {
+    final candidates = importer.group([
+      _audioFile('Audiobooks/Autor/Titel/Titel.m4b'),
+      _file('Audiobooks/Autor/Titel/cover.webp', mimeType: 'image/webp'),
+    ]);
+
+    expect(candidates.single.coverFiles.single.filename, 'cover.webp');
+  });
 }
 
 ScannedFile _audioFile(String path) => ScannedFile(
@@ -80,4 +89,14 @@ ScannedFile _audioFile(String path) => ScannedFile(
   size: 1,
   modifiedAt: DateTime(2026),
   mimeType: 'audio/mp4',
+);
+
+ScannedFile _file(String path, {String? mimeType}) => ScannedFile(
+  absolutePath: '/library/$path',
+  relativePath: path,
+  filename: path.split('/').last,
+  extension: path.split('.').last.toLowerCase(),
+  size: 1,
+  modifiedAt: DateTime(2026),
+  mimeType: mimeType,
 );

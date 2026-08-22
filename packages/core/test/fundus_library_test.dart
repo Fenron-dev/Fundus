@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:archive/archive.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
@@ -22,6 +23,8 @@ void main() {
 
     expect(events.last.phase, LibraryIndexPhase.completed);
     expect(events.last.fileCount, 3);
+    expect(events.last.rootCounts, {'Karl May': 3});
+    expect(events.last.extensionCounts, {'mp3': 2, 'jpg': 1});
     expect(works, hasLength(1));
     expect(works.single.title, 'Winnetou I');
     expect(works.single.author, 'Karl May');
@@ -478,13 +481,32 @@ void main() {
       position: const Duration(minutes: 12, seconds: 34),
       label: 'Wichtige Stelle',
     );
+    await library.addMediaBookmark(
+      workId: work.id,
+      fileId: track.fileId,
+      position: MediaPosition(
+        kind: MediaPositionKind.imageIndex,
+        numericValue: 7,
+        total: 24,
+        fileId: track.fileId,
+        chapterId: 'Kapitel 2',
+        elementId: 'pages/007.webp',
+        scrollOffset: .35,
+        label: 'Kapitel 2 · Seite 7',
+      ),
+      label: 'Bild-Lesezeichen',
+    );
 
     final annotations = library.loadAnnotations(work.id);
     expect(annotations.tags, ['Fantasy', 'Favorit']);
     expect(annotations.notes, hasLength(2));
     expect(annotations.notes.first.markdown, 'Zweite Notiz');
     expect(
-      annotations.bookmarks.single.position,
+      annotations.bookmarks
+          .firstWhere(
+            (bookmark) => bookmark.mediaPosition.kind == MediaPositionKind.time,
+          )
+          .position,
       const Duration(minutes: 12, seconds: 34),
     );
     final sidecars = Directory('${book.path}/_fundus');
@@ -508,14 +530,26 @@ void main() {
 
     expect(rebuiltWork.id, work.id);
     expect(restored.tags, ['Fantasy', 'Favorit']);
+    final restoredPageBookmark = restored.bookmarks.firstWhere(
+      (bookmark) => bookmark.mediaPosition.kind == MediaPositionKind.imageIndex,
+    );
+    expect(restoredPageBookmark.mediaPosition.numericValue, 7);
+    expect(restoredPageBookmark.mediaPosition.total, 24);
+    expect(restoredPageBookmark.mediaPosition.chapterId, 'Kapitel 2');
+    expect(restoredPageBookmark.mediaPosition.elementId, 'pages/007.webp');
+    expect(restoredPageBookmark.mediaPosition.scrollOffset, .35);
+    expect(restoredPageBookmark.displayPosition, 'Bild 7');
     expect(restored.notes, hasLength(2));
     expect(
       restored.notes.map((note) => note.markdown),
       contains('Zweite Notiz'),
     );
-    expect(restored.bookmarks.single.label, 'Wichtige Stelle');
+    final restoredTimeBookmark = restored.bookmarks.firstWhere(
+      (bookmark) => bookmark.mediaPosition.kind == MediaPositionKind.time,
+    );
+    expect(restoredTimeBookmark.label, 'Wichtige Stelle');
     expect(
-      restored.bookmarks.single.position,
+      restoredTimeBookmark.position,
       const Duration(minutes: 12, seconds: 34),
     );
   });
@@ -916,6 +950,9 @@ void main() {
           numericValue: 7,
           total: 24,
           fileId: track.fileId,
+          chapterId: 'chapter-1',
+          elementId: 'pages/007.webp',
+          scrollOffset: .25,
           label: 'Seite 7',
         ),
         operationId: 'comic-page-7',
@@ -925,7 +962,32 @@ void main() {
       expect(saved.position.numericValue, 7);
       expect(saved.position.total, 24);
       expect(saved.position.label, 'Seite 7');
+      expect(saved.position.chapterId, 'chapter-1');
+      expect(saved.position.elementId, 'pages/007.webp');
+      expect(saved.position.scrollOffset, .25);
       expect(library.loadProgress(work.id)?.position.displayValue, 'Bild 7');
+
+      library.saveMediaProgress(
+        workId: work.id,
+        fileId: track.fileId,
+        position: MediaPosition(
+          kind: MediaPositionKind.imageIndex,
+          numericValue: 8,
+          total: 24,
+          fileId: track.fileId,
+          chapterId: 'chapter-1',
+          elementId: 'pages/008.webp',
+        ),
+        operationId: 'comic-page-8',
+      );
+      final restored = library.restoreProgressRevision(
+        workId: work.id,
+        revision: 1,
+        operationId: 'restore-comic-page-7',
+      );
+      expect(restored.position.kind, MediaPositionKind.imageIndex);
+      expect(restored.position.elementId, 'pages/007.webp');
+      expect(restored.position.scrollOffset, .25);
     },
   );
 
@@ -978,6 +1040,125 @@ void main() {
     );
     expect(library.listWorks().single.mediaProgress?.numericValue, 4);
   });
+
+  test('indexes EPUB package metadata and its embedded cover', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-epub-');
+    addTearDown(() => root.delete(recursive: true));
+    final webnovels = Directory('${root.path}/Webnovels');
+    await webnovels.create(recursive: true);
+    await File(
+      '${webnovels.path}/fallback.epub',
+    ).writeAsBytes(_epubWithMetadataAndCover());
+
+    final library = await FundusLibrary.create(root);
+    addTearDown(library.close);
+    await library.index().drain<void>();
+
+    final work = library.listWorks().single;
+    expect(work.kind, 'webnovel');
+    expect(work.title, 'Die Testnovel');
+    expect(work.author, 'Erika Beispiel');
+    expect(work.authors, ['Erika Beispiel']);
+    expect(work.language, 'de');
+    expect(work.description, 'Eine sichere Testbeschreibung.');
+    expect(work.genres, ['Fantasy']);
+    expect(work.publisher, 'Fundus Testverlag');
+    expect(work.coverPath, isNotNull);
+    expect(work.coverPath, contains('.library/covers'));
+    expect(work.coverPath, endsWith('.png'));
+    expect(await File(work.coverPath!).readAsBytes(), _tinyPng);
+
+    final epub = library
+        .playbackTracks(work.id)
+        .where((file) => file.relativePath.endsWith('.epub'))
+        .single;
+    final annotations = await library.addTextHighlight(
+      workId: work.id,
+      fileId: epub.fileId,
+      position: MediaPosition(
+        kind: MediaPositionKind.epubCfi,
+        numericValue: 42,
+        fileId: epub.fileId,
+        chapterId: 'chapter-1',
+        elementId: 'paragraph-example-1',
+        scrollOffset: .25,
+        label: 'Kapitel 1 · 25 %',
+      ),
+      quote: 'Ein wichtiges Zitat',
+      color: '#90CAF9',
+      note: 'Für später',
+    );
+    expect(annotations.highlights, hasLength(1));
+    expect(annotations.bookmarks, isEmpty);
+    expect(annotations.highlights.single.quote, 'Ein wichtiges Zitat');
+    expect(annotations.highlights.single.color, '#90CAF9');
+    expect(
+      annotations.highlights.single.mediaPosition.elementId,
+      'paragraph-example-1',
+    );
+    await library.saveWorkNote(work.id, '## Portable EPUB-Notiz');
+    await library.replaceWorkTags(work.id, const ['Favorit', 'Fantasy']);
+    await library.savePortableReaderProfile(
+      workId: work.id,
+      deviceKey: 'android',
+      readerKind: 'epub',
+      profile: const {'font_size': 22.0, 'content_width': 680.0},
+    );
+    final portableProfile = await library.loadPortableReaderProfile(
+      workId: work.id,
+      deviceKey: 'android',
+      readerKind: 'epub',
+    );
+    expect(portableProfile?['font_size'], 22.0);
+    final sidecar = Directory('${webnovels.path}/_fundus/files/fallback.epub');
+    expect(
+      await File('${sidecar.path}/notes.md').readAsString(),
+      contains('Portable EPUB-Notiz'),
+    );
+    expect(
+      await File('${sidecar.path}/bookmarks.yaml').readAsString(),
+      contains('Ein wichtiges Zitat'),
+    );
+    expect(await File('${sidecar.path}/reader-settings.yaml').exists(), isTrue);
+    final markdown = exportAnnotationsAsMarkdown(
+      workTitle: work.title,
+      annotations: annotations,
+    );
+    final json = exportAnnotationsAsJson(
+      workId: work.id,
+      workTitle: work.title,
+      annotations: annotations,
+    );
+    expect(markdown, contains('> Ein wichtiges Zitat'));
+    expect(json, contains('"color": "#90CAF9"'));
+  });
+
+  test(
+    'keeps EPUB and cover together in a series-style Webnovel folder',
+    () async {
+      final root = await Directory.systemTemp.createTemp('fundus-webnovel-');
+      addTearDown(() => root.delete(recursive: true));
+      final story = Directory('${root.path}/Webnovels/Die Testserie');
+      await story.create(recursive: true);
+      await File(
+        '${story.path}/Die Testserie.epub',
+      ).writeAsBytes(_epubWithMetadataAndCover());
+      await File('${story.path}/cover.webp').writeAsBytes([1, 2, 3, 4]);
+
+      final library = await FundusLibrary.create(root);
+      addTearDown(library.close);
+      await library.index().drain<void>();
+
+      final work = library.listWorks().single;
+      final files = library.playbackTracks(work.id);
+      expect(work.kind, 'webnovel');
+      expect(work.coverPath, endsWith('cover.webp'));
+      expect(
+        files.map((file) => file.title),
+        containsAll(['cover.webp', 'Die Testserie.epub']),
+      );
+    },
+  );
 
   test('stores a generated document cover inside the library', () async {
     final root = await Directory.systemTemp.createTemp('fundus-pdf-cover-');
@@ -1042,6 +1223,69 @@ List<int> _m4bWithJpegCover() => _atom('moov', [
     ]),
   ]),
 ]);
+
+final _tinyPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+);
+
+List<int> _epubWithMetadataAndCover() {
+  final archive = Archive()
+    ..addFile(ArchiveFile.string('mimetype', 'application/epub+zip'))
+    ..addFile(
+      ArchiveFile.string('META-INF/container.xml', '''<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>'''),
+    )
+    ..addFile(
+      ArchiveFile.string(
+        'OEBPS/content.opf',
+        '''<?xml version="1.0" encoding="UTF-8"?>
+<package version="2.0" unique-identifier="book-id" xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:identifier id="book-id">urn:uuid:fundus-library-test</dc:identifier>
+    <dc:title>Die Testnovel</dc:title>
+    <dc:creator>Erika Beispiel</dc:creator>
+    <dc:language>de</dc:language>
+    <dc:subject>Fantasy</dc:subject>
+    <dc:publisher>Fundus Testverlag</dc:publisher>
+    <dc:description>Eine sichere Testbeschreibung.</dc:description>
+    <meta name="cover" content="cover"/>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="cover" href="Images/cover.png" media-type="image/png"/>
+    <item id="chapter" href="Text/chapter.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine toc="ncx"><itemref idref="chapter"/></spine>
+</package>''',
+      ),
+    )
+    ..addFile(
+      ArchiveFile.string(
+        'OEBPS/toc.ncx',
+        '''<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head><meta name="dtb:uid" content="urn:uuid:fundus-library-test"/></head>
+  <docTitle><text>Die Testnovel</text></docTitle>
+  <navMap><navPoint id="chapter" playOrder="1">
+    <navLabel><text>Kapitel Eins</text></navLabel>
+    <content src="Text/chapter.xhtml"/>
+  </navPoint></navMap>
+</ncx>''',
+      ),
+    )
+    ..addFile(
+      ArchiveFile.string(
+        'OEBPS/Text/chapter.xhtml',
+        '<html><body><p>Der erste Absatz.</p></body></html>',
+      ),
+    )
+    ..addFile(ArchiveFile('OEBPS/Images/cover.png', _tinyPng.length, _tinyPng));
+  return ZipEncoder().encode(archive);
+}
 
 List<int> _m4bWithIdentityMetadata({String title = 'Titel aus Tags'}) =>
     _atom('moov', [

@@ -88,6 +88,19 @@ void main() {
     expect(candidates.single.coverFile?.filename, 'cover.png');
   });
 
+  test('recognizes WebP cover files for publication works', () {
+    final importer = DocumentImporter(
+      mediaRoots: LibraryConfiguration.defaults,
+    );
+
+    final candidate = importer.group([
+      file('Webnovels/Story/cover.webp', mimeType: 'image/webp'),
+      file('Webnovels/Story/Story.epub', mimeType: 'application/epub+zip'),
+    ]).single;
+
+    expect(candidate.coverFile?.filename, 'cover.webp');
+  });
+
   test('keeps webnovels separate from books and documents', () {
     final importer = DocumentImporter(
       mediaRoots: LibraryConfiguration.defaults,
@@ -103,6 +116,24 @@ void main() {
       'document',
       'ebook',
       'webnovel',
+    ]);
+  });
+
+  test('sorts webnovel chapters by natural chapter number', () {
+    final importer = DocumentImporter(
+      mediaRoots: LibraryConfiguration.defaults,
+    );
+
+    final candidate = importer.group([
+      file('Webnovels/Story/chapter-10.html', mimeType: 'text/html'),
+      file('Webnovels/Story/chapter-2.html', mimeType: 'text/html'),
+      file('Webnovels/Story/chapter-1.html', mimeType: 'text/html'),
+    ]).single;
+
+    expect(candidate.files.map((file) => file.filename), [
+      'chapter-1.html',
+      'chapter-2.html',
+      'chapter-10.html',
     ]);
   });
 }

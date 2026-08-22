@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -10,9 +11,15 @@ import '../diagnostics/fundus_diagnostics.dart';
 import '../library/comic_book_viewer.dart';
 import '../library/document_file_opener.dart';
 import '../library/document_preview.dart';
+import '../library/epub_reader.dart';
+import '../library/publication_reader_settings.dart';
+import '../library/reflow_text_reader.dart';
+import '../library/reader_progress_conflict.dart';
 import '../library/zip_archive_browser.dart';
 import '../playback/playback_sleep_timer_button.dart';
 import '../playback/playback_conflict_settings.dart';
+import '../playback/track_jump_confirmation.dart';
+import 'annotation_sync_settings.dart';
 import 'fundus_remote_client.dart';
 import 'fundus_remote_document_cache.dart';
 import 'fundus_peer_server_controller.dart';
@@ -28,12 +35,83 @@ enum _RemoteGrouping { books, authors, series, narrators }
 
 enum _RemoteLibrarySection { media, playlists }
 
+enum _DocumentTrackSort { oldestFirst, newestFirst, titleAscending }
+
+enum _ChapterSelectionMode { range, individual }
+
+Set<int> chapterSelectionRange({
+  required int total,
+  required int start,
+  required int end,
+}) {
+  if (total <= 0) return const {};
+  final normalizedStart = start.clamp(1, total) - 1;
+  final normalizedEnd = end.clamp(1, total) - 1;
+  final first = normalizedStart < normalizedEnd
+      ? normalizedStart
+      : normalizedEnd;
+  final last = normalizedStart > normalizedEnd
+      ? normalizedStart
+      : normalizedEnd;
+  return {for (var index = first; index <= last; index++) index};
+}
+
+List<({FundusRemoteTrack track, int originalIndex})> _orderedRemoteTracks(
+  List<FundusRemoteTrack> tracks,
+  _DocumentTrackSort sort,
+) {
+  final result = [
+    for (var index = 0; index < tracks.length; index++)
+      (track: tracks[index], originalIndex: index),
+  ];
+  switch (sort) {
+    case _DocumentTrackSort.oldestFirst:
+      result.sort(
+        (left, right) => left.track.position.compareTo(right.track.position),
+      );
+    case _DocumentTrackSort.newestFirst:
+      result.sort(
+        (left, right) => right.track.position.compareTo(left.track.position),
+      );
+    case _DocumentTrackSort.titleAscending:
+      result.sort(
+        (left, right) => left.track.title.toLowerCase().compareTo(
+          right.track.title.toLowerCase(),
+        ),
+      );
+  }
+  return result;
+}
+
+enum DocumentChapterReadState { unread, current, read }
+
+DocumentChapterReadState documentChapterReadState({
+  required int chapterIndex,
+  required int currentChapterIndex,
+  required bool workFinished,
+  MediaPosition? currentPosition,
+}) {
+  if (workFinished ||
+      (currentChapterIndex >= 0 && chapterIndex < currentChapterIndex)) {
+    return DocumentChapterReadState.read;
+  }
+  if (chapterIndex != currentChapterIndex) {
+    return DocumentChapterReadState.unread;
+  }
+  if ((currentPosition?.fraction ?? 0) >= .98) {
+    return DocumentChapterReadState.read;
+  }
+  return DocumentChapterReadState.current;
+}
+
 Future<void> showFundusRemoteServers(
   BuildContext context, {
   String? initialServerId,
   String? initialLibraryId,
   FundusPeerServerController? peerServer,
   FundusOfflineStore? offlineStore,
+  FundusOfflineWork? initialOfflineWork,
+  bool closeAfterInitialOfflineWork = false,
 }) => Navigator.of(context).push(
   MaterialPageRoute<void>(
     builder: (_) => FundusRemoteServersView(
@@ -41,6 +119,8 @@ Future<void> showFundusRemoteServers(
       initialLibraryId: initialLibraryId,
       peerServer: peerServer,
       offlineStore: offlineStore,
+      initialOfflineWork: initialOfflineWork,
+      closeAfterInitialOfflineWork: closeAfterInitialOfflineWork,
     ),
   ),
 );
@@ -52,12 +132,16 @@ class FundusRemoteServersView extends StatefulWidget {
     this.initialLibraryId,
     this.peerServer,
     this.offlineStore,
+    this.initialOfflineWork,
+    this.closeAfterInitialOfflineWork = false,
   });
 
   final String? initialServerId;
   final String? initialLibraryId;
   final FundusPeerServerController? peerServer;
   final FundusOfflineStore? offlineStore;
+  final FundusOfflineWork? initialOfflineWork;
+  final bool closeAfterInitialOfflineWork;
 
   @override
   State<FundusRemoteServersView> createState() =>
@@ -98,6 +182,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   DateTime? _lastDownloadUiUpdate;
   final Map<String, Future<Uint8List>> _coverRequests = {};
   final Map<String, Future<FundusRemoteServer>> _reconnects = {};
+  Future<void> _readerProgressQueue = Future<void>.value();
   late final AppLifecycleListener _lifecycleListener;
 
   @override
@@ -123,7 +208,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   Future<void> _load() async {
     try {
       var servers = await _store.load();
-      final offlineWorks = await _offlineStore.listAll();
+      var offlineWorks = await _offlineStore.listAll();
+      offlineWorks = await _resolveOfflineSourceLabels(offlineWorks, servers);
       if (!mounted) return;
       setState(() {
         _servers = servers;
@@ -135,6 +221,27 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         );
         _busy = false;
       });
+      if (widget.initialOfflineWork case final initial?) {
+        final current = offlineWorks
+            .where(
+              (work) =>
+                  work.serverId == initial.serverId &&
+                  work.libraryId == initial.libraryId &&
+                  work.workId == initial.workId,
+            )
+            .firstOrNull;
+        if (current != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            unawaited(() async {
+              await _showOfflineWork(current);
+              if (mounted && widget.closeAfterInitialOfflineWork) {
+                Navigator.of(context).pop();
+              }
+            }());
+          });
+        }
+      }
       servers = await _peerDiscovery.relocate(servers);
       await _store.save(servers);
       if (!mounted) return;
@@ -156,6 +263,35 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         _busy = false;
       });
     }
+  }
+
+  Future<List<FundusOfflineWork>> _resolveOfflineSourceLabels(
+    List<FundusOfflineWork> works,
+    List<FundusRemoteServer> servers,
+  ) async {
+    final references = await _store.loadLibraryReferences();
+    final serversById = {for (final server in servers) server.id: server};
+    final librariesByKey = {
+      for (final library in references)
+        '${library.serverId}\u0000${library.libraryId}': library,
+    };
+    return Future.wait([
+      for (final work in works)
+        () async {
+          final server = serversById[work.serverId];
+          final library =
+              librariesByKey['${work.serverId}\u0000${work.libraryId}'];
+          if (server == null || library == null) return work;
+          return await _offlineStore.updateSourceLabels(
+                serverId: work.serverId,
+                libraryId: work.libraryId,
+                workId: work.workId,
+                serverName: server.name,
+                libraryName: library.name,
+              ) ??
+              work;
+        }(),
+    ]);
   }
 
   Future<void> _pair() async {
@@ -386,7 +522,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     final servers = _servers.where((item) => item.id != server.id).toList();
     await _store.save(servers);
     await _store.forgetServerLibraries(server.id);
-    if (!mounted) return;
+    if (!context.mounted) return;
     setState(() {
       _servers = servers;
       if (_selectedServer?.id == server.id) {
@@ -588,42 +724,200 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   }
 
   Widget _offlineLibraryView() {
-    final works = _offlineWorks
+    final source = _offlineWorks
         .where((work) => work.libraryId == _offlineLibraryFilter)
         .toList();
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        ListTile(
-          leading: BackButton(
-            onPressed: () => setState(() => _offlineLibraryFilter = null),
+    final byId = {for (final work in source) work.workId: work};
+    final summaries = [for (final work in source) _offlineSummary(work)];
+    final works = LibraryWorkSearch.apply(
+      summaries,
+      _query,
+    ).map((summary) => byId[summary.id]!).toList(growable: false);
+    final kinds = source.map((work) => work.kind).toSet().toList()..sort();
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(
+          child: ListTile(
+            leading: BackButton(
+              onPressed: () => setState(() => _offlineLibraryFilter = null),
+            ),
+            title: const Text('Offline-Medien'),
+            subtitle: Text('${works.length} Medium/Medien auf diesem Gerät'),
           ),
-          title: const Text('Offline-Medien'),
-          subtitle: Text('${works.length} Medium/Medien auf diesem Gerät'),
         ),
-        for (final offline in works)
-          Card(
-            child: ListTile(
-              leading: offline.coverPath == null
-                  ? Icon(_kindIcon(offline.kind))
-                  : ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: Image.file(
-                        File(offline.coverPath!),
-                        width: 42,
-                        height: 52,
-                        fit: BoxFit.cover,
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: SearchBar(
+              controller: _searchController,
+              leading: const Icon(Icons.search),
+              hintText: 'Titel, Person oder Serie …',
+              onChanged: (value) =>
+                  setState(() => _query = _query.copyWith(text: value)),
+            ),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                SegmentedButton<_RemoteLayout>(
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(
+                      value: _RemoteLayout.grid,
+                      icon: Icon(Icons.grid_view),
+                    ),
+                    ButtonSegment(
+                      value: _RemoteLayout.list,
+                      icon: Icon(Icons.view_list),
+                    ),
+                  ],
+                  selected: {_layout},
+                  onSelectionChanged: (value) =>
+                      setState(() => _layout = value.first),
+                ),
+                const SizedBox(width: 8),
+                for (final kind in kinds) ...[
+                  ChoiceChip(
+                    label: Text(_kindLabel(kind)),
+                    selected: _query.kinds.contains(kind),
+                    onSelected: (_) => setState(
+                      () => _query = _query.copyWith(
+                        kinds: _query.kinds.contains(kind) ? {} : {kind},
                       ),
                     ),
-              title: Text(offline.title),
-              subtitle: Text(_offlineSubtitle(offline)),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => _showOfflineWork(offline),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+              ],
+            ),
+          ),
+        ),
+        if (_layout == _RemoteLayout.grid)
+          SliverPadding(
+            padding: const EdgeInsets.all(16),
+            sliver: SliverGrid.builder(
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 220,
+                mainAxisExtent: 310,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+              ),
+              itemCount: works.length,
+              itemBuilder: (context, index) => _offlineWorkCard(works[index]),
+            ),
+          )
+        else
+          SliverPadding(
+            padding: const EdgeInsets.all(16),
+            sliver: SliverList.builder(
+              itemCount: works.length,
+              itemBuilder: (context, index) {
+                final offline = works[index];
+                return Card(
+                  child: ListTile(
+                    leading: SizedBox(
+                      width: 48,
+                      height: 58,
+                      child: _offlineCover(offline),
+                    ),
+                    title: Text(offline.title),
+                    subtitle: Text(_offlineSubtitle(offline)),
+                    trailing: offline.incomplete
+                        ? const Tooltip(
+                            message: 'Download unvollständig',
+                            child: Icon(Icons.warning_amber_rounded),
+                          )
+                        : const Icon(Icons.chevron_right),
+                    onTap: () => _showOfflineWork(offline),
+                  ),
+                );
+              },
             ),
           ),
       ],
     );
   }
+
+  Widget _offlineWorkCard(FundusOfflineWork offline) => Card(
+    clipBehavior: Clip.antiAlias,
+    child: InkWell(
+      onTap: () => _showOfflineWork(offline),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: _offlineCover(offline)),
+          Padding(
+            padding: const EdgeInsets.all(10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  offline.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  offline.authors.join(', '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  _kindLabel(offline.kind),
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
+                Row(
+                  children: [
+                    Icon(
+                      offline.incomplete
+                          ? Icons.warning_amber_rounded
+                          : Icons.download_done,
+                      size: 15,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(offline.incomplete ? 'Unvollständig' : 'Offline'),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _offlineCover(FundusOfflineWork offline) => offline.coverPath == null
+      ? Icon(_kindIcon(offline.kind), size: 72)
+      : Image.file(
+          File(offline.coverPath!),
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => Icon(_kindIcon(offline.kind), size: 72),
+        );
+
+  LibraryWorkSummary _offlineSummary(FundusOfflineWork work) =>
+      LibraryWorkSummary(
+        id: work.workId,
+        kind: work.kind,
+        title: work.title,
+        author: work.authors.firstOrNull ?? 'Unbekannt',
+        authors: work.authors,
+        fileCount: work.tracks.length,
+        addedAt: work.downloadedAt,
+        series: work.series,
+        seriesSequence: work.seriesSequence?.toDouble(),
+        language: work.language,
+        subtitle: work.subtitle,
+        description: work.description,
+        narrators: work.narrators,
+        publisher: work.publisher,
+        publishedYear: work.publishedYear,
+        tags: work.tags,
+        offline: true,
+      );
 
   Widget _serverList() => ListView(
     padding: const EdgeInsets.all(16),
@@ -790,6 +1084,23 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                   icon: Badge(
                     isLabelVisible: _query.hasFilters,
                     child: const Icon(Icons.filter_list),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => setState(() {
+                    final tags = {..._query.tags};
+                    tags.contains('Favorit')
+                        ? tags.remove('Favorit')
+                        : tags.add('Favorit');
+                    _query = _query.copyWith(tags: tags);
+                  }),
+                  tooltip: _query.tags.contains('Favorit')
+                      ? 'Alle Titel anzeigen'
+                      : 'Nur Favoriten',
+                  icon: Icon(
+                    _query.tags.contains('Favorit')
+                        ? Icons.star
+                        : Icons.star_border,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -985,16 +1296,26 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                                 _kindLabel(work.kind),
                                 style: Theme.of(context).textTheme.labelSmall,
                               ),
-                              if (_offlineKeys.contains(
-                                _offlineKey(server, library, work),
-                              ))
-                                const Row(
-                                  children: [
-                                    Icon(Icons.download_done, size: 15),
-                                    SizedBox(width: 4),
-                                    Text('Offline'),
-                                  ],
-                                ),
+                              Row(
+                                children: [
+                                  Icon(
+                                    _offlineKeys.contains(
+                                          _offlineKey(server, library, work),
+                                        )
+                                        ? Icons.download_done
+                                        : Icons.cloud_outlined,
+                                    size: 15,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _offlineKeys.contains(
+                                          _offlineKey(server, library, work),
+                                        )
+                                        ? 'Offline verfügbar'
+                                        : 'Server',
+                                  ),
+                                ],
+                              ),
                             ],
                           ),
                         ),
@@ -1028,7 +1349,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                         if (work.series != null) work.series!,
                       ].join(' · '),
                     ),
-                    trailing: const Icon(Icons.chevron_right),
+                    trailing: Icon(
+                      _offlineKeys.contains(_offlineKey(server, library, work))
+                          ? Icons.download_done
+                          : Icons.cloud_outlined,
+                    ),
                     onTap: () => _showWork(server, library, work),
                   ),
                 );
@@ -1460,16 +1785,122 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       );
   }
 
+  static bool _samePosition(MediaPosition left, MediaPosition right) =>
+      left.kind == right.kind &&
+      left.fileId == right.fileId &&
+      left.chapterId == right.chapterId &&
+      left.elementId == right.elementId &&
+      left.numericValue == right.numericValue &&
+      left.scrollOffset == right.scrollOffset;
+
+  static bool _sameBookmark(LibraryBookmark left, LibraryBookmark right) =>
+      _samePosition(left.mediaPosition, right.mediaPosition) &&
+      left.label == right.label &&
+      left.note == right.note;
+
+  static bool _sameHighlight(LibraryHighlight left, LibraryHighlight right) =>
+      _samePosition(left.mediaPosition, right.mediaPosition) &&
+      left.quote == right.quote &&
+      left.color == right.color &&
+      left.note == right.note;
+
+  static WorkAnnotations _mergeAnnotations(
+    FundusRemoteWork work,
+    WorkAnnotations local,
+    WorkAnnotations remote,
+  ) {
+    final bookmarks = [...remote.bookmarks];
+    for (final bookmark in local.bookmarks) {
+      if (!bookmarks.any((item) => _sameBookmark(item, bookmark))) {
+        bookmarks.add(bookmark);
+      }
+    }
+    final highlights = [...remote.highlights];
+    for (final highlight in local.highlights) {
+      if (!highlights.any((item) => _sameHighlight(item, highlight))) {
+        highlights.add(highlight);
+      }
+    }
+    return WorkAnnotations(
+      tags: {...work.tags, ...local.tags, ...remote.tags}.toList(),
+      notes: remote.notes,
+      bookmarks: bookmarks,
+      highlights: highlights,
+    );
+  }
+
+  Future<String?> _showMobilePublicationDetails({
+    required FundusRemoteServer server,
+    required FundusRemoteLibrary library,
+    required FundusRemoteWork work,
+    required List<FundusRemoteTrack> tracks,
+    required MediaPosition? progressPosition,
+    required int progressIndex,
+    required WorkAnnotations annotations,
+    required bool isOffline,
+    required FundusOfflineWork? offlineWork,
+    required Future<WorkAnnotations> Function(String markdown) onSaveNote,
+    required Future<WorkAnnotations> Function(Set<String> tags) onSaveTags,
+  }) {
+    final epubTrack = tracks
+        .where((track) => track.title.toLowerCase().endsWith('.epub'))
+        .firstOrNull;
+    Future<EpubPublication> Function()? epubPublicationLoader;
+    if (epubTrack != null) {
+      epubPublicationLoader = () async {
+        final offlineTrack = offlineWork?.tracks
+            .where((track) => track.id == epubTrack.id)
+            .firstOrNull;
+        final file = offlineTrack == null
+            ? await _cachedRemoteDocument(server, library, epubTrack)
+            : File(offlineTrack.path);
+        return loadEpubPublication(file.path);
+      };
+    }
+    return Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (pageContext) => _MobileRemotePublicationDetails(
+          work: work,
+          tracks: tracks,
+          relatedWorks: _works,
+          progressPosition: progressPosition,
+          progressIndex: progressIndex,
+          annotations: annotations,
+          isOffline: isOffline,
+          epubPublicationLoader: epubPublicationLoader,
+          onSaveNote: onSaveNote,
+          onSaveTags: onSaveTags,
+          coverBuilder: () => offlineWork?.coverPath != null
+              ? Image.file(File(offlineWork!.coverPath!), fit: BoxFit.cover)
+              : work.hasCover
+              ? _remoteCover(
+                  server,
+                  library,
+                  work,
+                  borderRadius: BorderRadius.circular(14),
+                )
+              : Icon(_kindIcon(work.kind), size: 72),
+        ),
+      ),
+    );
+  }
+
   Future<void> _showWork(
     FundusRemoteServer server,
     FundusRemoteLibrary library,
-    FundusRemoteWork work,
-  ) async {
+    FundusRemoteWork work, {
+    bool forceOffline = false,
+  }) async {
+    final pageContext = context;
+    final mobilePublicationLayout = MediaQuery.sizeOf(pageContext).width < 760;
     final key = _offlineKey(server, library, work);
     final isOffline = _offlineKeys.contains(key);
     final isDocument = _isDocumentKind(work.kind);
     var detailTracks = <FundusRemoteTrack>[];
     FundusOfflineWork? offlineWork;
+    MediaPosition? documentPosition;
+    String? documentProgressFileId;
     if (isOffline) {
       offlineWork = await _offlineStore.lookup(
         serverId: server.id,
@@ -1487,178 +1918,579 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           ),
       ];
     } else {
-      try {
-        final result = await _runWithReconnect(
-          server,
-          (active) => _client.work(active, library.id, work),
-        );
-        detailTracks = result.value.tracks;
-      } catch (_) {
-        // Summary details remain usable if the server becomes unavailable.
+      if (!forceOffline) {
+        try {
+          final result = await _runWithReconnect(
+            server,
+            (active) => _client.work(active, library.id, work),
+          );
+          detailTracks = result.value.tracks;
+        } catch (_) {
+          // Summary details remain usable if the server becomes unavailable.
+        }
       }
     }
-    if (!mounted) return;
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+    final syncAnnotations = await AnnotationSyncSettings.enabled();
+    if (isDocument) {
+      if (offlineWork != null) {
+        final offlineProgress = await _offlineStore.loadProgress(
+          serverId: server.id,
+          libraryId: library.id,
+          workId: work.id,
+        );
+        documentPosition = offlineProgress?.mediaPosition;
+        documentProgressFileId = offlineProgress?.fileId;
+      }
+      if (!forceOffline) {
+        try {
+          final result = await _runWithReconnect(
+            server,
+            (active) => _client.progress(active, library.id, work.id),
+          );
+          server = result.server;
+          documentPosition ??= result.value?.mediaPosition;
+          documentProgressFileId ??= result.value?.fileId;
+        } catch (_) {
+          // Offline reading remains available without the server.
+        }
+      }
+    }
+    final documentProgressIndex = detailTracks.indexWhere(
+      (track) => track.id == documentProgressFileId,
+    );
+    var readerAnnotations = isDocument
+        ? await _offlineStore.loadAnnotations(
+            serverId: server.id,
+            libraryId: library.id,
+            workId: work.id,
+          )
+        : const WorkAnnotations();
+    if (isDocument && !forceOffline) {
+      try {
+        final localAnnotations = readerAnnotations;
+        final result = await _runWithReconnect(
+          server,
+          (active) => _client.annotations(active, library.id, work.id),
+        );
+        server = result.server;
+        var remoteAnnotations = result.value;
+        for (final note in localAnnotations.notes) {
+          if (remoteAnnotations.notes.any(
+            (remote) => remote.markdown.trim() == note.markdown.trim(),
+          )) {
+            continue;
+          }
+          remoteAnnotations = await _client.saveNote(
+            server,
+            libraryId: library.id,
+            workId: work.id,
+            markdown: note.markdown,
+          );
+        }
+        for (final bookmark in localAnnotations.bookmarks) {
+          if (remoteAnnotations.bookmarks.any(
+            (remote) => _sameBookmark(remote, bookmark),
+          )) {
+            continue;
+          }
+          remoteAnnotations = await _client.saveBookmark(
+            server,
+            libraryId: library.id,
+            workId: work.id,
+            fileId: bookmark.fileId ?? bookmark.mediaPosition.fileId ?? '',
+            position: bookmark.mediaPosition,
+            label: bookmark.label,
+            note: bookmark.note,
+          );
+        }
+        for (final highlight in localAnnotations.highlights) {
+          if (remoteAnnotations.highlights.any(
+            (remote) => _sameHighlight(remote, highlight),
+          )) {
+            continue;
+          }
+          remoteAnnotations = await _client.saveHighlight(
+            server,
+            libraryId: library.id,
+            workId: work.id,
+            fileId: highlight.fileId ?? highlight.mediaPosition.fileId ?? '',
+            position: highlight.mediaPosition,
+            quote: highlight.quote,
+            color: highlight.color,
+            note: highlight.note,
+          );
+        }
+        readerAnnotations = _mergeAnnotations(
+          work,
+          localAnnotations,
+          remoteAnnotations,
+        );
+        await _offlineStore.cacheAnnotations(
+          serverId: server.id,
+          libraryId: library.id,
+          workId: work.id,
+          annotations: readerAnnotations,
+        );
+      } catch (_) {
+        // Locally cached notes remain usable while the server is unavailable.
+      }
+    }
+    var trackSort = _DocumentTrackSort.oldestFirst;
+    if (!pageContext.mounted) return;
+    String? action;
+    if (mobilePublicationLayout && isDocument) {
+      action = await _showMobilePublicationDetails(
+        server: server,
+        library: library,
+        work: work,
+        tracks: detailTracks,
+        progressPosition: documentPosition,
+        progressIndex: documentProgressIndex,
+        annotations: readerAnnotations,
+        isOffline: isOffline,
+        offlineWork: offlineWork,
+        onSaveNote: (markdown) async {
+          if (!syncAnnotations) {
+            return _offlineStore.saveWorkNote(
+              serverId: server.id,
+              libraryId: library.id,
+              workId: work.id,
+              markdown: markdown,
+            );
+          }
+          try {
+            final result = await _runWithReconnect(
+              server,
+              (active) => _client.saveNote(
+                active,
+                libraryId: library.id,
+                workId: work.id,
+                markdown: markdown,
+              ),
+            );
+            server = result.server;
+            final merged = WorkAnnotations(
+              tags: result.value.tags,
+              notes: result.value.notes,
+              bookmarks: readerAnnotations.bookmarks,
+              highlights: readerAnnotations.highlights,
+            );
+            await _offlineStore.cacheAnnotations(
+              serverId: server.id,
+              libraryId: library.id,
+              workId: work.id,
+              annotations: merged,
+            );
+            return merged;
+          } catch (_) {
+            return _offlineStore.saveWorkNote(
+              serverId: server.id,
+              libraryId: library.id,
+              workId: work.id,
+              markdown: markdown,
+            );
+          }
+        },
+        onSaveTags: (tags) async {
+          if (!syncAnnotations) {
+            return _offlineStore.replaceWorkTags(
+              serverId: server.id,
+              libraryId: library.id,
+              workId: work.id,
+              tags: tags,
+            );
+          }
+          try {
+            final result = await _runWithReconnect(
+              server,
+              (active) => _client.saveTags(
+                active,
+                libraryId: library.id,
+                workId: work.id,
+                tags: tags,
+              ),
+            );
+            server = result.server;
+            final merged = WorkAnnotations(
+              tags: result.value.tags,
+              notes: readerAnnotations.notes,
+              bookmarks: readerAnnotations.bookmarks,
+              highlights: readerAnnotations.highlights,
+            );
+            await _offlineStore.cacheAnnotations(
+              serverId: server.id,
+              libraryId: library.id,
+              workId: work.id,
+              annotations: merged,
+            );
+            return merged;
+          } catch (_) {
+            return _offlineStore.replaceWorkTags(
+              serverId: server.id,
+              libraryId: library.id,
+              workId: work.id,
+              tags: tags,
+            );
+          }
+        },
+      );
+    } else {
+      if (!pageContext.mounted) return;
+      action = await showModalBottomSheet<String>(
+        context: pageContext,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setSheetState) => SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SizedBox(
-                    width: 120,
-                    height: 170,
-                    child: work.hasCover
-                        ? _remoteCover(
-                            server,
-                            library,
-                            work,
-                            borderRadius: BorderRadius.circular(10),
-                          )
-                        : const Icon(Icons.audiotrack, size: 72),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 120,
+                        height: 170,
+                        child: work.hasCover
+                            ? _remoteCover(
+                                server,
+                                library,
+                                work,
+                                borderRadius: BorderRadius.circular(10),
+                              )
+                            : const Icon(Icons.audiotrack, size: 72),
+                      ),
+                      const SizedBox(width: 18),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              work.title,
+                              style: Theme.of(context).textTheme.headlineSmall,
+                            ),
+                            const SizedBox(height: 6),
+                            Text(work.authors.join(', ')),
+                            if (work.subtitle case final subtitle?) ...[
+                              const SizedBox(height: 4),
+                              Text(subtitle),
+                            ],
+                            if (work.series case final series?) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                work.seriesSequence == null
+                                    ? series
+                                    : '$series · Band '
+                                          '${_formatRemoteSequence(work.seriesSequence!)}',
+                              ),
+                            ],
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: [
+                                for (final narrator in work.narrators)
+                                  Chip(
+                                    avatar: const Icon(
+                                      Icons.mic_none,
+                                      size: 16,
+                                    ),
+                                    label: Text(narrator),
+                                  ),
+                                if (work.language case final language?)
+                                  Chip(label: Text(_remoteLanguage(language))),
+                                if (work.publisher case final publisher?)
+                                  Chip(
+                                    label: Text(
+                                      work.publishedYear == null
+                                          ? publisher
+                                          : '$publisher · ${work.publishedYear}',
+                                    ),
+                                  )
+                                else if (work.publishedYear case final year?)
+                                  Chip(label: Text('$year')),
+                                Chip(
+                                  label: Text('${work.fileCount} Datei(en)'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 18),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  if (work.progressPosition case final position?) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      work.progressDuration == null
+                          ? 'Fortsetzen bei ${_formatRemoteDuration(position)}'
+                          : '${_formatRemoteDuration(position)} / '
+                                '${_formatRemoteDuration(work.progressDuration!)}',
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                  ],
+                  if (isDocument && detailTracks.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: () =>
+                                Navigator.pop(context, 'open:resume'),
+                            icon: const Icon(Icons.menu_book_outlined),
+                            label: Text(
+                              documentPosition == null ? 'Lesen' : 'Fortsetzen',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        if (isOffline)
+                          PopupMenuButton<String>(
+                            tooltip: 'Offline-Kopie verwalten',
+                            icon: const Icon(Icons.download_done),
+                            onSelected: (value) =>
+                                Navigator.pop(context, value),
+                            itemBuilder: (context) => const [
+                              PopupMenuItem(
+                                value: 'download',
+                                child: ListTile(
+                                  leading: Icon(Icons.add_to_photos_outlined),
+                                  title: Text('Weitere Kapitel laden'),
+                                ),
+                              ),
+                              PopupMenuItem(
+                                value: 'remove_download',
+                                child: ListTile(
+                                  leading: Icon(Icons.delete_outline),
+                                  title: Text('Offline-Kopie löschen'),
+                                ),
+                              ),
+                            ],
+                          )
+                        else
+                          IconButton.filledTonal(
+                            onPressed: () => Navigator.pop(context, 'download'),
+                            tooltip: 'Kapitel offline speichern',
+                            icon: const Icon(Icons.download_outlined),
+                          ),
+                      ],
+                    ),
+                  ],
+                  if (work.description case final description?) ...[
+                    const SizedBox(height: 20),
+                    Text(description),
+                  ],
+                  if (detailTracks.isNotEmpty) ...[
+                    const SizedBox(height: 20),
+                    Row(
                       children: [
                         Text(
-                          work.title,
-                          style: Theme.of(context).textTheme.headlineSmall,
+                          'Dateien',
+                          style: Theme.of(context).textTheme.titleMedium,
                         ),
-                        const SizedBox(height: 6),
-                        Text(work.authors.join(', ')),
-                        if (work.subtitle case final subtitle?) ...[
-                          const SizedBox(height: 4),
-                          Text(subtitle),
-                        ],
-                        if (work.series case final series?) ...[
-                          const SizedBox(height: 6),
-                          Text(
-                            work.seriesSequence == null
-                                ? series
-                                : '$series · Band '
-                                      '${_formatRemoteSequence(work.seriesSequence!)}',
-                          ),
-                        ],
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: [
-                            for (final narrator in work.narrators)
-                              Chip(
-                                avatar: const Icon(Icons.mic_none, size: 16),
-                                label: Text(narrator),
-                              ),
-                            if (work.language case final language?)
-                              Chip(label: Text(_remoteLanguage(language))),
-                            if (work.publisher case final publisher?)
-                              Chip(
-                                label: Text(
-                                  work.publishedYear == null
-                                      ? publisher
-                                      : '$publisher · ${work.publishedYear}',
-                                ),
-                              )
-                            else if (work.publishedYear case final year?)
-                              Chip(label: Text('$year')),
-                            Chip(label: Text('${work.fileCount} Datei(en)')),
+                        const Spacer(),
+                        PopupMenuButton<_DocumentTrackSort>(
+                          tooltip: 'Dateien sortieren',
+                          initialValue: trackSort,
+                          onSelected: (value) =>
+                              setSheetState(() => trackSort = value),
+                          itemBuilder: (context) => const [
+                            PopupMenuItem(
+                              value: _DocumentTrackSort.oldestFirst,
+                              child: Text('Älteste Kapitel zuerst'),
+                            ),
+                            PopupMenuItem(
+                              value: _DocumentTrackSort.newestFirst,
+                              child: Text('Neueste Kapitel zuerst'),
+                            ),
+                            PopupMenuItem(
+                              value: _DocumentTrackSort.titleAscending,
+                              child: Text('Name A–Z'),
+                            ),
                           ],
+                          icon: const Icon(Icons.sort),
                         ),
                       ],
                     ),
-                  ),
-                ],
-              ),
-              if (work.progressPosition case final position?) ...[
-                const SizedBox(height: 16),
-                Text(
-                  work.progressDuration == null
-                      ? 'Fortsetzen bei ${_formatRemoteDuration(position)}'
-                      : '${_formatRemoteDuration(position)} / '
-                            '${_formatRemoteDuration(work.progressDuration!)}',
-                  style: Theme.of(context).textTheme.labelLarge,
-                ),
-              ],
-              if (work.description case final description?) ...[
-                const SizedBox(height: 20),
-                Text(description),
-              ],
-              if (detailTracks.isNotEmpty) ...[
-                const SizedBox(height: 20),
-                Text('Dateien', style: Theme.of(context).textTheme.titleMedium),
-                for (var index = 0; index < detailTracks.length; index++)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Text('${index + 1}'),
-                    title: Text(detailTracks[index].title),
-                    subtitle: _remoteTechnicalSubtitle(detailTracks[index]),
-                    trailing: isDocument
-                        ? const Icon(Icons.open_in_new)
-                        : detailTracks[index].duration == null
-                        ? null
-                        : Text(
-                            _formatRemoteDuration(
-                              detailTracks[index].duration!,
+                    for (final entry in _orderedRemoteTracks(
+                      detailTracks,
+                      trackSort,
+                    ))
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: documentChapterLeading(
+                          context,
+                          entry.originalIndex + 1,
+                          documentChapterReadState(
+                            chapterIndex: entry.originalIndex,
+                            currentChapterIndex: documentProgressIndex,
+                            workFinished: work.progressFinished,
+                            currentPosition: documentPosition,
+                          ),
+                        ),
+                        title: Text(
+                          entry.track.title,
+                          style: documentChapterTitleStyle(
+                            context,
+                            documentChapterReadState(
+                              chapterIndex: entry.originalIndex,
+                              currentChapterIndex: documentProgressIndex,
+                              workFinished: work.progressFinished,
+                              currentPosition: documentPosition,
                             ),
                           ),
-                    onTap: isDocument
-                        ? () => Navigator.pop(context, 'open:$index')
-                        : null,
-                  ),
-              ],
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: detailTracks.isEmpty
-                          ? null
-                          : () => Navigator.pop(
-                              context,
-                              isDocument ? 'open:0' : 'play',
-                            ),
-                      icon: Icon(
-                        isDocument
-                            ? Icons.visibility_outlined
-                            : Icons.play_arrow,
+                        ),
+                        subtitle: _remoteTechnicalSubtitle(entry.track),
+                        trailing: isDocument
+                            ? const Icon(Icons.open_in_new)
+                            : entry.track.duration == null
+                            ? null
+                            : Text(
+                                _formatRemoteDuration(entry.track.duration!),
+                              ),
+                        onTap: isDocument
+                            ? () => Navigator.pop(
+                                context,
+                                'open:${entry.originalIndex}',
+                              )
+                            : null,
                       ),
-                      label: Text(
-                        isDocument
-                            ? 'Erste Datei anzeigen'
-                            : 'Abspielen / fortsetzen',
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  IconButton.filledTonal(
-                    onPressed: () => Navigator.pop(
-                      context,
-                      isOffline ? 'remove_download' : 'download',
-                    ),
-                    tooltip: isOffline
-                        ? 'Offline-Kopie löschen'
-                        : 'Offline speichern',
-                    icon: Icon(
-                      isOffline ? Icons.download_done : Icons.download_outlined,
-                    ),
+                  ],
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      if (!isDocument) ...[
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: detailTracks.isEmpty
+                                ? null
+                                : () => Navigator.pop(context, 'play'),
+                            icon: const Icon(Icons.play_arrow),
+                            label: const Text('Abspielen / fortsetzen'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                      ],
+                      if (!isDocument)
+                        IconButton.filledTonal(
+                          onPressed: () => Navigator.pop(
+                            context,
+                            isOffline ? 'remove_download' : 'download',
+                          ),
+                          tooltip: isOffline
+                              ? 'Offline-Kopie löschen'
+                              : 'Offline speichern',
+                          icon: Icon(
+                            isOffline
+                                ? Icons.download_done
+                                : Icons.download_outlined,
+                          ),
+                        ),
+                    ],
                   ),
                 ],
               ),
-            ],
+            ),
           ),
         ),
-      ),
-    );
+      );
+    }
+    if (action == null) {
+      if (forceOffline) return;
+      try {
+        final result = await _runWithReconnect(
+          server,
+          (active) => _client.works(active, library.id),
+        );
+        if (mounted) {
+          setState(() {
+            _selectedServer = result.server;
+            _works = result.value;
+          });
+        }
+      } catch (_) {}
+      return;
+    }
     if (action == 'download') {
-      await _downloadWork(server, library, work);
+      if (forceOffline) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Kapitel können wieder am Server verwaltet werden.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      final selectedTrackIds = isDocument
+          ? await _selectDownloadTracks(
+              detailTracks,
+              currentTrackIndex: documentProgressIndex,
+              alreadyDownloadedIds: {
+                for (final track
+                    in offlineWork?.tracks ?? const <FundusOfflineTrack>[])
+                  track.id,
+              },
+            )
+          : null;
+      if (isDocument && selectedTrackIds == null) return;
+      await _downloadWork(server, library, work, trackIds: selectedTrackIds);
+      if (mounted) {
+        await _showWork(server, library, work);
+      }
+      return;
+    }
+    if (action.startsWith('similar:')) {
+      final relatedId = action.substring('similar:'.length);
+      final related = _works.where((item) => item.id == relatedId).firstOrNull;
+      if (related != null) await _showWork(server, library, related);
+      return;
+    }
+    if (action.startsWith('annotation:')) {
+      final annotationId = action.substring('annotation:'.length);
+      final bookmark = readerAnnotations.bookmarks
+          .where((item) => item.id == annotationId)
+          .firstOrNull;
+      final highlight = readerAnnotations.highlights
+          .where((item) => item.id == annotationId)
+          .firstOrNull;
+      final position = bookmark?.mediaPosition ?? highlight?.mediaPosition;
+      if (position == null) return;
+      await _openRemoteEpubWork(
+        server,
+        library,
+        work,
+        detailTracks,
+        offlineWork: offlineWork,
+        startFileId: position.fileId,
+        startPosition: position,
+        skipServerLookup: offlineWork != null && _selectedServer == null,
+      );
+      return;
+    }
+    if (action.startsWith('epub_chapter:')) {
+      final chapterIndex = int.tryParse(
+        action.substring('epub_chapter:'.length),
+      );
+      if (chapterIndex == null) return;
+      final epub = detailTracks
+          .where((track) => track.title.toLowerCase().endsWith('.epub'))
+          .firstOrNull;
+      if (epub == null) return;
+      await _openRemoteEpubWork(
+        server,
+        library,
+        work,
+        detailTracks,
+        offlineWork: offlineWork,
+        startFileId: epub.id,
+        initialChapterIndex: chapterIndex,
+        skipServerLookup: offlineWork != null && _selectedServer == null,
+      );
       return;
     }
     if (action == 'remove_download') {
@@ -1682,10 +2514,56 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       }
       return;
     }
-    if (action?.startsWith('open:') ?? false) {
-      final index = int.tryParse(action!.substring(5));
+    if (action.startsWith('open:')) {
+      final target = action.substring(5);
+      final resume = target == 'resume';
+      final progressFileId = documentProgressFileId ?? documentPosition?.fileId;
+      final resumeIndex = detailTracks.indexWhere(
+        (track) => track.id == progressFileId,
+      );
+      final firstReadableIndex = detailTracks.indexWhere((track) {
+        final title = track.title.toLowerCase();
+        return title.endsWith('.cbz') ||
+            title.endsWith('.pdf') ||
+            title.endsWith('.epub');
+      });
+      final index = resume
+          ? (resumeIndex < 0 ? firstReadableIndex : resumeIndex)
+          : int.tryParse(target);
       if (index == null || index < 0 || index >= detailTracks.length) return;
-      if (offlineWork != null && index < offlineWork.tracks.length) {
+      if (detailTracks[index].title.toLowerCase().endsWith('.cbz')) {
+        await _openRemoteComicWork(
+          server,
+          library,
+          work,
+          detailTracks,
+          offlineWork: offlineWork,
+          startFileId: resume ? null : detailTracks[index].id,
+          skipServerLookup: forceOffline,
+        );
+        return;
+      }
+      if (detailTracks[index].title.toLowerCase().endsWith('.pdf')) {
+        await _openRemotePdfWork(
+          server,
+          library,
+          work,
+          detailTracks,
+          offlineWork: offlineWork,
+          startFileId: resume ? null : detailTracks[index].id,
+          skipServerLookup: forceOffline,
+        );
+      } else if (detailTracks[index].title.toLowerCase().endsWith('.epub')) {
+        await _openRemoteEpubWork(
+          server,
+          library,
+          work,
+          detailTracks,
+          offlineWork: offlineWork,
+          startFileId: resume ? null : detailTracks[index].id,
+          skipServerLookup: forceOffline,
+        );
+      } else if (offlineWork != null && index < offlineWork.tracks.length) {
         await _openDocumentPath(offlineWork.tracks[index].path);
       } else {
         await _openRemoteDocument(server, library, detailTracks[index]);
@@ -1726,8 +2604,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   Future<void> _downloadWork(
     FundusRemoteServer server,
     FundusRemoteLibrary library,
-    FundusRemoteWork work,
-  ) async {
+    FundusRemoteWork work, {
+    Set<String>? trackIds,
+  }) async {
     final key = _offlineKey(server, library, work);
     setState(() {
       _downloadingKey = key;
@@ -1752,6 +2631,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           active,
           library,
           work,
+          trackIds: trackIds,
           onProgress: (completed, total) {
             if (!mounted) return;
             setState(() {
@@ -1821,6 +2701,264 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     }
   }
 
+  Future<Set<String>?> _selectDownloadTracks(
+    List<FundusRemoteTrack> tracks, {
+    required int currentTrackIndex,
+    Set<String> alreadyDownloadedIds = const {},
+  }) async {
+    if (tracks.isEmpty || !mounted) return null;
+    final firstUnread = currentTrackIndex < 0
+        ? 0
+        : currentTrackIndex.clamp(0, tracks.length - 1);
+    var range = RangeValues(
+      firstUnread.toDouble(),
+      (firstUnread + 99).clamp(0, tracks.length - 1).toDouble(),
+    );
+    var mode = _ChapterSelectionMode.range;
+    final individual = <int>{};
+    final startController = TextEditingController(text: '${firstUnread + 1}');
+    final endController = TextEditingController(
+      text: '${range.end.round() + 1}',
+    );
+    final selected = await showDialog<Set<String>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          void select(int start, int end) => setDialogState(() {
+            range = RangeValues(
+              start.clamp(0, tracks.length - 1).toDouble(),
+              end.clamp(0, tracks.length - 1).toDouble(),
+            );
+            startController.text = '${range.start.round() + 1}';
+            endController.text = '${range.end.round() + 1}';
+          });
+
+          void applyExactRange() {
+            final start = int.tryParse(startController.text.trim());
+            final end = int.tryParse(endController.text.trim());
+            if (start == null || end == null) return;
+            final indexes = chapterSelectionRange(
+              total: tracks.length,
+              start: start,
+              end: end,
+            ).toList()..sort();
+            select(indexes.first, indexes.last);
+          }
+
+          final start = range.start.round();
+          final end = range.end.round();
+          final rangeIndexes = chapterSelectionRange(
+            total: tracks.length,
+            start: start + 1,
+            end: end + 1,
+          );
+          final selectedIndexes = mode == _ChapterSelectionMode.range
+              ? rangeIndexes
+              : individual;
+          final newIndexes = selectedIndexes
+              .where(
+                (index) => !alreadyDownloadedIds.contains(tracks[index].id),
+              )
+              .toSet();
+          return AlertDialog(
+            scrollable: true,
+            icon: const Icon(Icons.download_for_offline_outlined),
+            title: const Text('Kapitel offline speichern'),
+            content: SizedBox(
+              width: 520,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Wähle einen Bereich oder stelle eine individuelle '
+                    'Kapitelauswahl zusammen. Bereits vorhandene Downloads '
+                    'werden dabei nicht erneut übertragen.',
+                  ),
+                  const SizedBox(height: 12),
+                  SegmentedButton<_ChapterSelectionMode>(
+                    segments: const [
+                      ButtonSegment(
+                        value: _ChapterSelectionMode.range,
+                        icon: Icon(Icons.linear_scale),
+                        label: Text('Bereich'),
+                      ),
+                      ButtonSegment(
+                        value: _ChapterSelectionMode.individual,
+                        icon: Icon(Icons.checklist),
+                        label: Text('Einzeln'),
+                      ),
+                    ],
+                    selected: {mode},
+                    onSelectionChanged: (selection) => setDialogState(() {
+                      mode = selection.single;
+                      if (mode == _ChapterSelectionMode.individual &&
+                          individual.isEmpty) {
+                        individual.addAll(rangeIndexes);
+                      }
+                    }),
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ActionChip(
+                        label: const Text('Nächste 100'),
+                        onPressed: () {
+                          mode = _ChapterSelectionMode.range;
+                          select(firstUnread, firstUnread + 99);
+                        },
+                      ),
+                      ActionChip(
+                        label: const Text('Ab aktuellem Kapitel'),
+                        onPressed: () {
+                          mode = _ChapterSelectionMode.range;
+                          select(firstUnread, tracks.length - 1);
+                        },
+                      ),
+                      ActionChip(
+                        label: const Text('Alle'),
+                        onPressed: () {
+                          mode = _ChapterSelectionMode.range;
+                          select(0, tracks.length - 1);
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  if (mode == _ChapterSelectionMode.range) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: startController,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            decoration: const InputDecoration(
+                              labelText: 'Von Kapitel',
+                              border: OutlineInputBorder(),
+                            ),
+                            onSubmitted: (_) => applyExactRange(),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: endController,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            decoration: const InputDecoration(
+                              labelText: 'Bis Kapitel',
+                              border: OutlineInputBorder(),
+                            ),
+                            onSubmitted: (_) => applyExactRange(),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: applyExactRange,
+                          tooltip: 'Exakten Bereich übernehmen',
+                          icon: const Icon(Icons.check),
+                        ),
+                      ],
+                    ),
+                    RangeSlider(
+                      values: range,
+                      min: 0,
+                      max: (tracks.length - 1).toDouble(),
+                      divisions: tracks.length > 1 ? tracks.length - 1 : null,
+                      labels: RangeLabels('${start + 1}', '${end + 1}'),
+                      onChanged: tracks.length > 1
+                          ? (value) =>
+                                select(value.start.round(), value.end.round())
+                          : null,
+                    ),
+                    Text(
+                      '${tracks[start].title}\n–\n${tracks[end].title}',
+                      maxLines: 5,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ] else ...[
+                    Row(
+                      children: [
+                        Text('${individual.length} Kapitel ausgewählt'),
+                        const Spacer(),
+                        TextButton(
+                          onPressed: () => setDialogState(individual.clear),
+                          child: const Text('Keine'),
+                        ),
+                      ],
+                    ),
+                    SizedBox(
+                      height: 300,
+                      child: ListView.builder(
+                        itemCount: tracks.length,
+                        itemBuilder: (context, index) {
+                          final downloaded = alreadyDownloadedIds.contains(
+                            tracks[index].id,
+                          );
+                          return CheckboxListTile(
+                            dense: true,
+                            value: individual.contains(index),
+                            secondary: downloaded
+                                ? const Icon(Icons.download_done, size: 20)
+                                : null,
+                            title: Text(
+                              tracks[index].title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: downloaded
+                                ? const Text('Bereits offline')
+                                : null,
+                            onChanged: (checked) => setDialogState(() {
+                              checked == true
+                                  ? individual.add(index)
+                                  : individual.remove(index);
+                            }),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  Text(
+                    '${selectedIndexes.length} ausgewählt · '
+                    '${newIndexes.length} neu herunterzuladen',
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Abbrechen'),
+              ),
+              FilledButton.icon(
+                onPressed: newIndexes.isEmpty
+                    ? null
+                    : () => Navigator.pop(dialogContext, {
+                        for (final index in newIndexes) tracks[index].id,
+                      }),
+                icon: const Icon(Icons.download),
+                label: Text('${newIndexes.length} herunterladen'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    startController.dispose();
+    endController.dispose();
+    return selected;
+  }
+
   double? get _downloadProgress {
     if (_downloadTotal <= 0) return null;
     final expected = _downloadExpectedBytes;
@@ -1852,10 +2990,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     final key = '${server.id}/${library.id}/${work.id}';
     final future = _coverRequests.putIfAbsent(
       key,
-      () => _runWithReconnect(
-        server,
-        (active) => _client.cover(active, library.id, work.id),
-      ).then((result) => result.value),
+      () => _loadCoverWithRetry(server, library, work),
     );
     return FutureBuilder<Uint8List>(
       future: future,
@@ -1880,39 +3015,85 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     );
   }
 
+  Future<Uint8List> _loadCoverWithRetry(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work,
+  ) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final result = await _runWithReconnect(
+          server,
+          (active) => _client.cover(active, library.id, work.id),
+        );
+        return result.value;
+      } on FundusRemoteRequestException catch (error) {
+        // A missing/forbidden cover is a permanent response. Retrying it and
+        // relocating the server created hundreds of requests and could block
+        // both Flutter clients while the embedded server handled the storm.
+        if (error.statusCode >= 400 && error.statusCode < 500) rethrow;
+        lastError = error;
+        if (attempt < 2) {
+          await Future<void>.delayed(Duration(milliseconds: 250 << attempt));
+        }
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) {
+          await Future<void>.delayed(Duration(milliseconds: 250 << attempt));
+        }
+      }
+    }
+    throw lastError ??
+        const HttpException('Cover konnte nicht geladen werden.');
+  }
+
   Future<({FundusRemoteServer server, T value})> _runWithReconnect<T>(
     FundusRemoteServer server,
     Future<T> Function(FundusRemoteServer server) operation,
   ) async {
     try {
       return (server: server, value: await operation(server));
+    } on FundusRemoteRequestException catch (error) {
+      // Relocation can only help transport/server failures, never a valid 4xx
+      // response such as a permanently missing cover.
+      if (error.statusCode >= 400 && error.statusCode < 500) rethrow;
+      return _retryAfterRelocation(server, operation, error);
     } catch (firstError) {
+      return _retryAfterRelocation(server, operation, firstError);
+    }
+  }
+
+  Future<({FundusRemoteServer server, T value})> _retryAfterRelocation<T>(
+    FundusRemoteServer server,
+    Future<T> Function(FundusRemoteServer server) operation,
+    Object firstError,
+  ) async {
+    unawaited(
+      FundusDiagnostics.instance.record('remote.reconnect_started', {
+        'server_id': server.id,
+        'reason': _safeNetworkError(firstError),
+      }),
+    );
+    final relocated = await _resolveShared(server);
+    await _replaceServer(relocated);
+    try {
+      final value = await operation(relocated);
       unawaited(
-        FundusDiagnostics.instance.record('remote.reconnect_started', {
+        FundusDiagnostics.instance.record('remote.reconnect_completed', {
           'server_id': server.id,
-          'reason': _safeNetworkError(firstError),
+          'endpoint_changed': relocated.baseUri != server.baseUri,
         }),
       );
-      final relocated = await _resolveShared(server);
-      await _replaceServer(relocated);
-      try {
-        final value = await operation(relocated);
-        unawaited(
-          FundusDiagnostics.instance.record('remote.reconnect_completed', {
-            'server_id': server.id,
-            'endpoint_changed': relocated.baseUri != server.baseUri,
-          }),
-        );
-        return (server: relocated, value: value);
-      } catch (retryError) {
-        unawaited(
-          FundusDiagnostics.instance.record('remote.reconnect_failed', {
-            'server_id': server.id,
-            'reason': _safeNetworkError(retryError),
-          }),
-        );
-        rethrow;
-      }
+      return (server: relocated, value: value);
+    } catch (retryError) {
+      unawaited(
+        FundusDiagnostics.instance.record('remote.reconnect_failed', {
+          'server_id': server.id,
+          'reason': _safeNetworkError(retryError),
+        }),
+      );
+      rethrow;
     }
   }
 
@@ -2004,25 +3185,6 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     'archive',
   }.contains(kind);
 
-  static IconData _documentFileIcon(String filename) {
-    final lower = filename.toLowerCase();
-    if (lower.endsWith('.pdf')) return Icons.picture_as_pdf_outlined;
-    if ({
-      '.jpg',
-      '.jpeg',
-      '.png',
-      '.webp',
-      '.gif',
-      '.bmp',
-    }.any(lower.endsWith)) {
-      return Icons.image_outlined;
-    }
-    if (lower.endsWith('.zip') || lower.endsWith('.cbz')) {
-      return Icons.archive_outlined;
-    }
-    return Icons.description_outlined;
-  }
-
   Future<void> _openRemoteDocument(
     FundusRemoteServer server,
     FundusRemoteLibrary library,
@@ -2076,10 +3238,798 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     }
   }
 
+  Future<File> _cachedRemoteDocument(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteTrack track,
+  ) => _documentCache.obtain(
+    cacheKey: '${server.id}/${library.id}/${track.id}',
+    filename: track.title,
+    open: () async {
+      final result = await _runWithReconnect(
+        server,
+        (active) => _client.openContent(
+          active,
+          libraryId: library.id,
+          fileId: track.id,
+        ),
+      );
+      final remote = result.value;
+      return FundusRemoteDocumentSource(
+        bytes: remote.response,
+        contentLength: remote.response.contentLength > 0
+            ? remote.response.contentLength
+            : null,
+        close: remote.close,
+      );
+    },
+  );
+
+  Future<void> _openRemoteComicWork(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work,
+    List<FundusRemoteTrack> tracks, {
+    required FundusOfflineWork? offlineWork,
+    String? startFileId,
+    bool skipServerLookup = false,
+  }) async {
+    final comics =
+        tracks
+            .where((track) => track.title.toLowerCase().endsWith('.cbz'))
+            .toList(growable: false)
+          ..sort((left, right) => left.position.compareTo(right.position));
+    if (comics.isEmpty) return;
+
+    final localProgress = await _offlineStore.loadProgress(
+      serverId: server.id,
+      libraryId: library.id,
+      workId: work.id,
+    );
+    FundusRemoteProgress? serverProgress;
+    if (!skipServerLookup) {
+      try {
+        final result = await _runWithReconnect(
+          server,
+          (active) => _client.progress(active, library.id, work.id),
+        );
+        server = result.server;
+        serverProgress = result.value;
+      } catch (_) {}
+    }
+    var progress = serverProgress ?? localProgress;
+    var selectedDeviceProgress = false;
+    final localPosition = localProgress?.mediaPosition;
+    final serverPosition = serverProgress?.mediaPosition;
+    final deviceId = await _store.deviceId();
+    if (localPosition != null &&
+        serverPosition != null &&
+        readerPositionsDiffer(localPosition, serverPosition)) {
+      final localDeviceName = await _store.deviceName();
+      if (!mounted) return;
+      final choice = await resolveReaderProgressConflict(
+        context,
+        devicePosition: localPosition,
+        serverPosition: serverPosition,
+        deviceName: localDeviceName,
+        serverDeviceName: serverProgress?.deviceName ?? server.name,
+      );
+      progress = choice == ReaderProgressConflictChoice.keepDevice
+          ? localProgress
+          : serverProgress;
+      selectedDeviceProgress =
+          choice == ReaderProgressConflictChoice.keepDevice;
+    }
+    final storedPosition = progress?.mediaPosition;
+    var chapterIndex = comics.indexWhere(
+      (track) => track.id == (startFileId ?? progress?.fileId),
+    );
+    if (chapterIndex < 0) chapterIndex = 0;
+    var initialPage =
+        storedPosition?.kind == MediaPositionKind.imageIndex &&
+            storedPosition?.fileId == comics[chapterIndex].id
+        ? ((storedPosition!.numericValue ?? 1).round() - 1).clamp(0, 1 << 30)
+        : 0;
+    var initialElementId = storedPosition?.fileId == comics[chapterIndex].id
+        ? storedPosition?.elementId
+        : null;
+    var initialScrollOffset = storedPosition?.fileId == comics[chapterIndex].id
+        ? storedPosition?.scrollOffset
+        : null;
+    Map<String, Object?>? portableProfile;
+    if (!skipServerLookup) {
+      try {
+        portableProfile = await _client.readerProfile(
+          server,
+          libraryId: library.id,
+          workId: work.id,
+          deviceKey: Platform.operatingSystem,
+          readerKind: 'comic',
+        );
+      } catch (_) {}
+    }
+    var profile = portableProfile == null
+        ? await PublicationReaderSettings.loadComicProfile(workId: work.id)
+        : PublicationReaderProfile.fromJson(portableProfile);
+    if (selectedDeviceProgress && localPosition != null) {
+      await _saveRemoteReaderProgress(
+        server,
+        library,
+        work,
+        comics[chapterIndex],
+        localPosition,
+        deviceId: deviceId,
+        finished: localProgress?.finished ?? false,
+      );
+    } else if (serverPosition != null) {
+      final cached = await _offlineStore.saveMediaProgress(
+        serverId: server.id,
+        libraryId: library.id,
+        workId: work.id,
+        fileId: comics[chapterIndex].id,
+        position: serverPosition,
+        finished: serverProgress?.finished ?? false,
+      );
+      await _offlineStore.markProgressSynced(cached);
+    }
+    if (!mounted) return;
+
+    while (mounted) {
+      final track = comics[chapterIndex];
+      final offlineTrack = offlineWork?.tracks
+          .where((candidate) => candidate.id == track.id)
+          .firstOrNull;
+      final File file;
+      try {
+        file = offlineTrack == null
+            ? await _cachedRemoteDocument(server, library, track)
+            : File(offlineTrack.path);
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Manga-Kapitel konnte nicht geladen werden.'),
+          ),
+        );
+        return;
+      }
+      if (!mounted) return;
+      final result = await showComicBookViewer(
+        context,
+        archivePath: file.path,
+        initialPage: initialPage,
+        initialElementId: initialElementId,
+        initialScrollOffset: initialScrollOffset,
+        initialProfile: profile,
+        hasPreviousChapter: chapterIndex > 0,
+        hasNextChapter: chapterIndex + 1 < comics.length,
+        chapterTitle: track.title,
+        chapterIndex: chapterIndex,
+        chapterCount: comics.length,
+        chapterTitles: comics.map((chapter) => chapter.title).toList(),
+        chapterFileId: track.id,
+        onProfileChanged: (updated) {
+          profile = updated;
+          unawaited(
+            PublicationReaderSettings.saveComicProfile(
+              updated,
+              workId: work.id,
+            ),
+          );
+          if (!skipServerLookup) {
+            unawaited(
+              _client.saveReaderProfile(
+                server,
+                libraryId: library.id,
+                workId: work.id,
+                deviceKey: Platform.operatingSystem,
+                readerKind: 'comic',
+                profile: updated.toJson(),
+              ),
+            );
+          }
+        },
+        onPositionChanged: (page, total, elementId, scrollOffset) {
+          final mediaPosition = MediaPosition(
+            kind: MediaPositionKind.imageIndex,
+            numericValue: page + 1,
+            total: total.toDouble(),
+            fileId: track.id,
+            chapterId: track.title,
+            elementId: elementId,
+            scrollOffset: scrollOffset,
+            key: track.title,
+            label:
+                'Kapitel ${chapterIndex + 1}/${comics.length} · Seite ${page + 1}',
+          );
+          _readerProgressQueue = _readerProgressQueue.then(
+            (_) => _saveRemoteReaderProgress(
+              server,
+              library,
+              work,
+              track,
+              mediaPosition,
+              deviceId: deviceId,
+              finished: chapterIndex + 1 == comics.length && page + 1 >= total,
+              syncRemote: !skipServerLookup,
+            ),
+          );
+        },
+      );
+      await _readerProgressQueue;
+      if (!mounted || result == null) return;
+      if (result.action == ComicBookViewerAction.selectChapter &&
+          result.chapterIndex != null &&
+          result.chapterIndex! >= 0 &&
+          result.chapterIndex! < comics.length) {
+        chapterIndex = result.chapterIndex!;
+      } else if (result.action == ComicBookViewerAction.previousChapter &&
+          chapterIndex > 0) {
+        chapterIndex--;
+      } else if (result.action == ComicBookViewerAction.nextChapter &&
+          chapterIndex + 1 < comics.length) {
+        chapterIndex++;
+      } else {
+        return;
+      }
+      initialPage = 0;
+      initialElementId = null;
+      initialScrollOffset = null;
+    }
+  }
+
+  Future<void> _saveRemoteReaderProgress(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work,
+    FundusRemoteTrack track,
+    MediaPosition position, {
+    required String deviceId,
+    required bool finished,
+    bool syncRemote = true,
+  }) async {
+    try {
+      final pending = await _offlineStore.saveMediaProgress(
+        serverId: server.id,
+        libraryId: library.id,
+        workId: work.id,
+        fileId: track.id,
+        position: position,
+        finished: finished,
+      );
+      if (!syncRemote) return;
+      await _runWithReconnect(
+        server,
+        (active) => _client.saveMediaProgress(
+          active,
+          libraryId: library.id,
+          workId: work.id,
+          fileId: track.id,
+          position: position,
+          finished: finished,
+          deviceId: deviceId,
+          operationId: pending.operationId,
+        ),
+      );
+      await _offlineStore.markProgressSynced(pending);
+    } catch (_) {
+      // Offline progress remains queued locally and is retried later. A cache
+      // write error must not break the serialized queue for later positions.
+    }
+  }
+
+  Future<void> _openRemotePdfWork(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work,
+    List<FundusRemoteTrack> tracks, {
+    required FundusOfflineWork? offlineWork,
+    String? startFileId,
+    bool skipServerLookup = false,
+  }) async {
+    final pdfs =
+        tracks
+            .where((track) => track.title.toLowerCase().endsWith('.pdf'))
+            .toList(growable: false)
+          ..sort((left, right) => left.position.compareTo(right.position));
+    if (pdfs.isEmpty) return;
+
+    final localProgress = await _offlineStore.loadProgress(
+      serverId: server.id,
+      libraryId: library.id,
+      workId: work.id,
+    );
+    FundusRemoteProgress? serverProgress;
+    if (!skipServerLookup) {
+      try {
+        final result = await _runWithReconnect(
+          server,
+          (active) => _client.progress(active, library.id, work.id),
+        );
+        server = result.server;
+        serverProgress = result.value;
+      } catch (_) {}
+    }
+
+    final localPosition = localProgress?.mediaPosition;
+    final serverPosition = serverProgress?.mediaPosition;
+    var selectedPosition = serverPosition ?? localPosition;
+    var selectedFinished =
+        serverProgress?.finished ?? localProgress?.finished ?? false;
+    var selectedDeviceProgress = false;
+    if (startFileId == null &&
+        localPosition != null &&
+        serverPosition != null &&
+        readerPositionsDiffer(localPosition, serverPosition)) {
+      final localDeviceName = await _store.deviceName();
+      if (!mounted) return;
+      final choice = await resolveReaderProgressConflict(
+        context,
+        devicePosition: localPosition,
+        serverPosition: serverPosition,
+        deviceName: localDeviceName,
+        serverDeviceName: serverProgress?.deviceName ?? server.name,
+      );
+      selectedDeviceProgress =
+          choice == ReaderProgressConflictChoice.keepDevice;
+      selectedPosition = selectedDeviceProgress
+          ? localPosition
+          : serverPosition;
+      selectedFinished = selectedDeviceProgress
+          ? localProgress?.finished ?? false
+          : serverProgress?.finished ?? false;
+    }
+
+    final targetFileId = startFileId ?? selectedPosition?.fileId;
+    var fileIndex = pdfs.indexWhere((track) => track.id == targetFileId);
+    if (fileIndex < 0) fileIndex = 0;
+    final track = pdfs[fileIndex];
+    final deviceId = await _store.deviceId();
+    if (selectedDeviceProgress && selectedPosition != null) {
+      await _saveRemoteReaderProgress(
+        server,
+        library,
+        work,
+        track,
+        selectedPosition,
+        deviceId: deviceId,
+        finished: selectedFinished,
+      );
+    } else if (serverPosition != null) {
+      final cached = await _offlineStore.saveMediaProgress(
+        serverId: server.id,
+        libraryId: library.id,
+        workId: work.id,
+        fileId: track.id,
+        position: serverPosition,
+        finished: serverProgress?.finished ?? false,
+      );
+      await _offlineStore.markProgressSynced(cached);
+    }
+
+    final offlineTrack = offlineWork?.tracks
+        .where((candidate) => candidate.id == track.id)
+        .firstOrNull;
+    final File file;
+    try {
+      file = offlineTrack == null
+          ? await _cachedRemoteDocument(server, library, track)
+          : File(offlineTrack.path);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('PDF konnte nicht geladen werden.')),
+      );
+      return;
+    }
+    if (!mounted) return;
+    final initialPage =
+        selectedPosition?.kind == MediaPositionKind.page &&
+            selectedPosition?.fileId == track.id &&
+            startFileId == null
+        ? ((selectedPosition!.numericValue ?? 1).round() - 1).clamp(0, 1 << 30)
+        : 0;
+    try {
+      await showDocumentPreview(
+        context,
+        path: file.path,
+        initialPage: initialPage,
+        onOpenExternal: (path) => const DocumentFileOpener().open(path),
+        onPageChanged: (page, total) {
+          final position = MediaPosition(
+            kind: MediaPositionKind.page,
+            numericValue: page + 1,
+            total: total.toDouble(),
+            fileId: track.id,
+            key: track.title,
+            label: 'Seite ${page + 1}',
+          );
+          _readerProgressQueue = _readerProgressQueue.then(
+            (_) => _saveRemoteReaderProgress(
+              server,
+              library,
+              work,
+              track,
+              position,
+              deviceId: deviceId,
+              finished: page + 1 >= total,
+              syncRemote: !skipServerLookup,
+            ),
+          );
+        },
+      );
+      await _readerProgressQueue;
+    } on DocumentPreviewException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+
+  Future<void> _openRemoteEpubWork(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work,
+    List<FundusRemoteTrack> tracks, {
+    required FundusOfflineWork? offlineWork,
+    String? startFileId,
+    MediaPosition? startPosition,
+    int? initialChapterIndex,
+    bool skipServerLookup = false,
+  }) async {
+    final epubs =
+        tracks
+            .where((track) => track.title.toLowerCase().endsWith('.epub'))
+            .toList(growable: false)
+          ..sort((left, right) => left.position.compareTo(right.position));
+    if (epubs.isEmpty) return;
+    final localProgress = await _offlineStore.loadProgress(
+      serverId: server.id,
+      libraryId: library.id,
+      workId: work.id,
+    );
+    FundusRemoteProgress? serverProgress;
+    if (!skipServerLookup) {
+      try {
+        final result = await _runWithReconnect(
+          server,
+          (active) => _client.progress(active, library.id, work.id),
+        );
+        server = result.server;
+        serverProgress = result.value;
+      } catch (_) {}
+    }
+    final localPosition = localProgress?.mediaPosition;
+    final serverPosition = serverProgress?.mediaPosition;
+    var selectedPosition = startPosition ?? serverPosition ?? localPosition;
+    if (startPosition == null &&
+        startFileId == null &&
+        localPosition != null &&
+        serverPosition != null &&
+        readerPositionsDiffer(localPosition, serverPosition)) {
+      final deviceName = await _store.deviceName();
+      if (!mounted) return;
+      final choice = await resolveReaderProgressConflict(
+        context,
+        devicePosition: localPosition,
+        serverPosition: serverPosition,
+        deviceName: deviceName,
+        serverDeviceName: serverProgress?.deviceName ?? server.name,
+      );
+      selectedPosition = choice == ReaderProgressConflictChoice.keepDevice
+          ? localPosition
+          : serverPosition;
+    }
+    final targetFileId = startFileId ?? selectedPosition?.fileId;
+    var fileIndex = epubs.indexWhere((track) => track.id == targetFileId);
+    if (fileIndex < 0) fileIndex = 0;
+    final track = epubs[fileIndex];
+    final offlineTrack = offlineWork?.tracks
+        .where((candidate) => candidate.id == track.id)
+        .firstOrNull;
+    final File file;
+    try {
+      file = offlineTrack == null
+          ? await _cachedRemoteDocument(server, library, track)
+          : File(offlineTrack.path);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('EPUB konnte nicht geladen werden.')),
+      );
+      return;
+    }
+    var annotations = await _offlineStore.loadAnnotations(
+      serverId: server.id,
+      libraryId: library.id,
+      workId: work.id,
+    );
+    final syncAnnotations =
+        !skipServerLookup && await AnnotationSyncSettings.enabled();
+    Map<String, Object?>? portableProfile;
+    if (!skipServerLookup) {
+      try {
+        portableProfile = await _client.readerProfile(
+          server,
+          libraryId: library.id,
+          workId: work.id,
+          deviceKey: Platform.operatingSystem,
+          readerKind: 'epub',
+        );
+      } catch (_) {}
+    }
+    final profile = portableProfile == null
+        ? await PublicationReaderSettings.loadReflowProfile(workId: work.id)
+        : ReflowReaderProfile.fromJson(portableProfile);
+    final deviceId = await _store.deviceId();
+    if (!mounted) return;
+    try {
+      await showEpubReader(
+        context,
+        path: file.path,
+        fileId: track.id,
+        relativePath: track.title,
+        initialChapterIndex: initialChapterIndex,
+        initialPosition:
+            initialChapterIndex == null &&
+                selectedPosition?.kind == MediaPositionKind.epubCfi &&
+                selectedPosition?.fileId == track.id
+            ? selectedPosition
+            : null,
+        initialProfile: profile,
+        onProfileChanged: (updated) {
+          unawaited(
+            PublicationReaderSettings.saveReflowProfile(
+              updated,
+              workId: work.id,
+            ),
+          );
+          if (!skipServerLookup) {
+            unawaited(
+              _client.saveReaderProfile(
+                server,
+                libraryId: library.id,
+                workId: work.id,
+                deviceKey: Platform.operatingSystem,
+                readerKind: 'epub',
+                profile: updated.toJson(),
+              ),
+            );
+          }
+        },
+        onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
+        onResetWorkProfile: () =>
+            PublicationReaderSettings.clearReflowProfile(work.id),
+        initialBookmarks: annotations.bookmarks,
+        initialHighlights: annotations.highlights,
+        onAddBookmark: (position, label) async {
+          final local = await _offlineStore.addMediaBookmark(
+            serverId: server.id,
+            libraryId: library.id,
+            workId: work.id,
+            fileId: track.id,
+            position: position,
+            label: label,
+          );
+          annotations = local;
+          if (syncAnnotations) {
+            try {
+              final remote = await _client.saveBookmark(
+                server,
+                libraryId: library.id,
+                workId: work.id,
+                fileId: track.id,
+                position: position,
+                label: label,
+              );
+              annotations = _mergeAnnotations(work, local, remote);
+              await _offlineStore.cacheAnnotations(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                annotations: annotations,
+              );
+            } catch (_) {}
+          }
+          return annotations;
+        },
+        onAddHighlight: (position, quote, color, note) async {
+          final local = await _offlineStore.addTextHighlight(
+            serverId: server.id,
+            libraryId: library.id,
+            workId: work.id,
+            fileId: track.id,
+            position: position,
+            quote: quote,
+            color: color,
+            note: note,
+          );
+          annotations = local;
+          if (syncAnnotations) {
+            try {
+              final remote = await _client.saveHighlight(
+                server,
+                libraryId: library.id,
+                workId: work.id,
+                fileId: track.id,
+                position: position,
+                quote: quote,
+                color: color,
+                note: note,
+              );
+              annotations = _mergeAnnotations(work, local, remote);
+              await _offlineStore.cacheAnnotations(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                annotations: annotations,
+              );
+            } catch (_) {}
+          }
+          return annotations;
+        },
+        onDeleteBookmark: (id) async {
+          final local = await _offlineStore.deleteAnnotation(
+            serverId: server.id,
+            libraryId: library.id,
+            workId: work.id,
+            annotationId: id,
+          );
+          annotations = local;
+          if (syncAnnotations) {
+            try {
+              final remote = await _client.deleteAnnotation(
+                server,
+                libraryId: library.id,
+                workId: work.id,
+                annotationId: id,
+                highlight: false,
+              );
+              annotations = _mergeAnnotations(work, local, remote);
+              await _offlineStore.cacheAnnotations(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                annotations: annotations,
+              );
+            } catch (_) {}
+          }
+          return annotations;
+        },
+        onDeleteHighlight: (id) async {
+          final local = await _offlineStore.deleteAnnotation(
+            serverId: server.id,
+            libraryId: library.id,
+            workId: work.id,
+            annotationId: id,
+          );
+          annotations = local;
+          if (syncAnnotations) {
+            try {
+              final remote = await _client.deleteAnnotation(
+                server,
+                libraryId: library.id,
+                workId: work.id,
+                annotationId: id,
+                highlight: true,
+              );
+              annotations = _mergeAnnotations(work, local, remote);
+              await _offlineStore.cacheAnnotations(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                annotations: annotations,
+              );
+            } catch (_) {}
+          }
+          return annotations;
+        },
+        onExportAnnotations: () => _exportRemoteAnnotations(work, annotations),
+        onPositionChanged: (position) {
+          _readerProgressQueue = _readerProgressQueue.then(
+            (_) => _saveRemoteReaderProgress(
+              server,
+              library,
+              work,
+              track,
+              position,
+              deviceId: deviceId,
+              finished: (position.fraction ?? 0) >= .999,
+              syncRemote: !skipServerLookup,
+            ),
+          );
+        },
+      );
+      await _readerProgressQueue;
+    } on EpubPackageException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('EPUB konnte nicht geöffnet werden: $error')),
+      );
+    }
+  }
+
+  Future<void> _exportRemoteAnnotations(
+    FundusRemoteWork work,
+    WorkAnnotations annotations,
+  ) async {
+    final format = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('Annotationen exportieren'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(dialogContext, 'md'),
+            child: const ListTile(
+              leading: Icon(Icons.description_outlined),
+              title: Text('Markdown'),
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(dialogContext, 'json'),
+            child: const ListTile(
+              leading: Icon(Icons.data_object),
+              title: Text('JSON'),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (format == null) return;
+    final safeTitle = work.title.replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_');
+    final destination = await FilePicker.saveFile(
+      dialogTitle: 'Fundus-Annotationen exportieren',
+      fileName: '${safeTitle}_annotationen.$format',
+      type: FileType.custom,
+      allowedExtensions: [format],
+    );
+    if (destination == null) return;
+    final contents = format == 'json'
+        ? exportAnnotationsAsJson(
+            workId: work.id,
+            workTitle: work.title,
+            annotations: annotations,
+          )
+        : exportAnnotationsAsMarkdown(
+            workTitle: work.title,
+            annotations: annotations,
+          );
+    await File(destination).writeAsString(contents, flush: true);
+  }
+
   Future<void> _openDocumentPath(String path) async {
     try {
       if (path.toLowerCase().endsWith('.cbz')) {
         await showComicBookViewer(context, archivePath: path);
+      } else if (supportsInternalEpubReader(path)) {
+        final profile = await PublicationReaderSettings.loadReflowProfile();
+        if (!mounted) return;
+        await showEpubReader(
+          context,
+          path: path,
+          initialProfile: profile,
+          onProfileChanged: (updated) =>
+              unawaited(PublicationReaderSettings.saveReflowProfile(updated)),
+          onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
+        );
+      } else if (supportsInternalReflowTextReader(path)) {
+        final profile = await PublicationReaderSettings.loadReflowProfile();
+        if (!mounted) return;
+        await showReflowTextReader(
+          context,
+          path: path,
+          title: path.split(Platform.pathSeparator).last,
+          initialProfile: profile,
+          onProfileChanged: (updated) =>
+              unawaited(PublicationReaderSettings.saveReflowProfile(updated)),
+          onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
+        );
       } else if (path.toLowerCase().endsWith('.zip')) {
         await showZipArchiveBrowser(
           context,
@@ -2096,6 +4046,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         await const DocumentFileOpener().open(path);
       }
     } on DocumentPreviewException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } on EpubPackageException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } on ReflowTextReaderException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -2117,7 +4077,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     final values = <String>[
       if (work.authors.isNotEmpty) work.authors.join(', '),
       if (work.series != null) work.series!,
-      'Offline',
+      '${work.sourceServerName ?? work.serverId} / '
+          '${work.sourceLibraryName ?? work.libraryId}',
     ];
     return values.join(' · ');
   }
@@ -2142,6 +4103,40 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
 
   Future<void> _showOfflineWork(FundusOfflineWork offline) async {
     final isDocument = _isDocumentKind(offline.kind);
+    if (isDocument) {
+      final server =
+          _servers.where((item) => item.id == offline.serverId).firstOrNull ??
+          FundusRemoteServer(
+            id: offline.serverId,
+            name: offline.sourceServerName ?? 'Offline',
+            baseUri: Uri.parse('https://127.0.0.1'),
+            certificateFingerprint: ''.padLeft(64, '0'),
+            token: '',
+          );
+      final library = FundusRemoteLibrary(
+        id: offline.libraryId,
+        name: offline.sourceLibraryName ?? 'Offline-Bibliothek',
+        workCount: 1,
+      );
+      final work = FundusRemoteWork(
+        id: offline.workId,
+        title: offline.title,
+        authors: offline.authors,
+        hasCover: offline.coverPath != null,
+        kind: offline.kind,
+        subtitle: offline.subtitle,
+        series: offline.series,
+        seriesSequence: offline.seriesSequence,
+        narrators: offline.narrators,
+        language: offline.language,
+        description: offline.description,
+        publisher: offline.publisher,
+        publishedYear: offline.publishedYear,
+        fileCount: offline.tracks.length,
+      );
+      await _showWork(server, library, work, forceOffline: true);
+      return;
+    }
     final progress = await _offlineStore.loadProgress(
       serverId: offline.serverId,
       libraryId: offline.libraryId,
@@ -2206,6 +4201,15 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 ],
               ),
               const SizedBox(height: 16),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.dns_outlined),
+                title: Text(offline.sourceServerName ?? offline.serverId),
+                subtitle: Text(
+                  'Quellbibliothek: '
+                  '${offline.sourceLibraryName ?? offline.libraryId}',
+                ),
+              ),
               Wrap(
                 spacing: 6,
                 runSpacing: 6,
@@ -2232,6 +4236,13 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                     avatar: Icon(Icons.download_done, size: 16),
                     label: Text('Offline'),
                   ),
+                  if (offline.incomplete)
+                    Chip(
+                      avatar: const Icon(Icons.warning_amber_rounded, size: 16),
+                      label: Text(
+                        '${offline.missingTrackTitles.length} Datei(en) fehlen',
+                      ),
+                    ),
                 ],
               ),
               if (progress != null &&
@@ -2241,6 +4252,19 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 Text(
                   'Fortsetzen bei ${_formatRemoteDuration(progress.position)}',
                   style: Theme.of(context).textTheme.labelLarge,
+                ),
+              ],
+              if (isDocument) ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () => Navigator.pop(context, 'open:resume'),
+                    icon: const Icon(Icons.menu_book_outlined),
+                    label: Text(
+                      progress?.mediaPosition == null ? 'Lesen' : 'Fortsetzen',
+                    ),
+                  ),
                 ),
               ],
               if (offline.description case final description?) ...[
@@ -2265,32 +4289,50 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 for (var index = 0; index < offline.tracks.length; index++)
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      _documentFileIcon(offline.tracks[index].title),
+                    leading: documentChapterLeading(
+                      context,
+                      index + 1,
+                      documentChapterReadState(
+                        chapterIndex: index,
+                        currentChapterIndex: offline.tracks.indexWhere(
+                          (track) => track.id == progress?.fileId,
+                        ),
+                        workFinished: progress?.finished ?? false,
+                        currentPosition: progress?.mediaPosition,
+                      ),
                     ),
-                    title: Text(offline.tracks[index].title),
+                    title: Text(
+                      offline.tracks[index].title,
+                      style: documentChapterTitleStyle(
+                        context,
+                        documentChapterReadState(
+                          chapterIndex: index,
+                          currentChapterIndex: offline.tracks.indexWhere(
+                            (track) => track.id == progress?.fileId,
+                          ),
+                          workFinished: progress?.finished ?? false,
+                          currentPosition: progress?.mediaPosition,
+                        ),
+                      ),
+                    ),
                     trailing: const Icon(Icons.open_in_new),
                     onTap: () => Navigator.pop(context, 'open:$index'),
                   ),
               ],
               const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: () =>
-                      Navigator.pop(context, isDocument ? 'open:0' : 'play'),
-                  icon: Icon(
-                    isDocument ? Icons.visibility_outlined : Icons.play_arrow,
-                  ),
-                  label: Text(
-                    isDocument
-                        ? 'Erste Datei anzeigen'
-                        : progress != null && progress.position > Duration.zero
-                        ? 'Weiterhören'
-                        : 'Abspielen',
+              if (!isDocument)
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () => Navigator.pop(context, 'play'),
+                    icon: const Icon(Icons.play_arrow),
+                    label: Text(
+                      progress != null && progress.position > Duration.zero
+                          ? 'Weiterhören'
+                          : 'Abspielen',
+                    ),
                   ),
                 ),
-              ),
               const SizedBox(height: 8),
               SizedBox(
                 width: double.infinity,
@@ -2306,9 +4348,91 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       ),
     );
     if (action?.startsWith('open:') ?? false) {
-      final index = int.tryParse(action!.substring(5));
+      final target = action!.substring(5);
+      final resume = target == 'resume';
+      final progressFileId =
+          progress?.fileId ?? progress?.mediaPosition?.fileId;
+      final resumeIndex = offline.tracks.indexWhere(
+        (track) => track.id == progressFileId,
+      );
+      final index = resume
+          ? (resumeIndex < 0 ? 0 : resumeIndex)
+          : int.tryParse(target);
       if (index != null && index >= 0 && index < offline.tracks.length) {
-        await _openDocumentPath(offline.tracks[index].path);
+        final server =
+            _servers.where((item) => item.id == offline.serverId).firstOrNull ??
+            FundusRemoteServer(
+              id: offline.serverId,
+              name: 'Offline',
+              baseUri: Uri.parse('https://127.0.0.1'),
+              certificateFingerprint: ''.padLeft(64, '0'),
+              token: '',
+            );
+        final library = FundusRemoteLibrary(
+          id: offline.libraryId,
+          name: 'Offline',
+          workCount: 1,
+        );
+        final work = FundusRemoteWork(
+          id: offline.workId,
+          title: offline.title,
+          authors: offline.authors,
+          hasCover: offline.coverPath != null,
+          kind: offline.kind,
+          subtitle: offline.subtitle,
+          series: offline.series,
+          seriesSequence: offline.seriesSequence,
+          narrators: offline.narrators,
+          language: offline.language,
+          description: offline.description,
+          publisher: offline.publisher,
+          publishedYear: offline.publishedYear,
+          fileCount: offline.tracks.length,
+        );
+        final tracks = [
+          for (final track in offline.tracks)
+            FundusRemoteTrack(
+              id: track.id,
+              title: track.title,
+              position: track.position,
+              duration: track.duration,
+              audioMetadata: track.audioMetadata,
+            ),
+        ];
+        final selected = offline.tracks[index];
+        if (selected.title.toLowerCase().endsWith('.cbz')) {
+          await _openRemoteComicWork(
+            server,
+            library,
+            work,
+            tracks,
+            offlineWork: offline,
+            startFileId: resume ? null : selected.id,
+            skipServerLookup: true,
+          );
+        } else if (selected.title.toLowerCase().endsWith('.pdf')) {
+          await _openRemotePdfWork(
+            server,
+            library,
+            work,
+            tracks,
+            offlineWork: offline,
+            startFileId: resume ? null : selected.id,
+            skipServerLookup: true,
+          );
+        } else if (selected.title.toLowerCase().endsWith('.epub')) {
+          await _openRemoteEpubWork(
+            server,
+            library,
+            work,
+            tracks,
+            offlineWork: offline,
+            startFileId: resume ? null : selected.id,
+            skipServerLookup: true,
+          );
+        } else {
+          await _openDocumentPath(selected.path);
+        }
       }
     } else if (action == 'play') {
       await _playOffline(offline);
@@ -2399,6 +4523,532 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       setState(() => _remotePlayer = player);
     }
     await player.open(server, library, work, offlineWork: offline);
+  }
+}
+
+class _MobileRemotePublicationDetails extends StatefulWidget {
+  const _MobileRemotePublicationDetails({
+    required this.work,
+    required this.tracks,
+    required this.relatedWorks,
+    required this.progressPosition,
+    required this.progressIndex,
+    required this.annotations,
+    required this.isOffline,
+    required this.epubPublicationLoader,
+    required this.onSaveNote,
+    required this.onSaveTags,
+    required this.coverBuilder,
+  });
+
+  final FundusRemoteWork work;
+  final List<FundusRemoteTrack> tracks;
+  final List<FundusRemoteWork> relatedWorks;
+  final MediaPosition? progressPosition;
+  final int progressIndex;
+  final WorkAnnotations annotations;
+  final bool isOffline;
+  final Future<EpubPublication> Function()? epubPublicationLoader;
+  final Future<WorkAnnotations> Function(String markdown) onSaveNote;
+  final Future<WorkAnnotations> Function(Set<String> tags) onSaveTags;
+  final Widget Function() coverBuilder;
+
+  @override
+  State<_MobileRemotePublicationDetails> createState() =>
+      _MobileRemotePublicationDetailsState();
+}
+
+class _MobileRemotePublicationDetailsState
+    extends State<_MobileRemotePublicationDetails> {
+  final _noteController = TextEditingController();
+  var _tab = 0;
+  var _notesTab = 0;
+  var _sort = _DocumentTrackSort.oldestFirst;
+  String _filter = '';
+  late WorkAnnotations _annotations;
+  Future<EpubPublication>? _epubPublication;
+
+  @override
+  void initState() {
+    super.initState();
+    _annotations = widget.annotations;
+  }
+
+  @override
+  void dispose() {
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  List<({FundusRemoteTrack track, int originalIndex})> get _tracks =>
+      _orderedRemoteTracks(widget.tracks, _sort)
+          .where(
+            (entry) =>
+                entry.track.title.toLowerCase().contains(_filter.toLowerCase()),
+          )
+          .toList(growable: false);
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(
+      title: Text(widget.work.title, overflow: TextOverflow.ellipsis),
+      actions: [
+        IconButton(
+          onPressed: _toggleFavorite,
+          tooltip: _isFavorite
+              ? 'Aus Favoriten entfernen'
+              : 'Als Favorit markieren',
+          icon: Icon(_isFavorite ? Icons.star : Icons.star_border),
+        ),
+        IconButton(
+          onPressed: _showFilterAndSort,
+          tooltip: 'Filtern und sortieren',
+          icon: const Icon(Icons.tune),
+        ),
+      ],
+    ),
+    body: SafeArea(
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+            child: Column(
+              children: [
+                GestureDetector(
+                  onTap: _showCover,
+                  child: SizedBox(
+                    width: 138,
+                    height: 190,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: widget.coverBuilder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  widget.work.title,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                if (widget.work.authors.isNotEmpty)
+                  Text(
+                    widget.work.authors.join(', '),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: () => Navigator.pop(context, 'open:resume'),
+                        icon: const Icon(Icons.menu_book_outlined),
+                        label: Text(
+                          widget.progressPosition == null
+                              ? 'Lesen'
+                              : 'Fortsetzen',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.tonalIcon(
+                        onPressed: () => Navigator.pop(context, 'download'),
+                        icon: Icon(
+                          widget.isOffline
+                              ? Icons.download_done
+                              : Icons.download_outlined,
+                        ),
+                        label: Text(
+                          widget.isOffline
+                              ? 'Kapitel verwalten'
+                              : 'Zur Bibliothek',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SegmentedButton<int>(
+                    showSelectedIcon: false,
+                    segments: const [
+                      ButtonSegment(value: 0, label: Text('Info')),
+                      ButtonSegment(value: 1, label: Text('Dateien')),
+                      ButtonSegment(value: 2, label: Text('Kapitel')),
+                      ButtonSegment(value: 3, label: Text('Notizen')),
+                      ButtonSegment(value: 4, label: Text('Ähnlich')),
+                    ],
+                    selected: {_tab},
+                    onSelectionChanged: (value) =>
+                        setState(() => _tab = value.single),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(child: _tabBody()),
+        ],
+      ),
+    ),
+  );
+
+  Widget _tabBody() => switch (_tab) {
+    0 => ListView(
+      padding: const EdgeInsets.all(18),
+      children: [
+        if (widget.work.description case final description?) ...[
+          Text(
+            'Zusammenfassung',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          SelectableText(description),
+          const SizedBox(height: 22),
+        ],
+        Text('Details', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        if (widget.work.authors.isNotEmpty)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.person_outline),
+            title: const Text('Autor'),
+            subtitle: Text(widget.work.authors.join(', ')),
+          ),
+        if (widget.work.series case final series?)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.library_books_outlined),
+            title: const Text('Serie'),
+            subtitle: Text(series),
+          ),
+        if (widget.work.language case final language?)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.language),
+            title: const Text('Sprache'),
+            subtitle: Text(language),
+          ),
+      ],
+    ),
+    1 => _trackList(_tracks),
+    2 => _chapterList(),
+    3 => Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: SegmentedButton<int>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: 0, label: Text('Notizen')),
+              ButtonSegment(value: 1, label: Text('Lesezeichen & Highlights')),
+            ],
+            selected: {_notesTab},
+            onSelectionChanged: (value) =>
+                setState(() => _notesTab = value.single),
+          ),
+        ),
+        Expanded(child: _notesTab == 0 ? _notesList() : _annotationList()),
+      ],
+    ),
+    _ => _similarList(),
+  };
+
+  Widget _trackList(
+    List<({FundusRemoteTrack track, int originalIndex})> entries,
+  ) => ListView(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    children: [
+      for (final entry in entries)
+        ListTile(
+          leading: documentChapterLeading(
+            context,
+            entry.originalIndex + 1,
+            documentChapterReadState(
+              chapterIndex: entry.originalIndex,
+              currentChapterIndex: widget.progressIndex,
+              workFinished: widget.work.progressFinished,
+              currentPosition: widget.progressPosition,
+            ),
+          ),
+          title: Text(entry.track.title),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.pop(context, 'open:${entry.originalIndex}'),
+        ),
+    ],
+  );
+
+  Widget _chapterList() {
+    final loader = widget.epubPublicationLoader;
+    if (loader == null) {
+      return _trackList(
+        _tracks
+            .where((entry) {
+              final title = entry.track.title.toLowerCase();
+              return title.endsWith('.cbz') ||
+                  title.endsWith('.pdf') ||
+                  title.endsWith('.html') ||
+                  title.endsWith('.htm') ||
+                  title.endsWith('.md') ||
+                  title.endsWith('.txt');
+            })
+            .toList(growable: false),
+      );
+    }
+    _epubPublication ??= loader();
+    return FutureBuilder<EpubPublication>(
+      future: _epubPublication,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return const Center(
+            child: Text(
+              'Das EPUB-Inhaltsverzeichnis konnte nicht geladen werden.',
+            ),
+          );
+        }
+        final publication = snapshot.data;
+        if (publication == null) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          itemCount: publication.chapters.length,
+          itemBuilder: (context, index) {
+            final chapter = publication.chapters[index];
+            return ListTile(
+              contentPadding: EdgeInsets.only(
+                left: 8.0 + chapter.depth * 16,
+                right: 8,
+              ),
+              leading: CircleAvatar(child: Text('${index + 1}')),
+              title: Text(chapter.title),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.pop(context, 'epub_chapter:$index'),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _annotationList() {
+    final bookmarks = _annotations.bookmarks;
+    final highlights = _annotations.highlights;
+    if (bookmarks.isEmpty && highlights.isEmpty) {
+      return const Center(child: Text('Noch keine Annotationen vorhanden.'));
+    }
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      children: [
+        for (final item in bookmarks)
+          ListTile(
+            leading: const Icon(Icons.bookmark_outline),
+            title: Text(item.label ?? item.displayPosition),
+            subtitle: Text(item.mediaPosition.chapterId ?? 'Textstelle'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.pop(context, 'annotation:${item.id}'),
+          ),
+        for (final item in highlights)
+          ListTile(
+            leading: const Icon(Icons.border_color_outlined),
+            title: Text(
+              item.quote,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: item.note == null ? null : Text(item.note!),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.pop(context, 'annotation:${item.id}'),
+          ),
+      ],
+    );
+  }
+
+  bool get _isFavorite =>
+      {...widget.work.tags, ..._annotations.tags}.contains('Favorit');
+
+  Widget _notesList() => ListView(
+    padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+    children: [
+      for (final note in _annotations.notes)
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  note.createdAt.toLocal().toString().substring(0, 16),
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
+                const SizedBox(height: 6),
+                SelectableText(note.markdown),
+              ],
+            ),
+          ),
+        ),
+      TextField(
+        controller: _noteController,
+        minLines: 3,
+        maxLines: 8,
+        decoration: const InputDecoration(
+          hintText: 'Notiz in Markdown schreiben …',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      const SizedBox(height: 8),
+      FilledButton.icon(
+        onPressed: _saveNote,
+        icon: const Icon(Icons.save_outlined),
+        label: const Text('Notiz speichern'),
+      ),
+    ],
+  );
+
+  Widget _similarList() {
+    final sourceTags = {...widget.work.tags, ..._annotations.tags}
+      ..remove('Favorit');
+    final candidates = <({FundusRemoteWork work, int score})>[];
+    for (final candidate in widget.relatedWorks) {
+      if (candidate.id == widget.work.id ||
+          candidate.kind != widget.work.kind) {
+        continue;
+      }
+      final score = candidate.tags.where(sourceTags.contains).length;
+      if (score > 0) candidates.add((work: candidate, score: score));
+    }
+    candidates.sort((left, right) {
+      final score = right.score.compareTo(left.score);
+      return score != 0 ? score : left.work.title.compareTo(right.work.title);
+    });
+    if (candidates.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text('Noch keine Titel mit übereinstimmenden Tags.'),
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        for (final candidate in candidates)
+          ListTile(
+            leading: const Icon(Icons.auto_awesome_outlined),
+            title: Text(candidate.work.title),
+            subtitle: Text('${candidate.score} gemeinsame Tag(s)'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.pop(context, 'similar:${candidate.work.id}'),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _saveNote() async {
+    final markdown = _noteController.text.trim();
+    if (markdown.isEmpty) return;
+    final updated = await widget.onSaveNote(markdown);
+    if (!mounted) return;
+    setState(() {
+      _annotations = updated;
+      _noteController.clear();
+    });
+  }
+
+  Future<void> _toggleFavorite() async {
+    final tags = {...widget.work.tags, ..._annotations.tags};
+    tags.contains('Favorit') ? tags.remove('Favorit') : tags.add('Favorit');
+    final updated = await widget.onSaveTags(tags);
+    if (mounted) setState(() => _annotations = updated);
+  }
+
+  Future<void> _showCover() => showDialog<void>(
+    context: context,
+    builder: (context) => Dialog(
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 720),
+        child: AspectRatio(aspectRatio: 2 / 3, child: widget.coverBuilder()),
+      ),
+    ),
+  );
+
+  Future<void> _showFilterAndSort() async {
+    final controller = TextEditingController(text: _filter);
+    var draftSort = _sort;
+    final result =
+        await showModalBottomSheet<({String filter, _DocumentTrackSort sort})>(
+          context: context,
+          showDragHandle: true,
+          builder: (context) => StatefulBuilder(
+            builder: (context, setSheetState) => Padding(
+              padding: EdgeInsets.fromLTRB(
+                20,
+                0,
+                20,
+                20 + MediaQuery.viewInsetsOf(context).bottom,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: controller,
+                    decoration: const InputDecoration(
+                      labelText: 'Kapitel filtern',
+                      prefixIcon: Icon(Icons.search),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<_DocumentTrackSort>(
+                    initialValue: draftSort,
+                    decoration: const InputDecoration(labelText: 'Sortierung'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: _DocumentTrackSort.oldestFirst,
+                        child: Text('Älteste zuerst'),
+                      ),
+                      DropdownMenuItem(
+                        value: _DocumentTrackSort.newestFirst,
+                        child: Text('Neueste zuerst'),
+                      ),
+                      DropdownMenuItem(
+                        value: _DocumentTrackSort.titleAscending,
+                        child: Text('Name A–Z'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) setSheetState(() => draftSort = value);
+                    },
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(context, (
+                        filter: controller.text.trim(),
+                        sort: draftSort,
+                      )),
+                      child: const Text('Anwenden'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+    controller.dispose();
+    if (result != null && mounted) {
+      setState(() {
+        _filter = result.filter;
+        _sort = result.sort;
+      });
+    }
   }
 }
 
@@ -2513,7 +5163,21 @@ class _RemoteExpandedPlayer extends StatelessWidget {
                   trailing: index == controller.currentIndex
                       ? const Icon(Icons.graphic_eq)
                       : null,
-                  onTap: () => controller.jumpToTrack(index),
+                  onTap: index == controller.currentIndex
+                      ? null
+                      : () async {
+                          final current = controller.track;
+                          if (current == null ||
+                              !await confirmPlaybackTrackJump(
+                                context,
+                                currentTitle: current.title,
+                                targetTitle: controller.tracks[index].title,
+                                currentPosition: controller.position,
+                              )) {
+                            return;
+                          }
+                          await controller.jumpToTrack(index);
+                        },
                 ),
               const SizedBox(height: 160),
             ],
@@ -2705,6 +5369,45 @@ Widget? _remoteTechnicalSubtitle(FundusRemoteTrack track) {
     '${parts.join(' · ')}\n${Platform.isAndroid ? 'Android' : 'Desktop'}: $label',
   );
 }
+
+Widget documentChapterLeading(
+  BuildContext context,
+  int number,
+  DocumentChapterReadState state,
+) => SizedBox(
+  width: 32,
+  child: switch (state) {
+    DocumentChapterReadState.read => Icon(
+      Icons.check_circle,
+      color: Theme.of(context).colorScheme.primary,
+      semanticLabel: 'Gelesen',
+    ),
+    DocumentChapterReadState.current => Icon(
+      Icons.adjust,
+      color: Theme.of(context).colorScheme.tertiary,
+      semanticLabel: 'Angefangen',
+    ),
+    DocumentChapterReadState.unread => Text(
+      '$number',
+      textAlign: TextAlign.center,
+    ),
+  },
+);
+
+TextStyle? documentChapterTitleStyle(
+  BuildContext context,
+  DocumentChapterReadState state,
+) => switch (state) {
+  DocumentChapterReadState.read => Theme.of(
+    context,
+  ).textTheme.bodyLarge?.copyWith(color: Theme.of(context).colorScheme.outline),
+  DocumentChapterReadState.current => Theme.of(
+    context,
+  ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+  DocumentChapterReadState.unread => Theme.of(
+    context,
+  ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold),
+};
 
 class _PairingScanner extends StatefulWidget {
   const _PairingScanner();

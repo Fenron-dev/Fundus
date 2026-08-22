@@ -29,6 +29,26 @@ void main() {
     expect(await File(extracted).readAsBytes(), [1, 2, 3]);
   });
 
+  test('extracts multiple temporary files in one archive pass', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-zip-batch-');
+    addTearDown(() => root.delete(recursive: true));
+    final archivePath = '${root.path}/comic.cbz';
+    final archive = Archive()
+      ..addFile(ArchiveFile.bytes('001.png', [1, 2]))
+      ..addFile(ArchiveFile.bytes('002.png', [3, 4]));
+    await File(archivePath).writeAsBytes(ZipEncoder().encode(archive));
+    const service = ZipArchiveService();
+    final snapshot = await service.inspect(archivePath);
+
+    final extracted = await service.extractToTemporaryFiles(
+      archivePath,
+      snapshot.entries,
+    );
+
+    expect(await File(extracted['001.png']!).readAsBytes(), [1, 2]);
+    expect(await File(extracted['002.png']!).readAsBytes(), [3, 4]);
+  });
+
   test('rejects ZIP slip paths instead of hiding the unsafe entry', () async {
     final root = await Directory.systemTemp.createTemp('fundus-zip-slip-');
     addTearDown(() => root.delete(recursive: true));

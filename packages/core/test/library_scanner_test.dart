@@ -15,9 +15,28 @@ void main() {
       p.join(book.path, '01 - Anfang.mp3'),
     ).writeAsBytes([0xff, 0xfb, 0x90, 0x64, ...List.filled(16, 0)]);
     await File(p.join(book.path, 'cover.jpg')).writeAsBytes([4, 5]);
+    await File(p.join(book.path, '._01 - Anfang.mp3')).writeAsBytes([0, 0, 0]);
+    await File(p.join(book.path, '._cover.jpg')).writeAsBytes([0, 0, 0]);
     final internal = Directory(p.join(root.path, '.library'));
     await internal.create();
     await File(p.join(internal.path, 'index.db')).writeAsBytes([6]);
+    final generatedChapters = Directory(
+      p.join(root.path, 'Webnovels', 'Titel', '.chapters'),
+    );
+    await generatedChapters.create(recursive: true);
+    await File(
+      p.join(generatedChapters.path, 'ch_0001.json'),
+    ).writeAsString('{}');
+    final synologyMetadata = Directory(
+      p.join(book.path, '@eaDir', 'cover.jpg'),
+    );
+    await synologyMetadata.create(recursive: true);
+    await File(
+      p.join(synologyMetadata.path, 'SYNOPHOTO_THUMB_XL.jpg'),
+    ).writeAsBytes([7]);
+    final appleMetadata = Directory(p.join(root.path, '.AppleDouble'));
+    await appleMetadata.create();
+    await File(p.join(appleMetadata.path, 'metadata')).writeAsBytes([8]);
 
     final events = await LibraryScanner().scan(root).toList();
     final files = events
@@ -26,6 +45,7 @@ void main() {
         .toList();
 
     expect(files, hasLength(2));
+    expect(files.map((file) => file.filename), isNot(contains('._cover.jpg')));
     expect(
       files.map((file) => file.relativePath),
       contains('Autor/Serie/01 - Titel/01 - Anfang.mp3'),

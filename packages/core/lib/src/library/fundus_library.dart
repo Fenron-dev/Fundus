@@ -18,6 +18,7 @@ import '../model/library_saved_view.dart';
 import '../model/media_position.dart';
 import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
+import '../publication/epub_package.dart';
 import '../scan/library_scanner.dart';
 import '../search/library_work_query.dart';
 import 'work_annotations.dart';
@@ -30,12 +31,16 @@ final class LibraryIndexEvent {
     required this.fileCount,
     this.workCount = 0,
     this.currentPath,
+    this.rootCounts = const {},
+    this.extensionCounts = const {},
   });
 
   final LibraryIndexPhase phase;
   final int fileCount;
   final int workCount;
   final String? currentPath;
+  final Map<String, int> rootCounts;
+  final Map<String, int> extensionCounts;
 }
 
 final class _PortableWorkIdentity {
@@ -286,10 +291,79 @@ final class FundusLibrary {
   String? workDirectoryPath(String workId) {
     final sourcePath = _database.workSourcePath(workId);
     if (sourcePath == null) return null;
-    final target = _safeWorkDirectory(sourcePath);
-    return FileSystemEntity.isFileSync(target.path)
-        ? target.parent.path
-        : target.path;
+    return _portableWorkDirectory(sourcePath).path;
+  }
+
+  Future<Map<String, Object?>?> loadPortableReaderProfile({
+    required String workId,
+    required String deviceKey,
+    required String readerKind,
+  }) async {
+    final sourcePath = _database.workSourcePath(workId);
+    if (sourcePath == null) return null;
+    final file = File(
+      p.join(_workSidecarDirectory(sourcePath).path, 'reader-settings.yaml'),
+    );
+    if (!await file.exists()) return null;
+    try {
+      final value = loadYaml(await file.readAsString());
+      if (value is! Map) return null;
+      final devices = value['devices'];
+      if (devices is! Map) return null;
+      final device = devices[deviceKey];
+      if (device is! Map) return null;
+      final profile = device[readerKind];
+      return profile is Map
+          ? Map<String, Object?>.from(profile.cast<Object?, Object?>())
+          : null;
+    } on FileSystemException {
+      return null;
+    } on YamlException {
+      return null;
+    }
+  }
+
+  Future<void> savePortableReaderProfile({
+    required String workId,
+    required String deviceKey,
+    required String readerKind,
+    required Map<String, Object?> profile,
+  }) async {
+    _ensureWritable();
+    final sourcePath = _database.workSourcePath(workId);
+    if (sourcePath == null) return;
+    final directory = _workSidecarDirectory(sourcePath);
+    await directory.create(recursive: true);
+    final file = File(p.join(directory.path, 'reader-settings.yaml'));
+    var values = <String, Object?>{'format_version': 1};
+    if (await file.exists()) {
+      try {
+        final decoded = loadYaml(await file.readAsString());
+        if (decoded is Map) {
+          values = Map<String, Object?>.from(decoded.cast<Object?, Object?>());
+        }
+      } on FileSystemException {
+        // A new portable settings file can replace an unreadable old one.
+      } on YamlException {
+        // A malformed optional profile must not block the reader.
+      }
+    }
+    final devices = values['devices'] is Map
+        ? Map<String, Object?>.from(values['devices'] as Map)
+        : <String, Object?>{};
+    final device = devices[deviceKey] is Map
+        ? Map<String, Object?>.from(devices[deviceKey] as Map)
+        : <String, Object?>{};
+    device[readerKind] = profile;
+    devices[deviceKey] = device;
+    values['devices'] = devices;
+    final partial = File('${file.path}.part');
+    await partial.writeAsString(
+      '${const JsonEncoder.withIndent('  ').convert(values)}\n',
+      flush: true,
+    );
+    if (await file.exists()) await file.delete();
+    await partial.rename(file.path);
   }
 
   LibraryPlaybackProgress? loadProgress(String workId) =>
@@ -461,7 +535,7 @@ final class FundusLibrary {
   ) async {
     _ensureWritable();
     _database.replaceWorkTags(workId, tags);
-    if (_usesAudiobookSidecars(workId)) {
+    if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }
     return loadAnnotations(workId);
@@ -472,7 +546,7 @@ final class FundusLibrary {
     final normalized = markdown.trim();
     if (normalized.isEmpty) return loadAnnotations(workId);
     _database.saveWorkNote(workId, normalized);
-    if (_usesAudiobookSidecars(workId)) {
+    if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }
     return loadAnnotations(workId);
@@ -493,7 +567,28 @@ final class FundusLibrary {
       label: label,
       note: note,
     );
-    if (_usesAudiobookSidecars(workId)) {
+    if (_usesPortableSidecars(workId)) {
+      await _writeAnnotationSidecars(workId);
+    }
+    return loadAnnotations(workId);
+  }
+
+  Future<WorkAnnotations> addMediaBookmark({
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    String? label,
+    String? note,
+  }) async {
+    _ensureWritable();
+    _database.addMediaBookmark(
+      workId: workId,
+      fileId: fileId,
+      mediaPosition: position,
+      label: label,
+      note: note,
+    );
+    if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }
     return loadAnnotations(workId);
@@ -505,7 +600,43 @@ final class FundusLibrary {
   ) async {
     _ensureWritable();
     _database.deleteBookmark(bookmarkId);
-    if (_usesAudiobookSidecars(workId)) {
+    if (_usesPortableSidecars(workId)) {
+      await _writeAnnotationSidecars(workId);
+    }
+    return loadAnnotations(workId);
+  }
+
+  Future<WorkAnnotations> addTextHighlight({
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    required String quote,
+    String color = '#FFF176',
+    String? note,
+  }) async {
+    _ensureWritable();
+    if (quote.trim().isEmpty) return loadAnnotations(workId);
+    _database.addTextHighlight(
+      workId: workId,
+      fileId: fileId,
+      mediaPosition: position,
+      quote: quote,
+      color: color,
+      note: note,
+    );
+    if (_usesPortableSidecars(workId)) {
+      await _writeAnnotationSidecars(workId);
+    }
+    return loadAnnotations(workId);
+  }
+
+  Future<WorkAnnotations> deleteHighlight(
+    String workId,
+    String highlightId,
+  ) async {
+    _ensureWritable();
+    _database.deleteHighlight(highlightId);
+    if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }
     return loadAnnotations(workId);
@@ -548,9 +679,21 @@ final class FundusLibrary {
                   mediaRootNames: configuration.rootsFor('audiobook'),
                 ))
             .group(files);
-    final documentCandidates = DocumentImporter(
+    final rootCounts = _countScannedFiles(
+      files,
+      (file) => p.posix.split(file.relativePath).firstOrNull ?? '(root)',
+    );
+    final extensionCounts = _countScannedFiles(
+      files,
+      (file) => file.extension.isEmpty ? '(ohne Endung)' : file.extension,
+    );
+    final groupedDocumentCandidates = DocumentImporter(
       mediaRoots: configuration.mediaRoots,
     ).group(files);
+    final documentCandidates = <DocumentImportCandidate>[];
+    for (final candidate in groupedDocumentCandidates) {
+      documentCandidates.add(await _withEpubMetadata(candidate));
+    }
     final candidates = <AudiobookImportCandidate>[];
     final portableIdentities = <String, _PortableWorkIdentity>{};
     for (final grouped in groupedCandidates) {
@@ -576,6 +719,8 @@ final class FundusLibrary {
       fileCount: files.length,
       workCount: candidates.length + documentCandidates.length,
     );
+    final indexedDocuments =
+        <({DocumentImportCandidate candidate, String workId})>[];
     final indexedCandidates = _database.transaction(() {
       final ids = <String, String>{};
       final indexed = <({AudiobookImportCandidate candidate, String workId})>[];
@@ -596,11 +741,21 @@ final class FundusLibrary {
         ));
       }
       for (final candidate in documentCandidates) {
-        _database.upsertDocumentCandidate(candidate, ids);
+        indexedDocuments.add((
+          candidate: candidate,
+          workId: _database.upsertDocumentCandidate(candidate, ids),
+        ));
       }
       _database.markWorksWithoutAvailableContentMissing();
       return indexed;
     });
+    for (final indexed in indexedDocuments) {
+      await _cachePublicationCover(indexed.candidate, indexed.workId);
+      await _importAnnotationSidecars(
+        indexed.candidate.directory,
+        indexed.workId,
+      );
+    }
     for (final indexed in indexedCandidates) {
       try {
         await _importLanguage(indexed.candidate, indexed.workId);
@@ -612,7 +767,10 @@ final class FundusLibrary {
         // Invalid source JSON is ignored until repaired.
       }
       try {
-        await _importAnnotationSidecars(indexed.candidate, indexed.workId);
+        await _importAnnotationSidecars(
+          indexed.candidate.directory,
+          indexed.workId,
+        );
       } on FileSystemException {
         // A broken sidecar must not make the complete library unavailable.
       } on YamlException {
@@ -628,7 +786,96 @@ final class FundusLibrary {
       phase: LibraryIndexPhase.completed,
       fileCount: files.length,
       workCount: candidates.length + documentCandidates.length,
+      rootCounts: rootCounts,
+      extensionCounts: extensionCounts,
     );
+  }
+
+  static Map<String, int> _countScannedFiles(
+    Iterable<ScannedFile> files,
+    String Function(ScannedFile file) keyFor,
+  ) {
+    final counts = <String, int>{};
+    for (final file in files) {
+      final key = keyFor(file);
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    final entries = counts.entries.toList()
+      ..sort((left, right) => right.value.compareTo(left.value));
+    return {for (final entry in entries) entry.key: entry.value};
+  }
+
+  Future<DocumentImportCandidate> _withEpubMetadata(
+    DocumentImportCandidate candidate,
+  ) async {
+    if (candidate.kind != 'ebook' && candidate.kind != 'webnovel') {
+      return candidate;
+    }
+    final source = candidate.files
+        .where((file) => file.extension.toLowerCase() == 'epub')
+        .firstOrNull;
+    if (source == null) return candidate;
+    try {
+      final publication = await const EpubPackageAdapter().openFile(
+        source.absolutePath,
+      );
+      return candidate.copyWith(
+        title: publication.title,
+        metadata: {
+          if (publication.authors.isNotEmpty)
+            'author': publication.authors.join(', '),
+          if (publication.authors.isNotEmpty) 'authors': publication.authors,
+          if (publication.languages.isNotEmpty)
+            'language': publication.languages.first,
+          'description': ?publication.description,
+          if (publication.subjects.isNotEmpty) 'genres': publication.subjects,
+          if (publication.publishers.isNotEmpty)
+            'publisher': publication.publishers.join(', '),
+        },
+        embeddedCoverBytes: candidate.coverFile == null
+            ? publication.coverBytes
+            : null,
+        embeddedCoverMimeType: candidate.coverFile == null
+            ? publication.coverMimeType
+            : null,
+      );
+    } on FileSystemException {
+      return candidate;
+    } on EpubPackageException {
+      return candidate;
+    }
+  }
+
+  Future<void> _cachePublicationCover(
+    DocumentImportCandidate candidate,
+    String workId,
+  ) async {
+    if (candidate.coverFile != null) return;
+    final bytes = candidate.embeddedCoverBytes;
+    if (bytes == null || bytes.isEmpty) return;
+    final extension = switch (candidate.embeddedCoverMimeType?.toLowerCase()) {
+      'image/png' => 'png',
+      'image/webp' => 'webp',
+      'image/jpeg' || 'image/jpg' => 'jpg',
+      _ => null,
+    };
+    if (extension == null) return;
+    final coverDirectory = Directory(
+      p.join(root.path, metadataDirectoryName, 'covers'),
+    );
+    try {
+      await coverDirectory.create(recursive: true);
+      final filename = '$workId.$extension';
+      await File(
+        p.join(coverDirectory.path, filename),
+      ).writeAsBytes(bytes, flush: true);
+      _database.setGeneratedCoverPath(
+        workId,
+        p.posix.join(metadataDirectoryName, 'covers', filename),
+      );
+    } on FileSystemException {
+      // Metadata remains usable when an embedded cover cannot be cached.
+    }
   }
 
   Future<AudiobookImportCandidate> _withAbsMetadata(
@@ -815,8 +1062,7 @@ final class FundusLibrary {
   Future<void> _writeAnnotationSidecars(String workId) async {
     final sourcePath = _database.workSourcePath(workId);
     if (sourcePath == null) return;
-    final workDirectory = _safeWorkDirectory(sourcePath);
-    final sidecarDirectory = Directory(p.join(workDirectory.path, '_fundus'));
+    final sidecarDirectory = _workSidecarDirectory(sourcePath);
     await sidecarDirectory.create(recursive: true);
     final annotations = loadAnnotations(workId);
     await File(
@@ -829,16 +1075,30 @@ final class FundusLibrary {
     };
     await File(p.join(sidecarDirectory.path, 'bookmarks.yaml')).writeAsString(
       const JsonEncoder.withIndent('  ').convert({
-        'format_version': 1,
+        'format_version': 2,
         'bookmarks': [
           for (final bookmark in annotations.bookmarks)
             {
               'id': bookmark.id,
               'file_path': tracksById[bookmark.fileId],
-              'position_ms': bookmark.position.inMilliseconds,
+              'position': bookmark.mediaPosition.toJson(),
+              if (bookmark.mediaPosition.kind == MediaPositionKind.time)
+                'position_ms': bookmark.position.inMilliseconds,
               'label': bookmark.label,
               'note': bookmark.note,
               'created_at': bookmark.createdAt.toUtc().toIso8601String(),
+            },
+        ],
+        'highlights': [
+          for (final highlight in annotations.highlights)
+            {
+              'id': highlight.id,
+              'file_path': tracksById[highlight.fileId],
+              'position': highlight.mediaPosition.toJson(),
+              'quote': highlight.quote,
+              'color': highlight.color,
+              'note': highlight.note,
+              'created_at': highlight.createdAt.toUtc().toIso8601String(),
             },
         ],
       }),
@@ -907,9 +1167,7 @@ final class FundusLibrary {
   Future<void> _writeMetadataSidecar(String workId) async {
     final sourcePath = _database.workSourcePath(workId);
     if (sourcePath == null) return;
-    final directory = Directory(
-      p.join(_safeWorkDirectory(sourcePath).path, '_fundus'),
-    );
+    final directory = _workSidecarDirectory(sourcePath);
     await directory.create(recursive: true);
     final annotations = loadAnnotations(workId);
     final work = listWorks().where((work) => work.id == workId).firstOrNull;
@@ -918,7 +1176,7 @@ final class FundusLibrary {
       '${const JsonEncoder.withIndent('  ').convert({
         'format_version': 3,
         'work_id': workId,
-        'base_kind': 'audiobook',
+        'base_kind': work.kind,
         'custom_type': null,
         'title': work.title,
         'author': work.author,
@@ -941,12 +1199,10 @@ final class FundusLibrary {
   }
 
   Future<void> _importAnnotationSidecars(
-    AudiobookImportCandidate candidate,
+    String sourcePath,
     String workId,
   ) async {
-    final sidecarDirectory = Directory(
-      p.joinAll([root.path, ...p.posix.split(candidate.directory), '_fundus']),
-    );
+    final sidecarDirectory = _workSidecarDirectory(sourcePath);
     if (!await sidecarDirectory.exists()) return;
     var annotations = loadAnnotations(workId);
     final noteFile = File(p.join(sidecarDirectory.path, 'notes.md'));
@@ -1021,23 +1277,84 @@ final class FundusLibrary {
         };
         for (final item in bookmarks.whereType<Map>()) {
           final fileId = tracksByPath[item['file_path']];
-          final positionMs = item['position_ms'];
-          if (fileId == null || positionMs is! num) continue;
+          if (fileId == null) continue;
           final id = item['id'];
           final label = item['label'];
           final note = item['note'];
           final createdAt = item['created_at'];
-          _database.addBookmark(
-            id: id is String ? id : null,
-            workId: workId,
-            fileId: fileId,
-            position: Duration(milliseconds: positionMs.round()),
-            label: label is String ? label : null,
-            note: note is String ? note : null,
-            createdAt: createdAt is String
-                ? DateTime.tryParse(createdAt)
-                : null,
-          );
+          final rawPosition = item['position'];
+          if (rawPosition is Map) {
+            try {
+              final restored = MediaPosition.fromJson(
+                rawPosition.cast<String, Object?>(),
+              );
+              _database.addMediaBookmark(
+                id: id is String ? id : null,
+                workId: workId,
+                fileId: fileId,
+                mediaPosition: restored.withFileId(fileId),
+                label: label is String ? label : null,
+                note: note is String ? note : null,
+                createdAt: createdAt is String
+                    ? DateTime.tryParse(createdAt)
+                    : null,
+              );
+              continue;
+            } catch (_) {
+              // Fall back to the version-one time position below.
+            }
+          }
+          final positionMs = item['position_ms'];
+          if (positionMs is num) {
+            _database.addBookmark(
+              id: id is String ? id : null,
+              workId: workId,
+              fileId: fileId,
+              position: Duration(milliseconds: positionMs.round()),
+              label: label is String ? label : null,
+              note: note is String ? note : null,
+              createdAt: createdAt is String
+                  ? DateTime.tryParse(createdAt)
+                  : null,
+            );
+          }
+        }
+      }
+    }
+    annotations = loadAnnotations(workId);
+    if (annotations.highlights.isEmpty && await bookmarksFile.exists()) {
+      final value = loadYaml(await bookmarksFile.readAsString());
+      final highlights = value is Map ? value['highlights'] : null;
+      if (highlights is List) {
+        final tracksByPath = {
+          for (final track in playbackTracks(workId))
+            track.relativePath: track.fileId,
+        };
+        for (final item in highlights.whereType<Map>()) {
+          final fileId = tracksByPath[item['file_path']];
+          final rawPosition = item['position'];
+          final quote = item['quote'];
+          if (fileId == null || rawPosition is! Map || quote is! String) {
+            continue;
+          }
+          try {
+            _database.addTextHighlight(
+              id: item['id'] as String?,
+              workId: workId,
+              fileId: fileId,
+              mediaPosition: MediaPosition.fromJson(
+                rawPosition.cast<String, Object?>(),
+              ).withFileId(fileId),
+              quote: quote,
+              color: item['color'] as String? ?? '#FFF176',
+              note: item['note'] as String?,
+              createdAt: item['created_at'] is String
+                  ? DateTime.tryParse(item['created_at'] as String)
+                  : null,
+            );
+          } on FormatException {
+            // Ignore one malformed portable highlight.
+          }
         }
       }
     }
@@ -1180,9 +1497,23 @@ final class FundusLibrary {
     return Directory(path);
   }
 
-  bool _usesAudiobookSidecars(String workId) => listWorks(
-    includeMissing: true,
-  ).any((work) => work.id == workId && work.kind == 'audiobook');
+  Directory _portableWorkDirectory(String sourcePath) {
+    final target = _safeWorkDirectory(sourcePath);
+    return FileSystemEntity.isFileSync(target.path) ? target.parent : target;
+  }
+
+  Directory _workSidecarDirectory(String sourcePath) {
+    final target = _safeWorkDirectory(sourcePath);
+    if (!FileSystemEntity.isFileSync(target.path)) {
+      return Directory(p.join(target.path, '_fundus'));
+    }
+    return Directory(
+      p.join(target.parent.path, '_fundus', 'files', p.basename(target.path)),
+    );
+  }
+
+  bool _usesPortableSidecars(String workId) =>
+      listWorks(includeMissing: true).any((work) => work.id == workId);
 
   static File _manifestFile(Directory root) =>
       File('${root.path}/$metadataDirectoryName/$manifestFileName');

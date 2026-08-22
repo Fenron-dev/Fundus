@@ -270,6 +270,7 @@ final class FundusPeerServerController extends ChangeNotifier {
         try {
           final library = await FundusLibrary.open(Directory(source.path));
           _registry.register(library, name: source.name);
+          final shared = _registry.lookup(library.manifest.libraryId)!;
           statuses.add(
             PeerSharedLibraryStatus(
               name: source.name,
@@ -277,7 +278,7 @@ final class FundusPeerServerController extends ChangeNotifier {
               available: true,
               shared: true,
               libraryId: library.manifest.libraryId,
-              workCount: library.listWorks().length,
+              workCount: shared.works.length,
             ),
           );
         } catch (error) {

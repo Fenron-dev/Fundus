@@ -69,6 +69,15 @@ Eigenschaften bleiben separat und sind vollständig such-, filter-, gruppier-
 und sortierbar. Details zur ortsunabhängigen Erkennung und Ordnerstruktur stehen
 in [Konzept-Erweiterung: Bibliotheken, Ordnerstruktur und Peer-Server](KONZEPT_ERWEITERUNG_BIBLIOTHEKEN_UND_PEER_SERVER.md).
 
+Player und Reader verwenden dabei eine gemeinsame Media Experience Shell mit
+typisierten Positionen, Synchronisation und Capability-gesteuerten
+Bedienelementen; die eigentliche Wiedergabe bleibt in spezialisierten Engines.
+Das verbindliche Modulmodell und der vollständige Manga-/Comic-Reader stehen in
+[Konzept-Erweiterung: Modulare Medien-Engine und Manga-/Comic-Reader](KONZEPT_ERWEITERUNG_MEDIA_ENGINE_UND_MANGA_READER.md).
+E-Book-/PDF-Reader, OCR, Dokumentwerkzeuge, medienübergreifende Historie und das
+TTRPG-Arbeitsmodell konkretisiert
+[Konzept-Erweiterung: Publikationen, Dokumente, Tracking und TTRPG](KONZEPT_ERWEITERUNG_PUBLIKATIONEN_DOKUMENTE_TRACKING_UND_TTRPG.md).
+
 **Werke sind nicht überall nötig.** Bei einer Einzeldatei wird das Werk automatisch 1:1 abgeleitet und bleibt in der UI unsichtbar — du siehst weiterhin einfach Dateien. Bei einem Hörbuch aus 30 Tracks oder einem TTRPG-Produkt aus PDF, Karten und Handouts bündelt es. Beide Fälle nutzen dieselben Tags, Bewertungen, Notizen und Sammlungen, weil alles am Werk hängt.
 
 `parent_id` ist bewusst **generisch**, nicht auf „Serie → Band" beschränkt: Es trägt genauso „Produktlinie → Produkt" oder „Kampagne → Abenteuer".
@@ -292,7 +301,10 @@ Dazu von Anfang an: SemVer, GitHub-Releases mit Artefakten und SHA-256-Prüfsumm
   zeigt Wiedergabe und Cover, rechts sind Dateien, Chapters, Werkdetails und
   Playlist umschaltbar
 - manuelle, smarte und serienbasierte Playlists über alle Medientypen; Queue und Sitzungs-Snapshot nach 2.4
-- Statistik aus `play_events`: Stunden pro Woche/Monat, meistgehört, zuletzt beendet
+- medienübergreifende Historie und Statistik aus Ereignissen: Zeit, Seiten,
+  Kapitel/Episoden, Serien, Streaks, Restaufwand und häufige Personen/Tags;
+  Status (`geplant`, `begonnen`, `pausiert`, `abgeschlossen`, `abgebrochen`)
+  bleibt vom technischen Fortschritt getrennt
 
 #### Suche, Filter und Sortierung
 
@@ -349,6 +361,10 @@ Vom Nutzer ausgelöste Operationen an den Mediendateien selbst. Kein Echtzeit-Tr
 - **MP3-Sammlung → eine M4B mit Kapiteln.** Das häufigste Bedürfnis bei gewachsenen Hörbuchsammlungen; Audiobookshelf bietet dasselbe an. Kapitelmarken entstehen aus den Track-Grenzen und -Titeln
 - **Tag-Rückschrieb** in die Mediendatei (ID3, MP4-Atome): Damit auch fremde Player die in Fundus korrigierten Titel, Autoren und Serien sehen. Standardmäßig aus, pro Werk oder als Massenoperation auslösbar
 - **Kompatible Varianten und Download-Varianten** nach 2.4: zielgerätetaugliche oder kleinere Fassung erzeugen, als eigene `work_files`-Variante behalten und eindeutig mit dem Original verknüpfen
+- **Dokumentvarianten und sichere Pipelines**: PDF-Seiten ordnen/teilen/verbinden,
+  OCR- oder komprimierte Variante erzeugen und optionale externe Tool-Provider
+  wie Stirling-PDF aufrufen. Original bleibt erhalten; Plan, Ergebnisprüfung und
+  Undo-Journal sind Pflicht
 
 Alles davon nach dem ersten Meilenstein.
 
@@ -569,6 +585,13 @@ Das Modell deckt das mit drei Mitteln gleichzeitig ab, ohne Erweiterung:
 
 Bringt zusätzlich: die Duplikat-Ansicht (dieselbe PDF aus mehreren Bundles), Massenbearbeitung (400 Dateien auf einmal taggen — deshalb Transaktionen), die Leistungsprobe bei ~100k Dateien und den **virtuellen Archivbrowser aus 3.6**. Gerade TTRPG-Bundles liegen häufig als ZIP mit PDFs, Karten, Handouts und Tokens vor; Fundus kann den Inhalt vor einem Import prüfen und ausgewählte Teile anschließend zu einem gemeinsamen Werk entpacken. Der Abnahmetest umfasst ein großes Archiv, verschachtelte Ordner, einen beschädigten Eintrag und eine Zip-Slip-/Zip-Bomb-Testdatei.
 
+Der konkrete Ausbau umfasst Systemfamilie/System/Edition, kuratierte aber
+erweiterbare Eigenschaften, OCR-Volltextsuche mit Seitentreffern, Karten- und
+Token-Galerien, Audio-Ressourcen sowie Kampagnen als persönliche
+Arbeitsbereiche mit Markdown-Notizen und stabilen Ressourcenlinks. Die
+verbindliche Abgrenzung zu Kampagnenplaner und VTT steht in
+[Publikationen, Dokumente, Tracking und TTRPG](KONZEPT_ERWEITERUNG_PUBLIKATIONEN_DOKUMENTE_TRACKING_UND_TTRPG.md).
+
 **Zur Einordnung:** Nach diesen beiden Typen ist die *Architektur* bewiesen — Hierarchie, Facettierung, Werke aus vielen Dateien, Fortschritt, Anreicherung. Filme, Musik und Podcasts sind dann strukturelle Wiederholungen. Was pro Typ trotzdem bleibt, ist die jeweilige Oberfläche: ein Manga-Reader mit Doppelseiten und Leserichtung ist echte Arbeit, auch wenn das Datenmodell steht.
 
 ---
@@ -576,7 +599,8 @@ Bringt zusätzlich: die Duplikat-Ansicht (dieselbe PDF aus mehreren Bundles), Ma
 ## 9. Danach
 
 1. Filme/Serien/Anime, Musik
-2. Manga/Comics inklusive Reader (Doppelseiten, Leserichtung, CBZ)
+2. Manga/Comics auf der modularen Media Engine gemäß
+   [Konzepterweiterung](KONZEPT_ERWEITERUNG_MEDIA_ENGINE_UND_MANGA_READER.md)
 3. Podcasts nativ in Fundus (Feeds, Episoden, Auto-Download)
 4. Bibliothekswerkzeuge nach 3.5 (M4B-Zusammenführung, Tag-Rückschrieb, kompatible Geräte-/Download-Varianten)
 5. mAngler: Vollkopie anlegen, DAM-Hälfte entfernen, `_source.json` und `.staging`-Übergabe
@@ -590,5 +614,7 @@ Bringt zusätzlich: die Duplikat-Ansicht (dieselbe PDF aus mehreren Bundles), Ma
 - **Umgang mit verschwundenen Dateien**: Werk mit Status `missing` behalten, damit Notizen und Fortschritt nicht verloren gehen — bei portablen Datenträgern der Normalfall, nicht die Ausnahme
 - **Leistungsziele** festlegen (Referenz: Scandauer und Scrollverhalten bei ~100k Dateien)
 - **Einmaliger Importpfad** aus bestehenden MediaShelf-Bibliotheken
-- **Manga-Reader**: Doppelseiten, Leserichtung, CBZ-Handhabung — für die Planung des dritten Typs
+- **Manga-/Comic-Reader**: Die Planung ist in der
+  [Konzepterweiterung zur modularen Media Engine](KONZEPT_ERWEITERUNG_MEDIA_ENGINE_UND_MANGA_READER.md)
+  entschieden; offen ist die etappenweise Umsetzung.
 - **`_source.json` gegenzeichnen**: Das Schema sollte mit mAngler zusammen festgelegt werden, bevor beide Seiten es implementieren

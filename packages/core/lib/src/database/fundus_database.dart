@@ -47,6 +47,8 @@ final class LibraryWorkSummary {
     this.tags = const [],
     this.lastListenedAt,
     this.offline = false,
+    this.sourceServerName,
+    this.sourceLibraryName,
   });
 
   final String id;
@@ -80,6 +82,8 @@ final class LibraryWorkSummary {
   final List<String> tags;
   final DateTime? lastListenedAt;
   final bool offline;
+  final String? sourceServerName;
+  final String? sourceLibraryName;
 
   bool get available => status == 'available';
 }
@@ -94,7 +98,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 5;
+  static const schemaVersion = 6;
 
   final Database _database;
 
@@ -314,7 +318,10 @@ final class FundusDatabase {
       kind: candidate.kind,
       sourcePath: candidate.directory,
       title: candidate.title,
-      metadata: const {'author': 'Unbekannt'},
+      metadata: {'author': 'Unbekannt', ...candidate.metadata},
+      source: candidate.metadata.isEmpty
+          ? WorkMetadataSource.filename
+          : WorkMetadataSource.embedded,
     );
     _database.execute('UPDATE works SET cover_file_id = NULL WHERE id = ?', [
       workId,
@@ -509,6 +516,10 @@ final class FundusDatabase {
              progress.position_kind AS progress_kind,
              progress.position_key AS progress_key,
              progress.position_label AS progress_label,
+             progress.position_schema_version AS progress_schema_version,
+             progress.chapter_id AS progress_chapter_id,
+             progress.element_id AS progress_element_id,
+             progress.scroll_offset AS progress_scroll_offset,
              progress.file_id AS progress_file_id,
              progress.total AS progress_total,
              progress.finished AS progress_finished,
@@ -521,6 +532,7 @@ final class FundusDatabase {
       LEFT JOIN work_files wf ON wf.work_id = w.id AND wf.role = 'content'
       LEFT JOIN files content ON content.id = wf.file_id
         AND content.status = 'available'
+        AND substr(content.filename, 1, 2) <> '._'
       LEFT JOIN files cover ON cover.id = w.cover_file_id
         AND cover.status = 'available'
       LEFT JOIN progress ON progress.work_id = w.id
@@ -574,11 +586,15 @@ final class FundusDatabase {
             mediaProgress: row['progress_kind'] is String
                 ? MediaPosition.fromJson({
                     'kind': row['progress_kind'] as String,
+                    'schema_version': row['progress_schema_version'] as int?,
                     'numeric_value': row['progress_position'] as num?,
                     'key': row['progress_key'] as String?,
                     'label': row['progress_label'] as String?,
                     'total': row['progress_total'] as num?,
                     'file_id': row['progress_file_id'] as String?,
+                    'chapter_id': row['progress_chapter_id'] as String?,
+                    'element_id': row['progress_element_id'] as String?,
+                    'scroll_offset': row['progress_scroll_offset'] as num?,
                   })
                 : null,
             progressTrackIndex: row['progress_track_index'] as int?,
@@ -671,6 +687,7 @@ final class FundusDatabase {
       FROM work_files wf
       JOIN files f ON f.id = wf.file_id
       WHERE wf.work_id = ? AND wf.role = 'content' AND f.status = 'available'
+        AND substr(f.filename, 1, 2) <> '._'
       ORDER BY wf.position, f.filename COLLATE NOCASE
       ''',
       [workId],
@@ -710,11 +727,15 @@ final class FundusDatabase {
       fileId: row['file_id'] as String?,
       position: MediaPosition.fromJson({
         'kind': row['position_kind'] as String,
+        'schema_version': row['position_schema_version'] as int?,
         'numeric_value': row['numeric_value'] as num?,
         'key': row['position_key'] as String?,
         'label': row['position_label'] as String?,
         'total': row['total'] as num?,
         'file_id': row['file_id'] as String?,
+        'chapter_id': row['chapter_id'] as String?,
+        'element_id': row['element_id'] as String?,
+        'scroll_offset': row['scroll_offset'] as num?,
       }),
       finished: (row['finished'] as int) == 1,
       revision: row['revision'] as int,
@@ -749,15 +770,10 @@ final class FundusDatabase {
     if (selected == null || selected.fileId == null) {
       throw StateError('Fortschrittsrevision ist nicht wiederherstellbar.');
     }
-    final seconds = selected.position.numericValue ?? 0;
-    final total = selected.position.total;
-    return saveProgress(
+    return saveMediaProgress(
       workId: workId,
       fileId: selected.fileId!,
-      position: Duration(milliseconds: (seconds * 1000).round()),
-      duration: total == null
-          ? null
-          : Duration(milliseconds: (total * 1000).round()),
+      position: selected.position,
       finished: selected.finished,
       deviceId: deviceId,
       operationId: operationId,
@@ -828,10 +844,14 @@ final class FundusDatabase {
       final now = DateTime.now().millisecondsSinceEpoch;
       final mediaPosition = MediaPosition(
         kind: position.kind,
+        schemaVersion: position.schemaVersion,
         numericValue: position.numericValue,
         key: position.key,
         total: position.total,
         fileId: fileId,
+        chapterId: position.chapterId,
+        elementId: position.elementId,
+        scrollOffset: position.scrollOffset,
         label: position.label,
       );
       final snapshot = jsonEncode({
@@ -843,16 +863,21 @@ final class FundusDatabase {
       _database.execute(
         '''
         INSERT INTO progress (
-          work_id, user_id, file_id, position_kind, numeric_value,
-          position_key, position_label, total, finished, revision,
+          work_id, user_id, file_id, position_kind, position_schema_version,
+          numeric_value, position_key, position_label, chapter_id, element_id,
+          scroll_offset, total, finished, revision,
           updated_at, device_id, operation_id
-        ) VALUES (?, 'default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, 'default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(work_id, user_id) DO UPDATE SET
           file_id = excluded.file_id,
           position_kind = excluded.position_kind,
+          position_schema_version = excluded.position_schema_version,
           numeric_value = excluded.numeric_value,
           position_key = excluded.position_key,
           position_label = excluded.position_label,
+          chapter_id = excluded.chapter_id,
+          element_id = excluded.element_id,
+          scroll_offset = excluded.scroll_offset,
           total = excluded.total,
           finished = excluded.finished,
           revision = excluded.revision,
@@ -864,9 +889,13 @@ final class FundusDatabase {
           workId,
           fileId,
           mediaPosition.kind.name,
+          mediaPosition.schemaVersion,
           mediaPosition.numericValue,
           mediaPosition.key,
           mediaPosition.label,
+          mediaPosition.chapterId,
+          mediaPosition.elementId,
+          mediaPosition.scrollOffset,
           mediaPosition.total,
           finished ? 1 : 0,
           revision,
@@ -1219,7 +1248,8 @@ final class FundusDatabase {
     );
     final bookmarkRows = _database.select(
       '''
-      SELECT id, file_id, numeric_value, label, note, created_at
+      SELECT id, file_id, position_kind, numeric_value, position_key,
+             position_label, label, note, color, quote, created_at
       FROM bookmarks
       WHERE work_id = ? AND user_id = 'default'
       ORDER BY numeric_value, created_at
@@ -1241,22 +1271,76 @@ final class FundusDatabase {
           )
           .toList(growable: false),
       bookmarks: bookmarkRows
-          .map(
-            (row) => LibraryBookmark(
+          .where((row) => (row['quote'] as String?)?.trim().isEmpty ?? true)
+          .map((row) {
+            final fileId = row['file_id'] as String?;
+            final storedKey = row['position_key'] as String?;
+            MediaPosition? mediaPosition;
+            if (storedKey != null && storedKey.startsWith('{')) {
+              try {
+                mediaPosition = MediaPosition.fromJson(
+                  (jsonDecode(storedKey) as Map).cast<String, Object?>(),
+                ).withFileId(fileId);
+              } catch (_) {
+                // Fall back to the legacy columns below.
+              }
+            }
+            final kindName = row['position_kind'] as String? ?? 'time';
+            final kind = MediaPositionKind.values
+                .where((candidate) => candidate.name == kindName)
+                .firstOrNull;
+            mediaPosition ??= MediaPosition(
+              kind: kind ?? MediaPositionKind.time,
+              numericValue: (row['numeric_value'] as num?)?.toDouble() ?? 0,
+              key: storedKey?.startsWith('{') ?? false ? null : storedKey,
+              fileId: fileId,
+              label: row['position_label'] as String?,
+            );
+            return LibraryBookmark(
               id: row['id'] as String,
               workId: workId,
-              fileId: row['file_id'] as String?,
-              position: Duration(
-                milliseconds: (((row['numeric_value'] as num?) ?? 0) * 1000)
-                    .round(),
-              ),
+              fileId: fileId,
+              mediaPosition: mediaPosition,
               label: row['label'] as String?,
               note: row['note'] as String?,
               createdAt: DateTime.fromMillisecondsSinceEpoch(
                 row['created_at'] as int,
               ),
-            ),
-          )
+            );
+          })
+          .toList(growable: false),
+      highlights: bookmarkRows
+          .where((row) => (row['quote'] as String?)?.trim().isNotEmpty ?? false)
+          .map((row) {
+            final fileId = row['file_id'] as String?;
+            final storedKey = row['position_key'] as String?;
+            MediaPosition mediaPosition;
+            try {
+              mediaPosition = MediaPosition.fromJson(
+                (jsonDecode(storedKey!) as Map).cast<String, Object?>(),
+              ).withFileId(fileId);
+            } catch (_) {
+              mediaPosition = MediaPosition(
+                kind: MediaPositionKind.epubCfi,
+                numericValue: (row['numeric_value'] as num?)?.toDouble() ?? 0,
+                fileId: fileId,
+                key: storedKey,
+                label: row['position_label'] as String?,
+              );
+            }
+            return LibraryHighlight(
+              id: row['id'] as String,
+              workId: workId,
+              fileId: fileId,
+              mediaPosition: mediaPosition,
+              quote: (row['quote'] as String).trim(),
+              color: row['color'] as String? ?? '#FFF176',
+              note: row['note'] as String?,
+              createdAt: DateTime.fromMillisecondsSinceEpoch(
+                row['created_at'] as int,
+              ),
+            );
+          })
           .toList(growable: false),
     );
   }
@@ -1311,6 +1395,28 @@ final class FundusDatabase {
     String? note,
     String? id,
     DateTime? createdAt,
+  }) => addMediaBookmark(
+    workId: workId,
+    fileId: fileId,
+    mediaPosition: MediaPosition(
+      kind: MediaPositionKind.time,
+      numericValue: position.inMilliseconds / 1000,
+      fileId: fileId,
+    ),
+    label: label,
+    note: note,
+    id: id,
+    createdAt: createdAt,
+  );
+
+  LibraryBookmark addMediaBookmark({
+    required String workId,
+    required String fileId,
+    required MediaPosition mediaPosition,
+    String? label,
+    String? note,
+    String? id,
+    DateTime? createdAt,
   }) {
     var bookmarkId = id ?? FundusId.generate();
     if (id != null) {
@@ -1326,7 +1432,7 @@ final class FundusDatabase {
       id: bookmarkId,
       workId: workId,
       fileId: fileId,
-      position: position,
+      mediaPosition: mediaPosition,
       label: label?.trim().isEmpty ?? true ? null : label!.trim(),
       note: note?.trim().isEmpty ?? true ? null : note!.trim(),
       createdAt: createdAt ?? DateTime.now(),
@@ -1335,11 +1441,14 @@ final class FundusDatabase {
       '''
       INSERT INTO bookmarks (
         id, work_id, file_id, user_id, position_kind, numeric_value,
-        label, note, created_at
-      ) VALUES (?, ?, ?, 'default', 'time', ?, ?, ?, ?)
+        position_key, position_label, label, note, created_at
+      ) VALUES (?, ?, ?, 'default', ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         file_id = excluded.file_id,
+        position_kind = excluded.position_kind,
         numeric_value = excluded.numeric_value,
+        position_key = excluded.position_key,
+        position_label = excluded.position_label,
         label = excluded.label,
         note = excluded.note
       ''',
@@ -1347,7 +1456,10 @@ final class FundusDatabase {
         bookmark.id,
         bookmark.workId,
         bookmark.fileId,
-        bookmark.position.inMilliseconds / 1000,
+        bookmark.mediaPosition.kind.name,
+        bookmark.mediaPosition.numericValue,
+        jsonEncode(bookmark.mediaPosition.toJson()),
+        bookmark.mediaPosition.label ?? bookmark.mediaPosition.displayValue,
         bookmark.label,
         bookmark.note,
         bookmark.createdAt.millisecondsSinceEpoch,
@@ -1358,6 +1470,52 @@ final class FundusDatabase {
 
   void deleteBookmark(String bookmarkId) =>
       _database.execute('DELETE FROM bookmarks WHERE id = ?', [bookmarkId]);
+
+  LibraryHighlight addTextHighlight({
+    String? id,
+    required String workId,
+    required String fileId,
+    required MediaPosition mediaPosition,
+    required String quote,
+    String color = '#FFF176',
+    String? note,
+    DateTime? createdAt,
+  }) {
+    final highlight = LibraryHighlight(
+      id: id ?? FundusId.generate(),
+      workId: workId,
+      fileId: fileId,
+      mediaPosition: mediaPosition,
+      quote: quote.trim(),
+      color: color,
+      note: note?.trim().isEmpty ?? true ? null : note!.trim(),
+      createdAt: createdAt ?? DateTime.now(),
+    );
+    _database.execute(
+      '''
+      INSERT INTO bookmarks (
+        id, work_id, file_id, user_id, position_kind, numeric_value,
+        position_key, position_label, note, color, quote, created_at
+      ) VALUES (?, ?, ?, 'default', ?, ?, ?, ?, ?, ?, ?, ?)
+      ''',
+      [
+        highlight.id,
+        highlight.workId,
+        highlight.fileId,
+        highlight.mediaPosition.kind.name,
+        highlight.mediaPosition.numericValue,
+        jsonEncode(highlight.mediaPosition.toJson()),
+        highlight.mediaPosition.label ?? highlight.mediaPosition.displayValue,
+        highlight.note,
+        highlight.color,
+        highlight.quote,
+        highlight.createdAt.millisecondsSinceEpoch,
+      ],
+    );
+    return highlight;
+  }
+
+  void deleteHighlight(String highlightId) => deleteBookmark(highlightId);
 
   void markUnseenFilesMissing(Set<String> seenPaths) {
     _database.execute("UPDATE files SET status = 'missing'");
@@ -1701,6 +1859,7 @@ final class FundusDatabase {
     if (_database.userVersion == 2 && !readOnly) _migrateToVersion3();
     if (_database.userVersion == 3 && !readOnly) _migrateToVersion4();
     if (_database.userVersion == 4 && !readOnly) _migrateToVersion5();
+    if (_database.userVersion == 5 && !readOnly) _migrateToVersion6();
   }
 
   void _migrateToVersion1() {
@@ -1791,6 +1950,32 @@ final class FundusDatabase {
       rethrow;
     }
   }
+
+  void _migrateToVersion6() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      if (tableExists('progress')) {
+        const columns = {
+          'position_schema_version': 'INTEGER NOT NULL DEFAULT 1',
+          'chapter_id': 'TEXT',
+          'element_id': 'TEXT',
+          'scroll_offset': 'REAL',
+        };
+        for (final entry in columns.entries) {
+          if (!columnExists('progress', entry.key)) {
+            _database.execute(
+              'ALTER TABLE progress ADD COLUMN ${entry.key} ${entry.value}',
+            );
+          }
+        }
+      }
+      _database.userVersion = 6;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
 }
 
 const _version1Statements = <String>[
@@ -1870,9 +2055,13 @@ const _version1Statements = <String>[
     user_id TEXT NOT NULL DEFAULT 'default',
     file_id TEXT REFERENCES files(id) ON DELETE SET NULL,
     position_kind TEXT NOT NULL,
+    position_schema_version INTEGER NOT NULL DEFAULT 1,
     numeric_value REAL,
     position_key TEXT,
     position_label TEXT,
+    chapter_id TEXT,
+    element_id TEXT,
+    scroll_offset REAL,
     total REAL,
     finished INTEGER NOT NULL DEFAULT 0 CHECK (finished IN (0, 1)),
     revision INTEGER NOT NULL DEFAULT 1,

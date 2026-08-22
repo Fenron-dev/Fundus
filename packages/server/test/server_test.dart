@@ -281,6 +281,141 @@ void main() {
     );
   });
 
+  test('stores media-neutral reader positions with anchors', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final path = '/v1/libraries/$libraryId/progress/${work.id}';
+    final response = await _put(
+      server,
+      path,
+      jsonEncode({
+        'operation_id': 'reader-position-1',
+        'device_id': 'phone-test',
+        'file_id': track.fileId,
+        'position': {
+          'schema_version': 2,
+          'kind': 'imageIndex',
+          'numeric_value': 14,
+          'total': 32,
+          'file_id': track.fileId,
+          'chapter_id': 'Kapitel 12',
+          'element_id': 'pages/014.webp',
+          'scroll_offset': .42,
+          'label': 'Kapitel 12 · Seite 14',
+        },
+      }),
+    );
+    expect(response.statusCode, 200);
+    final body = await _json(response);
+    final position = body['position']! as Map<String, dynamic>;
+    expect(position['kind'], 'imageIndex');
+    expect(position['numeric_value'], 14);
+    expect(position['element_id'], 'pages/014.webp');
+    expect(position['scroll_offset'], .42);
+
+    final loaded = await _json(await _get(server, path));
+    final progress = loaded['progress']! as Map<String, dynamic>;
+    expect(
+      (progress['position']! as Map<String, dynamic>)['chapter_id'],
+      'Kapitel 12',
+    );
+  });
+
+  test('syncs Markdown notes and favorite tags', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final path = '/v1/libraries/$libraryId/annotations/${work.id}';
+    final noteResponse = await _post(
+      server,
+      '$path/notes',
+      jsonEncode({'markdown': '## Mobile Notiz'}),
+    );
+    expect(noteResponse.statusCode, 200);
+    final tagsResponse = await _put(
+      server,
+      '$path/tags',
+      jsonEncode({
+        'tags': ['Favorit', 'Fantasy'],
+      }),
+    );
+    expect(tagsResponse.statusCode, 200);
+    final loaded = await _json(await _get(server, path));
+    expect(loaded['tags'], containsAll(['Favorit', 'Fantasy']));
+    expect((loaded['notes'] as List).single['markdown'], '## Mobile Notiz');
+    expect(
+      await File(
+        '${firstLibrary.workDirectoryPath(work.id)}/_fundus/notes.md',
+      ).readAsString(),
+      contains('## Mobile Notiz'),
+    );
+    final profilePath =
+        '/v1/libraries/$libraryId/reader-settings/${work.id}/android/epub';
+    final profileResponse = await _put(
+      server,
+      profilePath,
+      jsonEncode({
+        'profile': {'font_size': 23.0, 'content_width': 640.0},
+      }),
+    );
+    expect(profileResponse.statusCode, 200);
+    final profile = await _json(await _get(server, profilePath));
+    expect((profile['profile'] as Map)['font_size'], 23.0);
+  });
+
+  test('syncs semantic bookmarks and highlights', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final path = '/v1/libraries/$libraryId/annotations/${work.id}';
+    final position = {
+      'schema_version': 2,
+      'kind': 'epubCfi',
+      'numeric_value': 42.0,
+      'file_id': track.fileId,
+      'chapter_id': 'chapter-4',
+      'element_id': 'paragraph-7',
+      'scroll_offset': .25,
+      'key': 'chapter.xhtml',
+    };
+    final bookmarkResponse = await _post(
+      server,
+      '$path/bookmarks',
+      jsonEncode({
+        'file_id': track.fileId,
+        'position': position,
+        'label': 'Wichtige Stelle',
+      }),
+    );
+    expect(bookmarkResponse.statusCode, 200);
+    final highlightResponse = await _post(
+      server,
+      '$path/highlights',
+      jsonEncode({
+        'file_id': track.fileId,
+        'position': position,
+        'quote': 'Markierter Text',
+        'color': '#FFF176',
+      }),
+    );
+    expect(highlightResponse.statusCode, 200);
+
+    final loaded = await _json(await _get(server, path));
+    final bookmarks = loaded['bookmarks']! as List;
+    final highlights = loaded['highlights']! as List;
+    expect((bookmarks.single as Map)['label'], 'Wichtige Stelle');
+    expect((highlights.single as Map)['quote'], 'Markierter Text');
+
+    final bookmarkId = (bookmarks.single as Map)['id']! as String;
+    final highlightId = (highlights.single as Map)['id']! as String;
+    expect(
+      (await _delete(server, '$path/bookmarks/$bookmarkId')).statusCode,
+      200,
+    );
+    expect(
+      (await _delete(server, '$path/highlights/$highlightId')).statusCode,
+      200,
+    );
+    final deleted = await _json(await _get(server, path));
+    expect(deleted['bookmarks'], isEmpty);
+    expect(deleted['highlights'], isEmpty);
+  });
+
   test('lists and restores progress history as a new revision', () async {
     final libraryId = firstLibrary.manifest.libraryId;
     final path = '/v1/libraries/$libraryId/progress/${work.id}';
