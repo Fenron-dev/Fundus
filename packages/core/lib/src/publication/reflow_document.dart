@@ -16,6 +16,20 @@ final class ReflowParagraph {
   int get characterEnd => characterStart + text.length;
 }
 
+final class ReflowSearchMatch {
+  const ReflowSearchMatch({
+    required this.paragraphIndex,
+    required this.innerOffset,
+    required this.matchLength,
+    required this.snippet,
+  });
+
+  final int paragraphIndex;
+  final double innerOffset;
+  final int matchLength;
+  final String snippet;
+}
+
 final class ReflowDocument {
   const ReflowDocument({
     required this.paragraphs,
@@ -62,6 +76,45 @@ final class ReflowDocument {
 
   final List<ReflowParagraph> paragraphs;
   final int totalCharacters;
+
+  List<ReflowSearchMatch> search(String query, {int limit = 200}) {
+    final needle = query.trim().toLowerCase();
+    if (needle.isEmpty || limit <= 0) return const [];
+    final matches = <ReflowSearchMatch>[];
+    for (
+      var paragraphIndex = 0;
+      paragraphIndex < paragraphs.length && matches.length < limit;
+      paragraphIndex++
+    ) {
+      final paragraph = paragraphs[paragraphIndex];
+      final haystack = paragraph.text.toLowerCase();
+      var start = 0;
+      while (start < haystack.length && matches.length < limit) {
+        final index = haystack.indexOf(needle, start);
+        if (index < 0) break;
+        final snippetStart = (index - 54).clamp(0, paragraph.text.length);
+        final snippetEnd = (index + needle.length + 70).clamp(
+          0,
+          paragraph.text.length,
+        );
+        final prefix = snippetStart > 0 ? '…' : '';
+        final suffix = snippetEnd < paragraph.text.length ? '…' : '';
+        matches.add(
+          ReflowSearchMatch(
+            paragraphIndex: paragraphIndex,
+            innerOffset: paragraph.text.isEmpty
+                ? 0
+                : index / paragraph.text.length,
+            matchLength: needle.length,
+            snippet:
+                '$prefix${paragraph.text.substring(snippetStart, snippetEnd).replaceAll(RegExp(r'\s+'), ' ')}$suffix',
+          ),
+        );
+        start = index + needle.length;
+      }
+    }
+    return List.unmodifiable(matches);
+  }
 
   ({int paragraphIndex, double innerOffset}) resolve(MediaPosition? position) {
     if (paragraphs.isEmpty) return (paragraphIndex: 0, innerOffset: 0);

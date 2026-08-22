@@ -12,7 +12,11 @@ import 'publication_reader_settings.dart';
 enum ReflowTextReaderAction { previousChapter, nextChapter, selectChapter }
 
 final class ReflowTextReaderResult {
-  const ReflowTextReaderResult._(this.action, [this.chapterIndex]);
+  const ReflowTextReaderResult._(
+    this.action, [
+    this.chapterIndex,
+    this.targetPosition,
+  ]);
 
   static const previousChapter = ReflowTextReaderResult._(
     ReflowTextReaderAction.previousChapter,
@@ -21,12 +25,36 @@ final class ReflowTextReaderResult {
     ReflowTextReaderAction.nextChapter,
   );
 
-  factory ReflowTextReaderResult.selectChapter(int index) =>
-      ReflowTextReaderResult._(ReflowTextReaderAction.selectChapter, index);
+  factory ReflowTextReaderResult.selectChapter(
+    int index, {
+    MediaPosition? targetPosition,
+  }) => ReflowTextReaderResult._(
+    ReflowTextReaderAction.selectChapter,
+    index,
+    targetPosition,
+  );
 
   final ReflowTextReaderAction action;
   final int? chapterIndex;
+  final MediaPosition? targetPosition;
 }
+
+final class ReflowReaderSearchResult {
+  const ReflowReaderSearchResult({
+    required this.chapterIndex,
+    required this.chapterTitle,
+    required this.position,
+    required this.snippet,
+  });
+
+  final int chapterIndex;
+  final String chapterTitle;
+  final MediaPosition position;
+  final String snippet;
+}
+
+typedef ReflowReaderSearch =
+    Future<List<ReflowReaderSearchResult>> Function(String query);
 
 bool supportsInternalReflowTextReader(String path) => const {
   '.html',
@@ -54,6 +82,7 @@ Future<ReflowTextReaderResult?> showReflowTextReader(
   void Function(ReflowReaderProfile profile)? onProfileChanged,
   Future<void> Function(ReflowReaderProfile profile)? onSaveAsDefault,
   Future<ReflowReaderProfile> Function()? onResetWorkProfile,
+  ReflowReaderSearch? onSearch,
 }) async {
   final file = File(path);
   if (!await file.exists()) {
@@ -93,6 +122,7 @@ Future<ReflowTextReaderResult?> showReflowTextReader(
     onProfileChanged: onProfileChanged,
     onSaveAsDefault: onSaveAsDefault,
     onResetWorkProfile: onResetWorkProfile,
+    onSearch: onSearch,
   );
 }
 
@@ -114,6 +144,7 @@ Future<ReflowTextReaderResult?> showReflowDocumentReader(
   void Function(ReflowReaderProfile profile)? onProfileChanged,
   Future<void> Function(ReflowReaderProfile profile)? onSaveAsDefault,
   Future<ReflowReaderProfile> Function()? onResetWorkProfile,
+  ReflowReaderSearch? onSearch,
 }) {
   return showDialog<ReflowTextReaderResult>(
     context: context,
@@ -135,6 +166,7 @@ Future<ReflowTextReaderResult?> showReflowDocumentReader(
       onProfileChanged: onProfileChanged,
       onSaveAsDefault: onSaveAsDefault,
       onResetWorkProfile: onResetWorkProfile,
+      onSearch: onSearch,
     ),
   );
 }
@@ -166,6 +198,7 @@ class _ReflowTextReaderDialog extends StatefulWidget {
     required this.onProfileChanged,
     required this.onSaveAsDefault,
     required this.onResetWorkProfile,
+    required this.onSearch,
   });
 
   final ReflowDocument document;
@@ -184,6 +217,7 @@ class _ReflowTextReaderDialog extends StatefulWidget {
   final void Function(ReflowReaderProfile profile)? onProfileChanged;
   final Future<void> Function(ReflowReaderProfile profile)? onSaveAsDefault;
   final Future<ReflowReaderProfile> Function()? onResetWorkProfile;
+  final ReflowReaderSearch? onSearch;
 
   @override
   State<_ReflowTextReaderDialog> createState() =>
@@ -496,6 +530,52 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
     Navigator.pop(context, ReflowTextReaderResult.selectChapter(selected));
   }
 
+  Future<List<ReflowReaderSearchResult>> _search(String query) async {
+    if (widget.onSearch != null) return widget.onSearch!(query);
+    return [
+      for (final match in widget.document.search(query))
+        ReflowReaderSearchResult(
+          chapterIndex: widget.chapterIndex,
+          chapterTitle: widget.title,
+          position: widget.document.positionFor(
+            paragraphIndex: match.paragraphIndex,
+            innerOffset: match.innerOffset,
+            fileId: widget.fileId,
+            chapterId: widget.positionChapterId ?? widget.title,
+            key: widget.relativePath,
+          ),
+          snippet: match.snippet,
+        ),
+    ];
+  }
+
+  Future<void> _showSearch() async {
+    final selected = await showModalBottomSheet<ReflowReaderSearchResult>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => _ReflowSearchSheet(
+        onSearch: _search,
+        searchesWholeBook: widget.onSearch != null,
+      ),
+    );
+    if (!mounted || selected == null) return;
+    if (selected.chapterIndex == widget.chapterIndex) {
+      _restoring = true;
+      final epoch = ++_restoreEpoch;
+      await _restorePosition(selected.position, epoch: epoch);
+      return;
+    }
+    _reportCurrentPosition();
+    Navigator.pop(
+      context,
+      ReflowTextReaderResult.selectChapter(
+        selected.chapterIndex,
+        targetPosition: selected.position,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final progress =
@@ -532,6 +612,11 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
             ],
           ),
           actions: [
+            IconButton(
+              onPressed: _showSearch,
+              tooltip: 'Im Buch suchen',
+              icon: const Icon(Icons.search),
+            ),
             if (widget.chapterTitles.length > 1)
               IconButton(
                 onPressed: _showChapters,
@@ -673,6 +758,124 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
       ),
     );
   }
+}
+
+class _ReflowSearchSheet extends StatefulWidget {
+  const _ReflowSearchSheet({
+    required this.onSearch,
+    required this.searchesWholeBook,
+  });
+
+  final ReflowReaderSearch onSearch;
+  final bool searchesWholeBook;
+
+  @override
+  State<_ReflowSearchSheet> createState() => _ReflowSearchSheetState();
+}
+
+class _ReflowSearchSheetState extends State<_ReflowSearchSheet> {
+  final _controller = TextEditingController();
+  Timer? _debounce;
+  int _searchEpoch = 0;
+  bool _loading = false;
+  List<ReflowReaderSearchResult> _results = const [];
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _scheduleSearch(String query) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 280), () => _run(query));
+  }
+
+  Future<void> _run(String query) async {
+    final epoch = ++_searchEpoch;
+    final normalized = query.trim();
+    if (normalized.isEmpty) {
+      if (mounted) setState(() => _results = const []);
+      return;
+    }
+    setState(() => _loading = true);
+    final results = await widget.onSearch(normalized);
+    if (!mounted || epoch != _searchEpoch) return;
+    setState(() {
+      _loading = false;
+      _results = results;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: SizedBox(
+      height: MediaQuery.sizeOf(context).height * .72,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+            child: TextField(
+              controller: _controller,
+              autofocus: true,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                labelText: widget.searchesWholeBook
+                    ? 'Im ganzen Buch suchen'
+                    : 'Im Kapitel suchen',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _controller.text.isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: () {
+                          _controller.clear();
+                          _scheduleSearch('');
+                          setState(() {});
+                        },
+                        tooltip: 'Suche leeren',
+                        icon: const Icon(Icons.clear),
+                      ),
+              ),
+              onChanged: (value) {
+                _scheduleSearch(value);
+                setState(() {});
+              },
+              onSubmitted: _run,
+            ),
+          ),
+          if (_loading) const LinearProgressIndicator(),
+          Expanded(
+            child: _controller.text.trim().isEmpty
+                ? const Center(
+                    child: Text(
+                      'Suchbegriff eingeben, um Textstellen zu finden.',
+                    ),
+                  )
+                : !_loading && _results.isEmpty
+                ? const Center(child: Text('Keine Treffer gefunden.'))
+                : ListView.separated(
+                    itemCount: _results.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final result = _results[index];
+                      return ListTile(
+                        leading: const Icon(Icons.subject),
+                        title: Text(result.chapterTitle),
+                        subtitle: Text(
+                          result.snippet,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () => Navigator.pop(context, result),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _ReaderValueSlider extends StatelessWidget {

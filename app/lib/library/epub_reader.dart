@@ -52,6 +52,44 @@ Future<void> showEpubReader(
   if (!context.mounted) return;
 
   final chapters = publication.chapters;
+  final documentCache = <int, ReflowDocument>{};
+  ReflowDocument documentFor(int index) => documentCache.putIfAbsent(
+    index,
+    () => ReflowDocument.parse(
+      chapters[index].html,
+      format: ReflowSourceFormat.html,
+    ),
+  );
+
+  Future<List<ReflowReaderSearchResult>> searchBook(String query) async {
+    final results = <ReflowReaderSearchResult>[];
+    for (
+      var index = 0;
+      index < chapters.length && results.length < 200;
+      index++
+    ) {
+      final chapter = chapters[index];
+      final document = documentFor(index);
+      for (final match in document.search(query, limit: 200 - results.length)) {
+        results.add(
+          ReflowReaderSearchResult(
+            chapterIndex: index,
+            chapterTitle: chapter.title,
+            position: document.positionFor(
+              paragraphIndex: match.paragraphIndex,
+              innerOffset: match.innerOffset,
+              fileId: fileId,
+              chapterId: chapter.id,
+              key: relativePath,
+            ),
+            snippet: match.snippet,
+          ),
+        );
+      }
+    }
+    return results;
+  }
+
   var readerProfile = initialProfile;
   var chapterIndex = initialPosition?.chapterId == null
       ? 0
@@ -64,10 +102,7 @@ Future<void> showEpubReader(
   MediaPosition? chapterPosition = initialPosition;
   while (context.mounted) {
     final chapter = chapters[chapterIndex];
-    final document = ReflowDocument.parse(
-      chapter.html,
-      format: ReflowSourceFormat.html,
-    );
+    final document = documentFor(chapterIndex);
     final result = await showReflowDocumentReader(
       context,
       document: document,
@@ -96,6 +131,7 @@ Future<void> showEpubReader(
       },
       onSaveAsDefault: onSaveAsDefault,
       onResetWorkProfile: onResetWorkProfile,
+      onSearch: searchBook,
     );
     if (result == null || !context.mounted) return;
     if (result.action == ReflowTextReaderAction.selectChapter &&
@@ -103,7 +139,7 @@ Future<void> showEpubReader(
         result.chapterIndex! >= 0 &&
         result.chapterIndex! < chapters.length) {
       chapterIndex = result.chapterIndex!;
-      chapterPosition = null;
+      chapterPosition = result.targetPosition;
       continue;
     }
     if (result.action == ReflowTextReaderAction.nextChapter &&

@@ -58,4 +58,25 @@ void main() {
 
     expect(resolved.paragraphIndex, 1);
   });
+
+  test('search returns stable semantic offsets and useful snippets', () {
+    final document = ReflowDocument.parse(
+      'Einleitung.\n\nDas Fundstück liegt hier. Ein zweites FUNDSTÜCK folgt.',
+      format: ReflowSourceFormat.plainText,
+    );
+
+    final matches = document.search('Fundstück');
+
+    expect(matches, hasLength(2));
+    expect(matches.first.paragraphIndex, 1);
+    expect(matches.first.innerOffset, closeTo(4 / 58, .01));
+    expect(matches.first.snippet, contains('Fundstück liegt hier'));
+    final position = document.positionFor(
+      paragraphIndex: matches.first.paragraphIndex,
+      innerOffset: matches.first.innerOffset,
+      chapterId: 'chapter-1',
+    );
+    expect(position.elementId, document.paragraphs[1].id);
+    expect(position.chapterId, 'chapter-1');
+  });
 }

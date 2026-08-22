@@ -144,4 +144,61 @@ void main() {
     await tester.tap(find.byTooltip('Reader schließen'));
     await tester.pumpAndSettle();
   });
+
+  testWidgets('reader search jumps to the semantic text match', (tester) async {
+    final document = ReflowDocument.parse(
+      [
+        for (var index = 0; index < 90; index++)
+          index == 72
+              ? 'Hier befindet sich das seltene Drachenamulett.'
+              : 'Absatz $index enthält gewöhnlichen Beispieltext.',
+      ].join('\n\n'),
+      format: ReflowSourceFormat.plainText,
+    );
+    MediaPosition? reported;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => FilledButton(
+            onPressed: () => unawaited(
+              showReflowDocumentReader(
+                context,
+                document: document,
+                title: 'Suchtest',
+                positionChapterId: 'chapter-search',
+                onPositionChanged: (position) => reported = position,
+              ),
+            ),
+            child: const Text('Öffnen'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Öffnen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Im Buch suchen'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Im Kapitel suchen'),
+      'Drachenamulett',
+    );
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+    final searchResult = find.byWidgetPredicate(
+      (widget) =>
+          widget is Text &&
+          widget.maxLines == 3 &&
+          (widget.data?.contains('seltene Drachenamulett') ?? false),
+    );
+    expect(searchResult, findsOneWidget);
+    await tester.tap(searchResult);
+    await tester.pumpAndSettle();
+
+    expect(reported?.elementId, document.paragraphs[72].id);
+    expect(reported?.chapterId, 'chapter-search');
+    await tester.tap(find.byTooltip('Reader schließen'));
+    await tester.pumpAndSettle();
+  });
 }
