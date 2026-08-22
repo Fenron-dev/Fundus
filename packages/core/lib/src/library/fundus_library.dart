@@ -287,10 +287,79 @@ final class FundusLibrary {
   String? workDirectoryPath(String workId) {
     final sourcePath = _database.workSourcePath(workId);
     if (sourcePath == null) return null;
-    final target = _safeWorkDirectory(sourcePath);
-    return FileSystemEntity.isFileSync(target.path)
-        ? target.parent.path
-        : target.path;
+    return _portableWorkDirectory(sourcePath).path;
+  }
+
+  Future<Map<String, Object?>?> loadPortableReaderProfile({
+    required String workId,
+    required String deviceKey,
+    required String readerKind,
+  }) async {
+    final sourcePath = _database.workSourcePath(workId);
+    if (sourcePath == null) return null;
+    final file = File(
+      p.join(_workSidecarDirectory(sourcePath).path, 'reader-settings.yaml'),
+    );
+    if (!await file.exists()) return null;
+    try {
+      final value = loadYaml(await file.readAsString());
+      if (value is! Map) return null;
+      final devices = value['devices'];
+      if (devices is! Map) return null;
+      final device = devices[deviceKey];
+      if (device is! Map) return null;
+      final profile = device[readerKind];
+      return profile is Map
+          ? Map<String, Object?>.from(profile.cast<Object?, Object?>())
+          : null;
+    } on FileSystemException {
+      return null;
+    } on YamlException {
+      return null;
+    }
+  }
+
+  Future<void> savePortableReaderProfile({
+    required String workId,
+    required String deviceKey,
+    required String readerKind,
+    required Map<String, Object?> profile,
+  }) async {
+    _ensureWritable();
+    final sourcePath = _database.workSourcePath(workId);
+    if (sourcePath == null) return;
+    final directory = _workSidecarDirectory(sourcePath);
+    await directory.create(recursive: true);
+    final file = File(p.join(directory.path, 'reader-settings.yaml'));
+    var values = <String, Object?>{'format_version': 1};
+    if (await file.exists()) {
+      try {
+        final decoded = loadYaml(await file.readAsString());
+        if (decoded is Map) {
+          values = Map<String, Object?>.from(decoded.cast<Object?, Object?>());
+        }
+      } on FileSystemException {
+        // A new portable settings file can replace an unreadable old one.
+      } on YamlException {
+        // A malformed optional profile must not block the reader.
+      }
+    }
+    final devices = values['devices'] is Map
+        ? Map<String, Object?>.from(values['devices'] as Map)
+        : <String, Object?>{};
+    final device = devices[deviceKey] is Map
+        ? Map<String, Object?>.from(devices[deviceKey] as Map)
+        : <String, Object?>{};
+    device[readerKind] = profile;
+    devices[deviceKey] = device;
+    values['devices'] = devices;
+    final partial = File('${file.path}.part');
+    await partial.writeAsString(
+      '${const JsonEncoder.withIndent('  ').convert(values)}\n',
+      flush: true,
+    );
+    if (await file.exists()) await file.delete();
+    await partial.rename(file.path);
   }
 
   LibraryPlaybackProgress? loadProgress(String workId) =>
@@ -462,7 +531,7 @@ final class FundusLibrary {
   ) async {
     _ensureWritable();
     _database.replaceWorkTags(workId, tags);
-    if (_usesAudiobookSidecars(workId)) {
+    if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }
     return loadAnnotations(workId);
@@ -473,7 +542,7 @@ final class FundusLibrary {
     final normalized = markdown.trim();
     if (normalized.isEmpty) return loadAnnotations(workId);
     _database.saveWorkNote(workId, normalized);
-    if (_usesAudiobookSidecars(workId)) {
+    if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }
     return loadAnnotations(workId);
@@ -494,7 +563,7 @@ final class FundusLibrary {
       label: label,
       note: note,
     );
-    if (_usesAudiobookSidecars(workId)) {
+    if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }
     return loadAnnotations(workId);
@@ -515,7 +584,7 @@ final class FundusLibrary {
       label: label,
       note: note,
     );
-    if (_usesAudiobookSidecars(workId)) {
+    if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }
     return loadAnnotations(workId);
@@ -527,7 +596,7 @@ final class FundusLibrary {
   ) async {
     _ensureWritable();
     _database.deleteBookmark(bookmarkId);
-    if (_usesAudiobookSidecars(workId)) {
+    if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }
     return loadAnnotations(workId);
@@ -551,6 +620,9 @@ final class FundusLibrary {
       color: color,
       note: note,
     );
+    if (_usesPortableSidecars(workId)) {
+      await _writeAnnotationSidecars(workId);
+    }
     return loadAnnotations(workId);
   }
 
@@ -560,6 +632,9 @@ final class FundusLibrary {
   ) async {
     _ensureWritable();
     _database.deleteHighlight(highlightId);
+    if (_usesPortableSidecars(workId)) {
+      await _writeAnnotationSidecars(workId);
+    }
     return loadAnnotations(workId);
   }
 
@@ -664,6 +739,10 @@ final class FundusLibrary {
     });
     for (final indexed in indexedDocuments) {
       await _cachePublicationCover(indexed.candidate, indexed.workId);
+      await _importAnnotationSidecars(
+        indexed.candidate.directory,
+        indexed.workId,
+      );
     }
     for (final indexed in indexedCandidates) {
       try {
@@ -676,7 +755,10 @@ final class FundusLibrary {
         // Invalid source JSON is ignored until repaired.
       }
       try {
-        await _importAnnotationSidecars(indexed.candidate, indexed.workId);
+        await _importAnnotationSidecars(
+          indexed.candidate.directory,
+          indexed.workId,
+        );
       } on FileSystemException {
         // A broken sidecar must not make the complete library unavailable.
       } on YamlException {
@@ -952,8 +1034,7 @@ final class FundusLibrary {
   Future<void> _writeAnnotationSidecars(String workId) async {
     final sourcePath = _database.workSourcePath(workId);
     if (sourcePath == null) return;
-    final workDirectory = _safeWorkDirectory(sourcePath);
-    final sidecarDirectory = Directory(p.join(workDirectory.path, '_fundus'));
+    final sidecarDirectory = _workSidecarDirectory(sourcePath);
     await sidecarDirectory.create(recursive: true);
     final annotations = loadAnnotations(workId);
     await File(
@@ -978,6 +1059,18 @@ final class FundusLibrary {
               'label': bookmark.label,
               'note': bookmark.note,
               'created_at': bookmark.createdAt.toUtc().toIso8601String(),
+            },
+        ],
+        'highlights': [
+          for (final highlight in annotations.highlights)
+            {
+              'id': highlight.id,
+              'file_path': tracksById[highlight.fileId],
+              'position': highlight.mediaPosition.toJson(),
+              'quote': highlight.quote,
+              'color': highlight.color,
+              'note': highlight.note,
+              'created_at': highlight.createdAt.toUtc().toIso8601String(),
             },
         ],
       }),
@@ -1046,9 +1139,7 @@ final class FundusLibrary {
   Future<void> _writeMetadataSidecar(String workId) async {
     final sourcePath = _database.workSourcePath(workId);
     if (sourcePath == null) return;
-    final directory = Directory(
-      p.join(_safeWorkDirectory(sourcePath).path, '_fundus'),
-    );
+    final directory = _workSidecarDirectory(sourcePath);
     await directory.create(recursive: true);
     final annotations = loadAnnotations(workId);
     final work = listWorks().where((work) => work.id == workId).firstOrNull;
@@ -1057,7 +1148,7 @@ final class FundusLibrary {
       '${const JsonEncoder.withIndent('  ').convert({
         'format_version': 3,
         'work_id': workId,
-        'base_kind': 'audiobook',
+        'base_kind': work.kind,
         'custom_type': null,
         'title': work.title,
         'author': work.author,
@@ -1080,12 +1171,10 @@ final class FundusLibrary {
   }
 
   Future<void> _importAnnotationSidecars(
-    AudiobookImportCandidate candidate,
+    String sourcePath,
     String workId,
   ) async {
-    final sidecarDirectory = Directory(
-      p.joinAll([root.path, ...p.posix.split(candidate.directory), '_fundus']),
-    );
+    final sidecarDirectory = _workSidecarDirectory(sourcePath);
     if (!await sidecarDirectory.exists()) return;
     var annotations = loadAnnotations(workId);
     final noteFile = File(p.join(sidecarDirectory.path, 'notes.md'));
@@ -1200,6 +1289,43 @@ final class FundusLibrary {
                   ? DateTime.tryParse(createdAt)
                   : null,
             );
+          }
+        }
+      }
+    }
+    annotations = loadAnnotations(workId);
+    if (annotations.highlights.isEmpty && await bookmarksFile.exists()) {
+      final value = loadYaml(await bookmarksFile.readAsString());
+      final highlights = value is Map ? value['highlights'] : null;
+      if (highlights is List) {
+        final tracksByPath = {
+          for (final track in playbackTracks(workId))
+            track.relativePath: track.fileId,
+        };
+        for (final item in highlights.whereType<Map>()) {
+          final fileId = tracksByPath[item['file_path']];
+          final rawPosition = item['position'];
+          final quote = item['quote'];
+          if (fileId == null || rawPosition is! Map || quote is! String) {
+            continue;
+          }
+          try {
+            _database.addTextHighlight(
+              id: item['id'] as String?,
+              workId: workId,
+              fileId: fileId,
+              mediaPosition: MediaPosition.fromJson(
+                rawPosition.cast<String, Object?>(),
+              ).withFileId(fileId),
+              quote: quote,
+              color: item['color'] as String? ?? '#FFF176',
+              note: item['note'] as String?,
+              createdAt: item['created_at'] is String
+                  ? DateTime.tryParse(item['created_at'] as String)
+                  : null,
+            );
+          } on FormatException {
+            // Ignore one malformed portable highlight.
           }
         }
       }
@@ -1343,9 +1469,23 @@ final class FundusLibrary {
     return Directory(path);
   }
 
-  bool _usesAudiobookSidecars(String workId) => listWorks(
-    includeMissing: true,
-  ).any((work) => work.id == workId && work.kind == 'audiobook');
+  Directory _portableWorkDirectory(String sourcePath) {
+    final target = _safeWorkDirectory(sourcePath);
+    return FileSystemEntity.isFileSync(target.path) ? target.parent : target;
+  }
+
+  Directory _workSidecarDirectory(String sourcePath) {
+    final target = _safeWorkDirectory(sourcePath);
+    if (!FileSystemEntity.isFileSync(target.path)) {
+      return Directory(p.join(target.path, '_fundus'));
+    }
+    return Directory(
+      p.join(target.parent.path, '_fundus', 'files', p.basename(target.path)),
+    );
+  }
+
+  bool _usesPortableSidecars(String workId) =>
+      listWorks(includeMissing: true).any((work) => work.id == workId);
 
   static File _manifestFile(Directory root) =>
       File('${root.path}/$metadataDirectoryName/$manifestFileName');

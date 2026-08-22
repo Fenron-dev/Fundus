@@ -100,6 +100,17 @@ final class FundusServerHandler {
       ..put('/v1/libraries/<libraryId>/playback-session', _savePlaybackSession)
       ..get('/v1/libraries/<libraryId>/progress/<workId>', _progress)
       ..put('/v1/libraries/<libraryId>/progress/<workId>', _saveProgress)
+      ..get('/v1/libraries/<libraryId>/annotations/<workId>', _annotations)
+      ..post('/v1/libraries/<libraryId>/annotations/<workId>/notes', _saveNote)
+      ..put('/v1/libraries/<libraryId>/annotations/<workId>/tags', _saveTags)
+      ..get(
+        '/v1/libraries/<libraryId>/reader-settings/<workId>/<deviceKey>/<readerKind>',
+        _readerProfile,
+      )
+      ..put(
+        '/v1/libraries/<libraryId>/reader-settings/<workId>/<deviceKey>/<readerKind>',
+        _saveReaderProfile,
+      )
       ..get(
         '/v1/libraries/<libraryId>/progress/<workId>/revisions',
         _progressRevisions,
@@ -137,6 +148,8 @@ final class FundusServerHandler {
     if (segments.contains('playlists')) return 'playlists';
     if (segments.contains('playback-session')) return 'playback_session';
     if (segments.contains('progress')) return 'progress';
+    if (segments.contains('annotations')) return 'annotations';
+    if (segments.contains('reader-settings')) return 'reader_settings';
     if (segments.contains('works')) return 'works';
     if (segments.contains('libraries')) return 'libraries';
     if (segments.contains('pairing')) return 'pairing';
@@ -210,6 +223,8 @@ final class FundusServerHandler {
       'playlist_revisions',
       'playback_session',
       'playback_session_revisions',
+      'annotations',
+      'portable_reader_profiles',
     ],
   });
 
@@ -570,6 +585,123 @@ final class FundusServerHandler {
       'work_id': workId,
       'progress': progress == null ? null : _progressJson(progress),
     });
+  }
+
+  Response _annotations(Request request, String libraryId, String workId) {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (_findWork(entry.library, workId) == null) {
+      return _notFound('work_not_found');
+    }
+    return _json(_annotationsJson(entry.library.loadAnnotations(workId)));
+  }
+
+  Future<Response> _saveNote(
+    Request request,
+    String libraryId,
+    String workId,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    if (_findWork(entry.library, workId) == null) {
+      return _notFound('work_not_found');
+    }
+    final decoded = await _readJson(request);
+    final markdown = decoded?['markdown'];
+    if (markdown is! String || markdown.trim().isEmpty) {
+      return _badRequest('invalid_note');
+    }
+    final annotations = await entry.library.saveWorkNote(workId, markdown);
+    return _json(_annotationsJson(annotations));
+  }
+
+  Future<Response> _saveTags(
+    Request request,
+    String libraryId,
+    String workId,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    if (_findWork(entry.library, workId) == null) {
+      return _notFound('work_not_found');
+    }
+    final decoded = await _readJson(request);
+    final tags = decoded?['tags'];
+    if (tags is! List || tags.any((value) => value is! String)) {
+      return _badRequest('invalid_tags');
+    }
+    final annotations = await entry.library.replaceWorkTags(
+      workId,
+      tags.cast<String>(),
+    );
+    return _json(_annotationsJson(annotations));
+  }
+
+  Map<String, Object?> _annotationsJson(WorkAnnotations annotations) => {
+    'tags': annotations.tags,
+    'notes': [
+      for (final note in annotations.notes)
+        {
+          'id': note.id,
+          'markdown': note.markdown,
+          'created_at': note.createdAt.toUtc().toIso8601String(),
+        },
+    ],
+  };
+
+  Future<Response> _readerProfile(
+    Request request,
+    String libraryId,
+    String workId,
+    String deviceKey,
+    String readerKind,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (_findWork(entry.library, workId) == null) {
+      return _notFound('work_not_found');
+    }
+    final profile = await entry.library.loadPortableReaderProfile(
+      workId: workId,
+      deviceKey: deviceKey,
+      readerKind: readerKind,
+    );
+    return _json({'profile': profile});
+  }
+
+  Future<Response> _saveReaderProfile(
+    Request request,
+    String libraryId,
+    String workId,
+    String deviceKey,
+    String readerKind,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    if (_findWork(entry.library, workId) == null) {
+      return _notFound('work_not_found');
+    }
+    final decoded = await _readJson(request);
+    final profile = decoded?['profile'];
+    if (profile is! Map<String, dynamic>) {
+      return _badRequest('invalid_reader_profile');
+    }
+    await entry.library.savePortableReaderProfile(
+      workId: workId,
+      deviceKey: deviceKey,
+      readerKind: readerKind,
+      profile: Map<String, Object?>.from(profile),
+    );
+    return _json({'profile': profile});
   }
 
   Future<Response> _saveProgress(

@@ -1094,6 +1094,30 @@ void main() {
       annotations.highlights.single.mediaPosition.elementId,
       'paragraph-example-1',
     );
+    await library.saveWorkNote(work.id, '## Portable EPUB-Notiz');
+    await library.replaceWorkTags(work.id, const ['Favorit', 'Fantasy']);
+    await library.savePortableReaderProfile(
+      workId: work.id,
+      deviceKey: 'android',
+      readerKind: 'epub',
+      profile: const {'font_size': 22.0, 'content_width': 680.0},
+    );
+    final portableProfile = await library.loadPortableReaderProfile(
+      workId: work.id,
+      deviceKey: 'android',
+      readerKind: 'epub',
+    );
+    expect(portableProfile?['font_size'], 22.0);
+    final sidecar = Directory('${webnovels.path}/_fundus/files/fallback.epub');
+    expect(
+      await File('${sidecar.path}/notes.md').readAsString(),
+      contains('Portable EPUB-Notiz'),
+    );
+    expect(
+      await File('${sidecar.path}/bookmarks.yaml').readAsString(),
+      contains('Ein wichtiges Zitat'),
+    );
+    expect(await File('${sidecar.path}/reader-settings.yaml').exists(), isTrue);
     final markdown = exportAnnotationsAsMarkdown(
       workTitle: work.title,
       annotations: annotations,

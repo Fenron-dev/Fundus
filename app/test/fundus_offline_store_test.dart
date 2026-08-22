@@ -43,6 +43,18 @@ void main() {
         color: '#90CAF9',
         note: 'Später prüfen',
       );
+      annotations = await store.saveWorkNote(
+        serverId: 'server',
+        libraryId: 'library',
+        workId: 'novel',
+        markdown: '**Portable Notiz**',
+      );
+      annotations = await store.replaceWorkTags(
+        serverId: 'server',
+        libraryId: 'library',
+        workId: 'novel',
+        tags: const ['Fantasy', 'Favorit'],
+      );
 
       expect(annotations.bookmarks.single.label, 'Wichtige Stelle');
       expect(annotations.highlights.single.quote, 'Ein markierter Satz.');
@@ -55,6 +67,8 @@ void main() {
       expect(restored.bookmarks.single.mediaPosition.elementId, 'paragraph-7');
       expect(restored.highlights.single.mediaPosition.scrollOffset, .42);
       expect(restored.highlights.single.note, 'Später prüfen');
+      expect(restored.notes.single.markdown, '**Portable Notiz**');
+      expect(restored.tags, containsAll(['Fantasy', 'Favorit']));
 
       final cleaned = await reopened.deleteAnnotation(
         serverId: 'server',

@@ -320,6 +320,46 @@ void main() {
     );
   });
 
+  test('syncs Markdown notes and favorite tags', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final path = '/v1/libraries/$libraryId/annotations/${work.id}';
+    final noteResponse = await _post(
+      server,
+      '$path/notes',
+      jsonEncode({'markdown': '## Mobile Notiz'}),
+    );
+    expect(noteResponse.statusCode, 200);
+    final tagsResponse = await _put(
+      server,
+      '$path/tags',
+      jsonEncode({
+        'tags': ['Favorit', 'Fantasy'],
+      }),
+    );
+    expect(tagsResponse.statusCode, 200);
+    final loaded = await _json(await _get(server, path));
+    expect(loaded['tags'], containsAll(['Favorit', 'Fantasy']));
+    expect((loaded['notes'] as List).single['markdown'], '## Mobile Notiz');
+    expect(
+      await File(
+        '${firstLibrary.workDirectoryPath(work.id)}/_fundus/notes.md',
+      ).readAsString(),
+      contains('## Mobile Notiz'),
+    );
+    final profilePath =
+        '/v1/libraries/$libraryId/reader-settings/${work.id}/android/epub';
+    final profileResponse = await _put(
+      server,
+      profilePath,
+      jsonEncode({
+        'profile': {'font_size': 23.0, 'content_width': 640.0},
+      }),
+    );
+    expect(profileResponse.statusCode, 200);
+    final profile = await _json(await _get(server, profilePath));
+    expect((profile['profile'] as Map)['font_size'], 23.0);
+  });
+
   test('lists and restores progress history as a new revision', () async {
     final libraryId = firstLibrary.manifest.libraryId;
     final path = '/v1/libraries/$libraryId/progress/${work.id}';

@@ -992,6 +992,109 @@ final class FundusRemoteClient {
     );
   }
 
+  Future<WorkAnnotations> annotations(
+    FundusRemoteServer server,
+    String libraryId,
+    String workId,
+  ) async => _annotationsFromJson(
+    await _json(server, '/v1/libraries/$libraryId/annotations/$workId'),
+    workId,
+  );
+
+  Future<WorkAnnotations> saveNote(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String markdown,
+  }) async {
+    final bytes = await _request(
+      server.baseUri.resolve(
+        '/v1/libraries/$libraryId/annotations/$workId/notes',
+      ),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'POST',
+      body: jsonEncode({'markdown': markdown}),
+    );
+    final value = jsonDecode(utf8.decode(bytes));
+    if (value is! Map) throw const HttpException('Ungültige Annotationen.');
+    return _annotationsFromJson(value, workId);
+  }
+
+  Future<WorkAnnotations> saveTags(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required Iterable<String> tags,
+  }) async {
+    final bytes = await _request(
+      server.baseUri.resolve(
+        '/v1/libraries/$libraryId/annotations/$workId/tags',
+      ),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'PUT',
+      body: jsonEncode({'tags': tags.toList()}),
+    );
+    final value = jsonDecode(utf8.decode(bytes));
+    if (value is! Map) throw const HttpException('Ungültige Annotationen.');
+    return _annotationsFromJson(value, workId);
+  }
+
+  Future<Map<String, Object?>?> readerProfile(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String deviceKey,
+    required String readerKind,
+  }) async {
+    final value = await _json(
+      server,
+      '/v1/libraries/$libraryId/reader-settings/$workId/$deviceKey/$readerKind',
+    );
+    final profile = value['profile'];
+    return profile is Map ? Map<String, Object?>.from(profile) : null;
+  }
+
+  Future<void> saveReaderProfile(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String deviceKey,
+    required String readerKind,
+    required Map<String, Object?> profile,
+  }) async {
+    await _request(
+      server.baseUri.resolve(
+        '/v1/libraries/$libraryId/reader-settings/$workId/$deviceKey/$readerKind',
+      ),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'PUT',
+      body: jsonEncode({'profile': profile}),
+    );
+  }
+
+  static WorkAnnotations _annotationsFromJson(Map value, String workId) {
+    final notes = <LibraryNote>[];
+    for (final item in (value['notes'] as List? ?? const []).whereType<Map>()) {
+      if (item['id'] is! String || item['markdown'] is! String) continue;
+      notes.add(
+        LibraryNote(
+          id: item['id'] as String,
+          markdown: item['markdown'] as String,
+          createdAt:
+              DateTime.tryParse('${item['created_at'] ?? ''}') ??
+              DateTime.fromMillisecondsSinceEpoch(0),
+        ),
+      );
+    }
+    return WorkAnnotations(
+      tags: (value['tags'] as List? ?? const []).whereType<String>().toList(),
+      notes: notes,
+    );
+  }
+
   Future<List<FundusRemoteProgressRevision>> progressRevisions(
     FundusRemoteServer server,
     String libraryId,

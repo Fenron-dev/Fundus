@@ -31,7 +31,7 @@ Future<void> showEpubReader(
 }) async {
   final navigator = Navigator.of(context, rootNavigator: true);
   var loadingVisible = true;
-  showDialog<void>(
+  final loadingRoute = showDialog<void>(
     context: context,
     barrierDismissible: false,
     builder: (context) => const AlertDialog(
@@ -45,6 +45,10 @@ Future<void> showEpubReader(
       ),
     ),
   );
+  // Give Flutter a frame to actually install the modal route. Without this,
+  // fast EPUB parsing could pop the publication detail route instead of the
+  // loading dialog and leave the reader with an unmounted context.
+  await Future<void>.delayed(Duration.zero);
   late final EpubPublication publication;
   try {
     publication = await Isolate.run(
@@ -56,6 +60,7 @@ Future<void> showEpubReader(
       loadingVisible = false;
     }
   }
+  await loadingRoute;
   if (!context.mounted) return;
 
   final chapters = publication.chapters;

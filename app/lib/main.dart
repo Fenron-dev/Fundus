@@ -34,6 +34,8 @@ import 'server/fundus_remote_client.dart';
 import 'server/remote_servers_view.dart';
 import 'server/server_settings.dart';
 
+const _favoriteTag = 'Favorit';
+
 typedef WorkPlaybackCallback =
     Future<void> Function(
       LibraryWorkSummary work, {
@@ -1646,7 +1648,7 @@ class _LibraryShellState extends State<LibraryShell> {
   }
 
   Widget _mobileDashboard(BuildContext context) {
-    final available = widget.works.where((work) => work.available).toList();
+    final available = _allWorks.where((work) => work.available).toList();
     final continuing = available
         .where(
           (work) =>
@@ -1682,7 +1684,7 @@ class _LibraryShellState extends State<LibraryShell> {
               itemBuilder: (context, index) => _MobileDashboardCard(
                 work: continuing[index],
                 width: 142,
-                onTap: () => _openWorkDetails(continuing[index]),
+                onTap: () => _openDashboardWork(continuing[index]),
               ),
             ),
           ),
@@ -1702,7 +1704,7 @@ class _LibraryShellState extends State<LibraryShell> {
             itemBuilder: (context, index) => _MobileDashboardCard(
               work: recent[index],
               width: 118,
-              onTap: () => _openWorkDetails(recent[index]),
+              onTap: () => _openDashboardWork(recent[index]),
             ),
           ),
         ),
@@ -1750,6 +1752,15 @@ class _LibraryShellState extends State<LibraryShell> {
         ),
       ],
     );
+  }
+
+  void _openDashboardWork(LibraryWorkSummary work) {
+    final offline = _offlineBySummaryId[work.id];
+    if (offline != null) {
+      widget.onOpenOfflineWork?.call(offline);
+      return;
+    }
+    _openWorkDetails(work);
   }
 
   Widget _mobileDownloads() => widget.offlineWorks.isEmpty
@@ -2250,6 +2261,22 @@ class _LibraryShellState extends State<LibraryShell> {
             _query = query;
             _selectedIndex = 0;
           }),
+        ),
+        IconButton(
+          onPressed: () => setState(() {
+            final tags = {..._query.tags};
+            tags.contains(_favoriteTag)
+                ? tags.remove(_favoriteTag)
+                : tags.add(_favoriteTag);
+            _query = _query.copyWith(tags: tags);
+            _selectedIndex = 0;
+          }),
+          tooltip: _query.tags.contains(_favoriteTag)
+              ? 'Alle Titel anzeigen'
+              : 'Nur Favoriten',
+          icon: Icon(
+            _query.tags.contains(_favoriteTag) ? Icons.star : Icons.star_border,
+          ),
         ),
         const SizedBox(width: 4),
         MenuAnchor(
@@ -4223,8 +4250,9 @@ class _DetailPanelState extends State<_DetailPanel> {
     final workFiles = selectedWork.available
         ? widget.library?.playbackTracks(selectedWork.id)
         : null;
+    final mobilePlatform = Platform.isAndroid || Platform.isIOS;
     if (selectedWork.kind != 'audiobook' &&
-        MediaQuery.sizeOf(context).width < 760) {
+        (mobilePlatform || MediaQuery.sizeOf(context).width < 760)) {
       return _buildMobilePublicationDetail(
         selectedWork,
         directoryPath,
@@ -4496,6 +4524,22 @@ class _DetailPanelState extends State<_DetailPanel> {
           child: Column(
             children: [
               _DocumentHero(work: work, directoryPath: directoryPath),
+              Align(
+                alignment: Alignment.centerRight,
+                child: IconButton(
+                  onPressed: widget.library == null || _saving
+                      ? null
+                      : _toggleFavorite,
+                  tooltip: _annotations.tags.contains(_favoriteTag)
+                      ? 'Aus Favoriten entfernen'
+                      : 'Als Favorit markieren',
+                  icon: Icon(
+                    _annotations.tags.contains(_favoriteTag)
+                        ? Icons.star
+                        : Icons.star_border,
+                  ),
+                ),
+              ),
               if (readable.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 SizedBox(
@@ -4508,16 +4552,21 @@ class _DetailPanelState extends State<_DetailPanel> {
                 ),
               ],
               const SizedBox(height: 12),
-              SegmentedButton<int>(
-                showSelectedIcon: false,
-                segments: const [
-                  ButtonSegment(value: 0, label: Text('Info')),
-                  ButtonSegment(value: 1, label: Text('Kapitel')),
-                  ButtonSegment(value: 2, label: Text('Notizen')),
-                ],
-                selected: {_mobileDetailTab},
-                onSelectionChanged: (value) =>
-                    setState(() => _mobileDetailTab = value.single),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SegmentedButton<int>(
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(value: 0, label: Text('Info')),
+                    ButtonSegment(value: 1, label: Text('Dateien')),
+                    ButtonSegment(value: 2, label: Text('Kapitel')),
+                    ButtonSegment(value: 3, label: Text('Notizen')),
+                    ButtonSegment(value: 4, label: Text('Ähnlich')),
+                  ],
+                  selected: {_mobileDetailTab},
+                  onSelectionChanged: (value) =>
+                      setState(() => _mobileDetailTab = value.single),
+                ),
               ),
             ],
           ),
@@ -4577,16 +4626,22 @@ class _DetailPanelState extends State<_DetailPanel> {
               ],
             ),
             1 =>
-              readable.isEmpty
-                  ? const Center(
-                      child: Text('Keine lesbaren Dateien gefunden.'),
-                    )
+              files.isEmpty
+                  ? const Center(child: Text('Keine Dateien gefunden.'))
                   : _DocumentFilesPanel(
-                      files: readable,
+                      files: files,
                       progress: progress,
                       onOpen: _openDocument,
                     ),
-            _ => Column(
+            2 =>
+              _chapterDocumentFiles(readable).isEmpty
+                  ? const Center(child: Text('Keine Kapitel gefunden.'))
+                  : _DocumentFilesPanel(
+                      files: _chapterDocumentFiles(readable),
+                      progress: progress,
+                      onOpen: _openDocument,
+                    ),
+            3 => Column(
               children: [
                 Padding(
                   padding: const EdgeInsets.all(12),
@@ -4677,10 +4732,109 @@ class _DetailPanelState extends State<_DetailPanel> {
                 ),
               ],
             ),
+            _ => _similarWorks(work),
           },
         ),
       ],
     );
+  }
+
+  List<LibraryPlaybackTrack> _chapterDocumentFiles(
+    List<LibraryPlaybackTrack> files,
+  ) => files
+      .where((file) {
+        final extension = p.extension(file.absolutePath).toLowerCase();
+        final name = p
+            .basenameWithoutExtension(file.absolutePath)
+            .toLowerCase();
+        if (name == 'cover' || name.endsWith('_cover')) return false;
+        return const {
+          '.cbz',
+          '.pdf',
+          '.epub',
+          '.html',
+          '.htm',
+          '.md',
+          '.txt',
+        }.contains(extension);
+      })
+      .toList(growable: false);
+
+  Widget _similarWorks(LibraryWorkSummary work) {
+    final sourceTags = {...work.tags, ..._annotations.tags}
+      ..remove(_favoriteTag);
+    final candidates = <({LibraryWorkSummary work, int score})>[];
+    for (final candidate
+        in widget.library?.listWorks(includeMissing: false) ??
+            const <LibraryWorkSummary>[]) {
+      if (candidate.id == work.id || candidate.kind != work.kind) continue;
+      final score = candidate.tags.where(sourceTags.contains).length;
+      if (score > 0) candidates.add((work: candidate, score: score));
+    }
+    candidates.sort((left, right) {
+      final score = right.score.compareTo(left.score);
+      return score != 0 ? score : left.work.title.compareTo(right.work.title);
+    });
+    if (candidates.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text('Noch keine Titel mit übereinstimmenden Tags.'),
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        for (final candidate in candidates)
+          ListTile(
+            leading: candidate.work.coverPath == null
+                ? const Icon(Icons.auto_awesome_outlined)
+                : ClipRRect(
+                    borderRadius: BorderRadius.circular(5),
+                    child: Image.file(
+                      File(candidate.work.coverPath!),
+                      width: 42,
+                      height: 58,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+            title: Text(candidate.work.title),
+            subtitle: Text('${candidate.score} gemeinsame Tag(s)'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (context) => Scaffold(
+                  appBar: AppBar(title: Text(candidate.work.title)),
+                  body: _DetailPanel(
+                    work: candidate.work,
+                    library: widget.library,
+                    player: widget.player,
+                    onPlay: widget.onPlay,
+                    onMetadataChanged: widget.onMetadataChanged,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _toggleFavorite() async {
+    final work = _editedWork ?? widget.work;
+    final library = widget.library;
+    if (work == null || library == null) return;
+    final tags = {..._annotations.tags};
+    tags.contains(_favoriteTag)
+        ? tags.remove(_favoriteTag)
+        : tags.add(_favoriteTag);
+    await _runSave(() => library.replaceWorkTags(work.id, tags));
+    final refreshed = library
+        .listWorks(includeMissing: true)
+        .where((candidate) => candidate.id == work.id)
+        .firstOrNull;
+    if (refreshed != null) widget.onMetadataChanged?.call(refreshed);
   }
 
   Future<void> _openDocument(LibraryPlaybackTrack file) async {
@@ -4877,6 +5031,11 @@ class _DetailPanelState extends State<_DetailPanel> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('EPUB konnte nicht geöffnet werden: $error')),
+      );
     }
   }
 
@@ -4893,9 +5052,16 @@ class _DetailPanelState extends State<_DetailPanel> {
       if (!mounted) return;
     }
     try {
-      final readerProfile = await PublicationReaderSettings.loadReflowProfile(
-        workId: work.id,
-      );
+      final portableProfile = library == null
+          ? null
+          : await library.loadPortableReaderProfile(
+              workId: work.id,
+              deviceKey: Platform.operatingSystem,
+              readerKind: 'epub',
+            );
+      final readerProfile = portableProfile == null
+          ? await PublicationReaderSettings.loadReflowProfile(workId: work.id)
+          : ReflowReaderProfile.fromJson(portableProfile);
       var publicationAnnotations =
           library?.loadAnnotations(work.id) ?? const WorkAnnotations();
       if (!mounted) return;
@@ -4910,9 +5076,24 @@ class _DetailPanelState extends State<_DetailPanel> {
         fileId: file.fileId,
         relativePath: file.relativePath,
         initialProfile: readerProfile,
-        onProfileChanged: (updated) => unawaited(
-          PublicationReaderSettings.saveReflowProfile(updated, workId: work.id),
-        ),
+        onProfileChanged: (updated) {
+          unawaited(
+            PublicationReaderSettings.saveReflowProfile(
+              updated,
+              workId: work.id,
+            ),
+          );
+          if (library != null && !library.isReadOnly) {
+            unawaited(
+              library.savePortableReaderProfile(
+                workId: work.id,
+                deviceKey: Platform.operatingSystem,
+                readerKind: 'epub',
+                profile: updated.toJson(),
+              ),
+            );
+          }
+        },
         onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
         onResetWorkProfile: () =>
             PublicationReaderSettings.clearReflowProfile(work.id),
@@ -4985,6 +5166,11 @@ class _DetailPanelState extends State<_DetailPanel> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('EPUB konnte nicht geöffnet werden: $error')),
+      );
     }
     if (library != null) {
       final refreshed = library
@@ -5230,9 +5416,16 @@ class _DetailPanelState extends State<_DetailPanel> {
     var publicationBookmarks = library == null || work == null
         ? <LibraryBookmark>[]
         : library.loadAnnotations(work.id).bookmarks;
-    var readerProfile = await PublicationReaderSettings.loadComicProfile(
-      workId: work?.id,
-    );
+    final portableProfile = work == null || library == null
+        ? null
+        : await library.loadPortableReaderProfile(
+            workId: work.id,
+            deviceKey: Platform.operatingSystem,
+            readerKind: 'comic',
+          );
+    var readerProfile = portableProfile == null
+        ? await PublicationReaderSettings.loadComicProfile(workId: work?.id)
+        : PublicationReaderProfile.fromJson(portableProfile);
     if (!mounted) return;
     while (mounted) {
       final file = comics[chapterIndex];
@@ -5311,6 +5504,16 @@ class _DetailPanelState extends State<_DetailPanel> {
               workId: work?.id,
             ),
           );
+          if (library != null && work != null && !library.isReadOnly) {
+            unawaited(
+              library.savePortableReaderProfile(
+                workId: work.id,
+                deviceKey: Platform.operatingSystem,
+                readerKind: 'comic',
+                profile: profile.toJson(),
+              ),
+            );
+          }
         },
       );
       if (!mounted || result == null) break;

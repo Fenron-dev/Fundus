@@ -19,6 +19,7 @@ import '../library/zip_archive_browser.dart';
 import '../playback/playback_sleep_timer_button.dart';
 import '../playback/playback_conflict_settings.dart';
 import '../playback/track_jump_confirmation.dart';
+import 'annotation_sync_settings.dart';
 import 'fundus_remote_client.dart';
 import 'fundus_remote_document_cache.dart';
 import 'fundus_peer_server_controller.dart';
@@ -1085,6 +1086,23 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                     child: const Icon(Icons.filter_list),
                   ),
                 ),
+                IconButton(
+                  onPressed: () => setState(() {
+                    final tags = {..._query.tags};
+                    tags.contains('Favorit')
+                        ? tags.remove('Favorit')
+                        : tags.add('Favorit');
+                    _query = _query.copyWith(tags: tags);
+                  }),
+                  tooltip: _query.tags.contains('Favorit')
+                      ? 'Alle Titel anzeigen'
+                      : 'Nur Favoriten',
+                  icon: Icon(
+                    _query.tags.contains('Favorit')
+                        ? Icons.star
+                        : Icons.star_border,
+                  ),
+                ),
                 const SizedBox(width: 8),
                 MenuAnchor(
                   builder: (context, controller, child) => IconButton(
@@ -1776,16 +1794,21 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     required int progressIndex,
     required WorkAnnotations annotations,
     required bool isOffline,
+    required Future<WorkAnnotations> Function(String markdown) onSaveNote,
+    required Future<WorkAnnotations> Function(Set<String> tags) onSaveTags,
   }) => Navigator.of(context).push<String>(
     MaterialPageRoute(
       fullscreenDialog: true,
       builder: (pageContext) => _MobileRemotePublicationDetails(
         work: work,
         tracks: tracks,
+        relatedWorks: _works,
         progressPosition: progressPosition,
         progressIndex: progressIndex,
         annotations: annotations,
         isOffline: isOffline,
+        onSaveNote: onSaveNote,
+        onSaveTags: onSaveTags,
         coverBuilder: () => work.hasCover
             ? _remoteCover(
                 server,
@@ -1804,8 +1827,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     FundusRemoteWork work,
   ) async {
     final pageContext = context;
-    final mobilePublicationLayout =
-        MediaQuery.sizeOf(pageContext).width < 760;
+    final mobilePublicationLayout = MediaQuery.sizeOf(pageContext).width < 760;
     final key = _offlineKey(server, library, work);
     final isOffline = _offlineKeys.contains(key);
     final isDocument = _isDocumentKind(work.kind);
@@ -1840,7 +1862,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         // Summary details remain usable if the server becomes unavailable.
       }
     }
-    if (isDocument) {
+    final syncAnnotations = await AnnotationSyncSettings.enabled();
+    if (isDocument && syncAnnotations) {
       if (offlineWork != null) {
         final offlineProgress = await _offlineStore.loadProgress(
           serverId: server.id,
@@ -1865,13 +1888,51 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     final documentProgressIndex = detailTracks.indexWhere(
       (track) => track.id == documentProgressFileId,
     );
-    final readerAnnotations = isDocument
+    var readerAnnotations = isDocument
         ? await _offlineStore.loadAnnotations(
             serverId: server.id,
             libraryId: library.id,
             workId: work.id,
           )
         : const WorkAnnotations();
+    if (isDocument) {
+      try {
+        final localAnnotations = readerAnnotations;
+        final result = await _runWithReconnect(
+          server,
+          (active) => _client.annotations(active, library.id, work.id),
+        );
+        server = result.server;
+        var remoteAnnotations = result.value;
+        for (final note in localAnnotations.notes) {
+          if (remoteAnnotations.notes.any(
+            (remote) => remote.markdown.trim() == note.markdown.trim(),
+          )) {
+            continue;
+          }
+          remoteAnnotations = await _client.saveNote(
+            server,
+            libraryId: library.id,
+            workId: work.id,
+            markdown: note.markdown,
+          );
+        }
+        readerAnnotations = WorkAnnotations(
+          tags: {...work.tags, ...remoteAnnotations.tags}.toList(),
+          notes: remoteAnnotations.notes,
+          bookmarks: localAnnotations.bookmarks,
+          highlights: localAnnotations.highlights,
+        );
+        await _offlineStore.cacheAnnotations(
+          serverId: server.id,
+          libraryId: library.id,
+          workId: work.id,
+          annotations: readerAnnotations,
+        );
+      } catch (_) {
+        // Locally cached notes remain usable while the server is unavailable.
+      }
+    }
     var trackSort = _DocumentTrackSort.oldestFirst;
     if (!pageContext.mounted) return;
     String? action;
@@ -1885,283 +1946,368 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         progressIndex: documentProgressIndex,
         annotations: readerAnnotations,
         isOffline: isOffline,
+        onSaveNote: (markdown) async {
+          if (!syncAnnotations) {
+            return _offlineStore.saveWorkNote(
+              serverId: server.id,
+              libraryId: library.id,
+              workId: work.id,
+              markdown: markdown,
+            );
+          }
+          try {
+            final result = await _runWithReconnect(
+              server,
+              (active) => _client.saveNote(
+                active,
+                libraryId: library.id,
+                workId: work.id,
+                markdown: markdown,
+              ),
+            );
+            server = result.server;
+            final merged = WorkAnnotations(
+              tags: result.value.tags,
+              notes: result.value.notes,
+              bookmarks: readerAnnotations.bookmarks,
+              highlights: readerAnnotations.highlights,
+            );
+            await _offlineStore.cacheAnnotations(
+              serverId: server.id,
+              libraryId: library.id,
+              workId: work.id,
+              annotations: merged,
+            );
+            return merged;
+          } catch (_) {
+            return _offlineStore.saveWorkNote(
+              serverId: server.id,
+              libraryId: library.id,
+              workId: work.id,
+              markdown: markdown,
+            );
+          }
+        },
+        onSaveTags: (tags) async {
+          if (!syncAnnotations) {
+            return _offlineStore.replaceWorkTags(
+              serverId: server.id,
+              libraryId: library.id,
+              workId: work.id,
+              tags: tags,
+            );
+          }
+          try {
+            final result = await _runWithReconnect(
+              server,
+              (active) => _client.saveTags(
+                active,
+                libraryId: library.id,
+                workId: work.id,
+                tags: tags,
+              ),
+            );
+            server = result.server;
+            final merged = WorkAnnotations(
+              tags: result.value.tags,
+              notes: readerAnnotations.notes,
+              bookmarks: readerAnnotations.bookmarks,
+              highlights: readerAnnotations.highlights,
+            );
+            await _offlineStore.cacheAnnotations(
+              serverId: server.id,
+              libraryId: library.id,
+              workId: work.id,
+              annotations: merged,
+            );
+            return merged;
+          } catch (_) {
+            return _offlineStore.replaceWorkTags(
+              serverId: server.id,
+              libraryId: library.id,
+              workId: work.id,
+              tags: tags,
+            );
+          }
+        },
       );
     } else {
       if (!pageContext.mounted) return;
       action = await showModalBottomSheet<String>(
-            context: pageContext,
-            isScrollControlled: true,
-            showDragHandle: true,
-            builder: (context) => StatefulBuilder(
-              builder: (context, setSheetState) => SafeArea(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                  child: Column(
+        context: pageContext,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setSheetState) => SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SizedBox(
-                            width: 120,
-                            height: 170,
-                            child: work.hasCover
-                                ? _remoteCover(
-                                    server,
-                                    library,
-                                    work,
-                                    borderRadius: BorderRadius.circular(10),
-                                  )
-                                : const Icon(Icons.audiotrack, size: 72),
-                          ),
-                          const SizedBox(width: 18),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  work.title,
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.headlineSmall,
-                                ),
-                                const SizedBox(height: 6),
-                                Text(work.authors.join(', ')),
-                                if (work.subtitle case final subtitle?) ...[
-                                  const SizedBox(height: 4),
-                                  Text(subtitle),
-                                ],
-                                if (work.series case final series?) ...[
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    work.seriesSequence == null
-                                        ? series
-                                        : '$series · Band '
-                                              '${_formatRemoteSequence(work.seriesSequence!)}',
-                                  ),
-                                ],
-                                const SizedBox(height: 10),
-                                Wrap(
-                                  spacing: 6,
-                                  runSpacing: 6,
-                                  children: [
-                                    for (final narrator in work.narrators)
-                                      Chip(
-                                        avatar: const Icon(
-                                          Icons.mic_none,
-                                          size: 16,
-                                        ),
-                                        label: Text(narrator),
-                                      ),
-                                    if (work.language case final language?)
-                                      Chip(
-                                        label: Text(_remoteLanguage(language)),
-                                      ),
-                                    if (work.publisher case final publisher?)
-                                      Chip(
-                                        label: Text(
-                                          work.publishedYear == null
-                                              ? publisher
-                                              : '$publisher · ${work.publishedYear}',
-                                        ),
-                                      )
-                                    else if (work.publishedYear
-                                        case final year?)
-                                      Chip(label: Text('$year')),
-                                    Chip(
-                                      label: Text(
-                                        '${work.fileCount} Datei(en)',
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (work.progressPosition case final position?) ...[
-                        const SizedBox(height: 16),
-                        Text(
-                          work.progressDuration == null
-                              ? 'Fortsetzen bei ${_formatRemoteDuration(position)}'
-                              : '${_formatRemoteDuration(position)} / '
-                                    '${_formatRemoteDuration(work.progressDuration!)}',
-                          style: Theme.of(context).textTheme.labelLarge,
-                        ),
-                      ],
-                      if (isDocument && detailTracks.isNotEmpty) ...[
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: FilledButton.icon(
-                                onPressed: () =>
-                                    Navigator.pop(context, 'open:resume'),
-                                icon: const Icon(Icons.menu_book_outlined),
-                                label: Text(
-                                  documentPosition == null
-                                      ? 'Lesen'
-                                      : 'Fortsetzen',
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            if (isOffline)
-                              PopupMenuButton<String>(
-                                tooltip: 'Offline-Kopie verwalten',
-                                icon: const Icon(Icons.download_done),
-                                onSelected: (value) =>
-                                    Navigator.pop(context, value),
-                                itemBuilder: (context) => const [
-                                  PopupMenuItem(
-                                    value: 'download',
-                                    child: ListTile(
-                                      leading: Icon(
-                                        Icons.add_to_photos_outlined,
-                                      ),
-                                      title: Text('Weitere Kapitel laden'),
-                                    ),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'remove_download',
-                                    child: ListTile(
-                                      leading: Icon(Icons.delete_outline),
-                                      title: Text('Offline-Kopie löschen'),
-                                    ),
-                                  ),
-                                ],
+                      SizedBox(
+                        width: 120,
+                        height: 170,
+                        child: work.hasCover
+                            ? _remoteCover(
+                                server,
+                                library,
+                                work,
+                                borderRadius: BorderRadius.circular(10),
                               )
-                            else
-                              IconButton.filledTonal(
-                                onPressed: () =>
-                                    Navigator.pop(context, 'download'),
-                                tooltip: 'Kapitel offline speichern',
-                                icon: const Icon(Icons.download_outlined),
-                              ),
-                          ],
-                        ),
-                      ],
-                      if (work.description case final description?) ...[
-                        const SizedBox(height: 20),
-                        Text(description),
-                      ],
-                      if (detailTracks.isNotEmpty) ...[
-                        const SizedBox(height: 20),
-                        Row(
+                            : const Icon(Icons.audiotrack, size: 72),
+                      ),
+                      const SizedBox(width: 18),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Dateien',
-                              style: Theme.of(context).textTheme.titleMedium,
+                              work.title,
+                              style: Theme.of(context).textTheme.headlineSmall,
                             ),
-                            const Spacer(),
-                            PopupMenuButton<_DocumentTrackSort>(
-                              tooltip: 'Dateien sortieren',
-                              initialValue: trackSort,
-                              onSelected: (value) =>
-                                  setSheetState(() => trackSort = value),
-                              itemBuilder: (context) => const [
-                                PopupMenuItem(
-                                  value: _DocumentTrackSort.oldestFirst,
-                                  child: Text('Älteste Kapitel zuerst'),
-                                ),
-                                PopupMenuItem(
-                                  value: _DocumentTrackSort.newestFirst,
-                                  child: Text('Neueste Kapitel zuerst'),
-                                ),
-                                PopupMenuItem(
-                                  value: _DocumentTrackSort.titleAscending,
-                                  child: Text('Name A–Z'),
+                            const SizedBox(height: 6),
+                            Text(work.authors.join(', ')),
+                            if (work.subtitle case final subtitle?) ...[
+                              const SizedBox(height: 4),
+                              Text(subtitle),
+                            ],
+                            if (work.series case final series?) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                work.seriesSequence == null
+                                    ? series
+                                    : '$series · Band '
+                                          '${_formatRemoteSequence(work.seriesSequence!)}',
+                              ),
+                            ],
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: [
+                                for (final narrator in work.narrators)
+                                  Chip(
+                                    avatar: const Icon(
+                                      Icons.mic_none,
+                                      size: 16,
+                                    ),
+                                    label: Text(narrator),
+                                  ),
+                                if (work.language case final language?)
+                                  Chip(label: Text(_remoteLanguage(language))),
+                                if (work.publisher case final publisher?)
+                                  Chip(
+                                    label: Text(
+                                      work.publishedYear == null
+                                          ? publisher
+                                          : '$publisher · ${work.publishedYear}',
+                                    ),
+                                  )
+                                else if (work.publishedYear case final year?)
+                                  Chip(label: Text('$year')),
+                                Chip(
+                                  label: Text('${work.fileCount} Datei(en)'),
                                 ),
                               ],
-                              icon: const Icon(Icons.sort),
                             ),
                           ],
                         ),
-                        for (final entry in _orderedRemoteTracks(
-                          detailTracks,
-                          trackSort,
-                        ))
-                          ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: documentChapterLeading(
-                              context,
-                              entry.originalIndex + 1,
-                              documentChapterReadState(
-                                chapterIndex: entry.originalIndex,
-                                currentChapterIndex: documentProgressIndex,
-                                workFinished: work.progressFinished,
-                                currentPosition: documentPosition,
-                              ),
-                            ),
-                            title: Text(
-                              entry.track.title,
-                              style: documentChapterTitleStyle(
-                                context,
-                                documentChapterReadState(
-                                  chapterIndex: entry.originalIndex,
-                                  currentChapterIndex: documentProgressIndex,
-                                  workFinished: work.progressFinished,
-                                  currentPosition: documentPosition,
-                                ),
-                              ),
-                            ),
-                            subtitle: _remoteTechnicalSubtitle(entry.track),
-                            trailing: isDocument
-                                ? const Icon(Icons.open_in_new)
-                                : entry.track.duration == null
-                                ? null
-                                : Text(
-                                    _formatRemoteDuration(
-                                      entry.track.duration!,
-                                    ),
-                                  ),
-                            onTap: isDocument
-                                ? () => Navigator.pop(
-                                    context,
-                                    'open:${entry.originalIndex}',
-                                  )
-                                : null,
-                          ),
-                      ],
-                      const SizedBox(height: 24),
-                      Row(
-                        children: [
-                          if (!isDocument) ...[
-                            Expanded(
-                              child: FilledButton.icon(
-                                onPressed: detailTracks.isEmpty
-                                    ? null
-                                    : () => Navigator.pop(context, 'play'),
-                                icon: const Icon(Icons.play_arrow),
-                                label: const Text('Abspielen / fortsetzen'),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                          ],
-                          if (!isDocument)
-                            IconButton.filledTonal(
-                              onPressed: () => Navigator.pop(
-                                context,
-                                isOffline ? 'remove_download' : 'download',
-                              ),
-                              tooltip: isOffline
-                                  ? 'Offline-Kopie löschen'
-                                  : 'Offline speichern',
-                              icon: Icon(
-                                isOffline
-                                    ? Icons.download_done
-                                    : Icons.download_outlined,
-                              ),
-                            ),
-                        ],
                       ),
                     ],
                   ),
-                ),
+                  if (work.progressPosition case final position?) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      work.progressDuration == null
+                          ? 'Fortsetzen bei ${_formatRemoteDuration(position)}'
+                          : '${_formatRemoteDuration(position)} / '
+                                '${_formatRemoteDuration(work.progressDuration!)}',
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                  ],
+                  if (isDocument && detailTracks.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: () =>
+                                Navigator.pop(context, 'open:resume'),
+                            icon: const Icon(Icons.menu_book_outlined),
+                            label: Text(
+                              documentPosition == null ? 'Lesen' : 'Fortsetzen',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        if (isOffline)
+                          PopupMenuButton<String>(
+                            tooltip: 'Offline-Kopie verwalten',
+                            icon: const Icon(Icons.download_done),
+                            onSelected: (value) =>
+                                Navigator.pop(context, value),
+                            itemBuilder: (context) => const [
+                              PopupMenuItem(
+                                value: 'download',
+                                child: ListTile(
+                                  leading: Icon(Icons.add_to_photos_outlined),
+                                  title: Text('Weitere Kapitel laden'),
+                                ),
+                              ),
+                              PopupMenuItem(
+                                value: 'remove_download',
+                                child: ListTile(
+                                  leading: Icon(Icons.delete_outline),
+                                  title: Text('Offline-Kopie löschen'),
+                                ),
+                              ),
+                            ],
+                          )
+                        else
+                          IconButton.filledTonal(
+                            onPressed: () => Navigator.pop(context, 'download'),
+                            tooltip: 'Kapitel offline speichern',
+                            icon: const Icon(Icons.download_outlined),
+                          ),
+                      ],
+                    ),
+                  ],
+                  if (work.description case final description?) ...[
+                    const SizedBox(height: 20),
+                    Text(description),
+                  ],
+                  if (detailTracks.isNotEmpty) ...[
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Text(
+                          'Dateien',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const Spacer(),
+                        PopupMenuButton<_DocumentTrackSort>(
+                          tooltip: 'Dateien sortieren',
+                          initialValue: trackSort,
+                          onSelected: (value) =>
+                              setSheetState(() => trackSort = value),
+                          itemBuilder: (context) => const [
+                            PopupMenuItem(
+                              value: _DocumentTrackSort.oldestFirst,
+                              child: Text('Älteste Kapitel zuerst'),
+                            ),
+                            PopupMenuItem(
+                              value: _DocumentTrackSort.newestFirst,
+                              child: Text('Neueste Kapitel zuerst'),
+                            ),
+                            PopupMenuItem(
+                              value: _DocumentTrackSort.titleAscending,
+                              child: Text('Name A–Z'),
+                            ),
+                          ],
+                          icon: const Icon(Icons.sort),
+                        ),
+                      ],
+                    ),
+                    for (final entry in _orderedRemoteTracks(
+                      detailTracks,
+                      trackSort,
+                    ))
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: documentChapterLeading(
+                          context,
+                          entry.originalIndex + 1,
+                          documentChapterReadState(
+                            chapterIndex: entry.originalIndex,
+                            currentChapterIndex: documentProgressIndex,
+                            workFinished: work.progressFinished,
+                            currentPosition: documentPosition,
+                          ),
+                        ),
+                        title: Text(
+                          entry.track.title,
+                          style: documentChapterTitleStyle(
+                            context,
+                            documentChapterReadState(
+                              chapterIndex: entry.originalIndex,
+                              currentChapterIndex: documentProgressIndex,
+                              workFinished: work.progressFinished,
+                              currentPosition: documentPosition,
+                            ),
+                          ),
+                        ),
+                        subtitle: _remoteTechnicalSubtitle(entry.track),
+                        trailing: isDocument
+                            ? const Icon(Icons.open_in_new)
+                            : entry.track.duration == null
+                            ? null
+                            : Text(
+                                _formatRemoteDuration(entry.track.duration!),
+                              ),
+                        onTap: isDocument
+                            ? () => Navigator.pop(
+                                context,
+                                'open:${entry.originalIndex}',
+                              )
+                            : null,
+                      ),
+                  ],
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      if (!isDocument) ...[
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: detailTracks.isEmpty
+                                ? null
+                                : () => Navigator.pop(context, 'play'),
+                            icon: const Icon(Icons.play_arrow),
+                            label: const Text('Abspielen / fortsetzen'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                      ],
+                      if (!isDocument)
+                        IconButton.filledTonal(
+                          onPressed: () => Navigator.pop(
+                            context,
+                            isOffline ? 'remove_download' : 'download',
+                          ),
+                          tooltip: isOffline
+                              ? 'Offline-Kopie löschen'
+                              : 'Offline speichern',
+                          icon: Icon(
+                            isOffline
+                                ? Icons.download_done
+                                : Icons.download_outlined,
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
               ),
             ),
+          ),
+        ),
       );
+    }
+    if (action == null) {
+      try {
+        final result = await _runWithReconnect(
+          server,
+          (active) => _client.works(active, library.id),
+        );
+        if (mounted) {
+          setState(() {
+            _selectedServer = result.server;
+            _works = result.value;
+          });
+        }
+      } catch (_) {}
+      return;
     }
     if (action == 'download') {
       final selectedTrackIds = isDocument
@@ -2177,6 +2323,15 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           : null;
       if (isDocument && selectedTrackIds == null) return;
       await _downloadWork(server, library, work, trackIds: selectedTrackIds);
+      if (mounted) {
+        await _showWork(server, library, work);
+      }
+      return;
+    }
+    if (action.startsWith('similar:')) {
+      final relatedId = action.substring('similar:'.length);
+      final related = _works.where((item) => item.id == relatedId).firstOrNull;
+      if (related != null) await _showWork(server, library, related);
       return;
     }
     if (action == 'remove_download') {
@@ -2200,15 +2355,21 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       }
       return;
     }
-    if (action?.startsWith('open:') ?? false) {
-      final target = action!.substring(5);
+    if (action.startsWith('open:')) {
+      final target = action.substring(5);
       final resume = target == 'resume';
       final progressFileId = documentProgressFileId ?? documentPosition?.fileId;
       final resumeIndex = detailTracks.indexWhere(
         (track) => track.id == progressFileId,
       );
+      final firstReadableIndex = detailTracks.indexWhere((track) {
+        final title = track.title.toLowerCase();
+        return title.endsWith('.cbz') ||
+            title.endsWith('.pdf') ||
+            title.endsWith('.epub');
+      });
       final index = resume
-          ? (resumeIndex < 0 ? 0 : resumeIndex)
+          ? (resumeIndex < 0 ? firstReadableIndex : resumeIndex)
           : int.tryParse(target);
       if (index == null || index < 0 || index >= detailTracks.length) return;
       if (detailTracks[index].title.toLowerCase().endsWith('.cbz')) {
@@ -2970,9 +3131,21 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     var initialScrollOffset = storedPosition?.fileId == comics[chapterIndex].id
         ? storedPosition?.scrollOffset
         : null;
-    var profile = await PublicationReaderSettings.loadComicProfile(
-      workId: work.id,
-    );
+    Map<String, Object?>? portableProfile;
+    if (!skipServerLookup) {
+      try {
+        portableProfile = await _client.readerProfile(
+          server,
+          libraryId: library.id,
+          workId: work.id,
+          deviceKey: Platform.operatingSystem,
+          readerKind: 'comic',
+        );
+      } catch (_) {}
+    }
+    var profile = portableProfile == null
+        ? await PublicationReaderSettings.loadComicProfile(workId: work.id)
+        : PublicationReaderProfile.fromJson(portableProfile);
     if (selectedDeviceProgress && localPosition != null) {
       await _saveRemoteReaderProgress(
         server,
@@ -3038,6 +3211,18 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
               workId: work.id,
             ),
           );
+          if (!skipServerLookup) {
+            unawaited(
+              _client.saveReaderProfile(
+                server,
+                libraryId: library.id,
+                workId: work.id,
+                deviceKey: Platform.operatingSystem,
+                readerKind: 'comic',
+                profile: updated.toJson(),
+              ),
+            );
+          }
         },
         onPositionChanged: (page, total, elementId, scrollOffset) {
           final mediaPosition = MediaPosition(
@@ -3352,9 +3537,21 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       libraryId: library.id,
       workId: work.id,
     );
-    final profile = await PublicationReaderSettings.loadReflowProfile(
-      workId: work.id,
-    );
+    Map<String, Object?>? portableProfile;
+    if (!skipServerLookup) {
+      try {
+        portableProfile = await _client.readerProfile(
+          server,
+          libraryId: library.id,
+          workId: work.id,
+          deviceKey: Platform.operatingSystem,
+          readerKind: 'epub',
+        );
+      } catch (_) {}
+    }
+    final profile = portableProfile == null
+        ? await PublicationReaderSettings.loadReflowProfile(workId: work.id)
+        : ReflowReaderProfile.fromJson(portableProfile);
     final deviceId = await _store.deviceId();
     if (!mounted) return;
     try {
@@ -3369,9 +3566,26 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             ? selectedPosition
             : null,
         initialProfile: profile,
-        onProfileChanged: (updated) => unawaited(
-          PublicationReaderSettings.saveReflowProfile(updated, workId: work.id),
-        ),
+        onProfileChanged: (updated) {
+          unawaited(
+            PublicationReaderSettings.saveReflowProfile(
+              updated,
+              workId: work.id,
+            ),
+          );
+          if (!skipServerLookup) {
+            unawaited(
+              _client.saveReaderProfile(
+                server,
+                libraryId: library.id,
+                workId: work.id,
+                deviceKey: Platform.operatingSystem,
+                readerKind: 'epub',
+                profile: updated.toJson(),
+              ),
+            );
+          }
+        },
         onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
         onResetWorkProfile: () =>
             PublicationReaderSettings.clearReflowProfile(work.id),
@@ -3441,6 +3655,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('EPUB konnte nicht geöffnet werden: $error')),
+      );
     }
   }
 
@@ -3985,19 +4204,25 @@ class _MobileRemotePublicationDetails extends StatefulWidget {
   const _MobileRemotePublicationDetails({
     required this.work,
     required this.tracks,
+    required this.relatedWorks,
     required this.progressPosition,
     required this.progressIndex,
     required this.annotations,
     required this.isOffline,
+    required this.onSaveNote,
+    required this.onSaveTags,
     required this.coverBuilder,
   });
 
   final FundusRemoteWork work;
   final List<FundusRemoteTrack> tracks;
+  final List<FundusRemoteWork> relatedWorks;
   final MediaPosition? progressPosition;
   final int progressIndex;
   final WorkAnnotations annotations;
   final bool isOffline;
+  final Future<WorkAnnotations> Function(String markdown) onSaveNote;
+  final Future<WorkAnnotations> Function(Set<String> tags) onSaveTags;
   final Widget Function() coverBuilder;
 
   @override
@@ -4007,10 +4232,24 @@ class _MobileRemotePublicationDetails extends StatefulWidget {
 
 class _MobileRemotePublicationDetailsState
     extends State<_MobileRemotePublicationDetails> {
+  final _noteController = TextEditingController();
   var _tab = 0;
   var _notesTab = 0;
   var _sort = _DocumentTrackSort.oldestFirst;
   String _filter = '';
+  late WorkAnnotations _annotations;
+
+  @override
+  void initState() {
+    super.initState();
+    _annotations = widget.annotations;
+  }
+
+  @override
+  void dispose() {
+    _noteController.dispose();
+    super.dispose();
+  }
 
   List<({FundusRemoteTrack track, int originalIndex})> get _tracks =>
       _orderedRemoteTracks(widget.tracks, _sort)
@@ -4025,6 +4264,13 @@ class _MobileRemotePublicationDetailsState
     appBar: AppBar(
       title: Text(widget.work.title, overflow: TextOverflow.ellipsis),
       actions: [
+        IconButton(
+          onPressed: _toggleFavorite,
+          tooltip: _isFavorite
+              ? 'Aus Favoriten entfernen'
+              : 'Als Favorit markieren',
+          icon: Icon(_isFavorite ? Icons.star : Icons.star_border),
+        ),
         IconButton(
           onPressed: _showFilterAndSort,
           tooltip: 'Filtern und sortieren',
@@ -4098,16 +4344,21 @@ class _MobileRemotePublicationDetailsState
                   ],
                 ),
                 const SizedBox(height: 12),
-                SegmentedButton<int>(
-                  showSelectedIcon: false,
-                  segments: const [
-                    ButtonSegment(value: 0, label: Text('Info')),
-                    ButtonSegment(value: 1, label: Text('Kapitel')),
-                    ButtonSegment(value: 2, label: Text('Notizen')),
-                  ],
-                  selected: {_tab},
-                  onSelectionChanged: (value) =>
-                      setState(() => _tab = value.single),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SegmentedButton<int>(
+                    showSelectedIcon: false,
+                    segments: const [
+                      ButtonSegment(value: 0, label: Text('Info')),
+                      ButtonSegment(value: 1, label: Text('Dateien')),
+                      ButtonSegment(value: 2, label: Text('Kapitel')),
+                      ButtonSegment(value: 3, label: Text('Notizen')),
+                      ButtonSegment(value: 4, label: Text('Ähnlich')),
+                    ],
+                    selected: {_tab},
+                    onSelectionChanged: (value) =>
+                        setState(() => _tab = value.single),
+                  ),
                 ),
               ],
             ),
@@ -4157,28 +4408,22 @@ class _MobileRemotePublicationDetailsState
           ),
       ],
     ),
-    1 => ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      children: [
-        for (final entry in _tracks)
-          ListTile(
-            leading: documentChapterLeading(
-              context,
-              entry.originalIndex + 1,
-              documentChapterReadState(
-                chapterIndex: entry.originalIndex,
-                currentChapterIndex: widget.progressIndex,
-                workFinished: widget.work.progressFinished,
-                currentPosition: widget.progressPosition,
-              ),
-            ),
-            title: Text(entry.track.title),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.pop(context, 'open:${entry.originalIndex}'),
-          ),
-      ],
+    1 => _trackList(_tracks),
+    2 => _trackList(
+      _tracks
+          .where((entry) {
+            final title = entry.track.title.toLowerCase();
+            return title.endsWith('.cbz') ||
+                title.endsWith('.pdf') ||
+                title.endsWith('.epub') ||
+                title.endsWith('.html') ||
+                title.endsWith('.htm') ||
+                title.endsWith('.md') ||
+                title.endsWith('.txt');
+          })
+          .toList(growable: false),
     ),
-    _ => Column(
+    3 => Column(
       children: [
         Padding(
           padding: const EdgeInsets.all(12),
@@ -4193,26 +4438,39 @@ class _MobileRemotePublicationDetailsState
                 setState(() => _notesTab = value.single),
           ),
         ),
-        Expanded(
-          child: _notesTab == 0
-              ? const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text(
-                      'Persönliche Werknotizen werden in einem nächsten Schritt mit dem Server synchronisiert.',
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                )
-              : _annotationList(),
-        ),
+        Expanded(child: _notesTab == 0 ? _notesList() : _annotationList()),
       ],
     ),
+    _ => _similarList(),
   };
 
+  Widget _trackList(
+    List<({FundusRemoteTrack track, int originalIndex})> entries,
+  ) => ListView(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    children: [
+      for (final entry in entries)
+        ListTile(
+          leading: documentChapterLeading(
+            context,
+            entry.originalIndex + 1,
+            documentChapterReadState(
+              chapterIndex: entry.originalIndex,
+              currentChapterIndex: widget.progressIndex,
+              workFinished: widget.work.progressFinished,
+              currentPosition: widget.progressPosition,
+            ),
+          ),
+          title: Text(entry.track.title),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.pop(context, 'open:${entry.originalIndex}'),
+        ),
+    ],
+  );
+
   Widget _annotationList() {
-    final bookmarks = widget.annotations.bookmarks;
-    final highlights = widget.annotations.highlights;
+    final bookmarks = _annotations.bookmarks;
+    final highlights = _annotations.highlights;
     if (bookmarks.isEmpty && highlights.isEmpty) {
       return const Center(child: Text('Noch keine Annotationen vorhanden.'));
     }
@@ -4237,6 +4495,104 @@ class _MobileRemotePublicationDetailsState
           ),
       ],
     );
+  }
+
+  bool get _isFavorite =>
+      {...widget.work.tags, ..._annotations.tags}.contains('Favorit');
+
+  Widget _notesList() => ListView(
+    padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+    children: [
+      for (final note in _annotations.notes)
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  note.createdAt.toLocal().toString().substring(0, 16),
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
+                const SizedBox(height: 6),
+                SelectableText(note.markdown),
+              ],
+            ),
+          ),
+        ),
+      TextField(
+        controller: _noteController,
+        minLines: 3,
+        maxLines: 8,
+        decoration: const InputDecoration(
+          hintText: 'Notiz in Markdown schreiben …',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      const SizedBox(height: 8),
+      FilledButton.icon(
+        onPressed: _saveNote,
+        icon: const Icon(Icons.save_outlined),
+        label: const Text('Notiz speichern'),
+      ),
+    ],
+  );
+
+  Widget _similarList() {
+    final sourceTags = {...widget.work.tags, ..._annotations.tags}
+      ..remove('Favorit');
+    final candidates = <({FundusRemoteWork work, int score})>[];
+    for (final candidate in widget.relatedWorks) {
+      if (candidate.id == widget.work.id ||
+          candidate.kind != widget.work.kind) {
+        continue;
+      }
+      final score = candidate.tags.where(sourceTags.contains).length;
+      if (score > 0) candidates.add((work: candidate, score: score));
+    }
+    candidates.sort((left, right) {
+      final score = right.score.compareTo(left.score);
+      return score != 0 ? score : left.work.title.compareTo(right.work.title);
+    });
+    if (candidates.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text('Noch keine Titel mit übereinstimmenden Tags.'),
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        for (final candidate in candidates)
+          ListTile(
+            leading: const Icon(Icons.auto_awesome_outlined),
+            title: Text(candidate.work.title),
+            subtitle: Text('${candidate.score} gemeinsame Tag(s)'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.pop(context, 'similar:${candidate.work.id}'),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _saveNote() async {
+    final markdown = _noteController.text.trim();
+    if (markdown.isEmpty) return;
+    final updated = await widget.onSaveNote(markdown);
+    if (!mounted) return;
+    setState(() {
+      _annotations = updated;
+      _noteController.clear();
+    });
+  }
+
+  Future<void> _toggleFavorite() async {
+    final tags = {...widget.work.tags, ..._annotations.tags};
+    tags.contains('Favorit') ? tags.remove('Favorit') : tags.add('Favorit');
+    final updated = await widget.onSaveTags(tags);
+    if (mounted) setState(() => _annotations = updated);
   }
 
   Future<void> _showCover() => showDialog<void>(

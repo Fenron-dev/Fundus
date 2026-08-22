@@ -844,7 +844,26 @@ final class FundusOfflineStore {
           ),
         );
       }
-      return WorkAnnotations(bookmarks: bookmarks, highlights: highlights);
+      final notes = <LibraryNote>[];
+      for (final item
+          in (value['notes'] as List? ?? const []).whereType<Map>()) {
+        if (item['id'] is! String || item['markdown'] is! String) continue;
+        notes.add(
+          LibraryNote(
+            id: item['id'] as String,
+            markdown: item['markdown'] as String,
+            createdAt:
+                DateTime.tryParse('${item['created_at'] ?? ''}') ??
+                DateTime.fromMillisecondsSinceEpoch(0),
+          ),
+        );
+      }
+      return WorkAnnotations(
+        tags: (value['tags'] as List? ?? const []).whereType<String>().toList(),
+        notes: notes,
+        bookmarks: bookmarks,
+        highlights: highlights,
+      );
     } on FileSystemException {
       return const WorkAnnotations();
     } on FormatException {
@@ -866,6 +885,8 @@ final class FundusOfflineStore {
       workId: workId,
     );
     final updated = WorkAnnotations(
+      tags: annotations.tags,
+      notes: annotations.notes,
       bookmarks: [
         ...annotations.bookmarks,
         LibraryBookmark(
@@ -899,6 +920,8 @@ final class FundusOfflineStore {
       workId: workId,
     );
     final updated = WorkAnnotations(
+      tags: annotations.tags,
+      notes: annotations.notes,
       bookmarks: annotations.bookmarks,
       highlights: [
         ...annotations.highlights,
@@ -930,6 +953,8 @@ final class FundusOfflineStore {
       workId: workId,
     );
     final updated = WorkAnnotations(
+      tags: annotations.tags,
+      notes: annotations.notes,
       bookmarks: annotations.bookmarks
           .where((item) => item.id != annotationId)
           .toList(growable: false),
@@ -940,6 +965,64 @@ final class FundusOfflineStore {
     await _saveAnnotations(serverId, libraryId, workId, updated);
     return updated;
   }
+
+  Future<WorkAnnotations> saveWorkNote({
+    required String serverId,
+    required String libraryId,
+    required String workId,
+    required String markdown,
+  }) async {
+    final normalized = markdown.trim();
+    final annotations = await loadAnnotations(
+      serverId: serverId,
+      libraryId: libraryId,
+      workId: workId,
+    );
+    if (normalized.isEmpty) return annotations;
+    final updated = WorkAnnotations(
+      tags: annotations.tags,
+      notes: [
+        ...annotations.notes,
+        LibraryNote(
+          id: FundusId.generate(),
+          markdown: normalized,
+          createdAt: DateTime.now(),
+        ),
+      ],
+      bookmarks: annotations.bookmarks,
+      highlights: annotations.highlights,
+    );
+    await _saveAnnotations(serverId, libraryId, workId, updated);
+    return updated;
+  }
+
+  Future<WorkAnnotations> replaceWorkTags({
+    required String serverId,
+    required String libraryId,
+    required String workId,
+    required Iterable<String> tags,
+  }) async {
+    final annotations = await loadAnnotations(
+      serverId: serverId,
+      libraryId: libraryId,
+      workId: workId,
+    );
+    final updated = WorkAnnotations(
+      tags: tags.toSet().toList()..sort(),
+      notes: annotations.notes,
+      bookmarks: annotations.bookmarks,
+      highlights: annotations.highlights,
+    );
+    await _saveAnnotations(serverId, libraryId, workId, updated);
+    return updated;
+  }
+
+  Future<void> cacheAnnotations({
+    required String serverId,
+    required String libraryId,
+    required String workId,
+    required WorkAnnotations annotations,
+  }) => _saveAnnotations(serverId, libraryId, workId, annotations);
 
   Future<void> _saveAnnotations(
     String serverId,
@@ -959,6 +1042,15 @@ final class FundusOfflineStore {
     await partial.writeAsString(
       jsonEncode({
         'format_version': 1,
+        'tags': annotations.tags,
+        'notes': [
+          for (final item in annotations.notes)
+            {
+              'id': item.id,
+              'markdown': item.markdown,
+              'created_at': item.createdAt.toUtc().toIso8601String(),
+            },
+        ],
         'bookmarks': [
           for (final item in annotations.bookmarks)
             {

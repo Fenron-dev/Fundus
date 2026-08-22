@@ -572,7 +572,7 @@ Die Detailseite für Manga, Webnovels und E-Books besteht aus:
 1. Cover, Titel, Autor/Serie und Fortschritt,
 2. den Aktionen „Lesen/Fortsetzen“ und „Zur Bibliothek/Download verwalten“
    unterhalb des Covers,
-3. den Hauptbereichen „Info“, „Kapitel“ und „Notizen“,
+3. den Hauptbereichen „Info“, „Dateien“, „Kapitel“, „Notizen“ und „Ähnlich“,
 4. „Notizen“ mit den Unterbereichen „Notizen“ sowie „Lesezeichen & Highlights“,
 5. Filter und Sortierung gesammelt hinter dem Filter-Symbol.
 
@@ -583,6 +583,39 @@ obere und untere Bedienleiste ein oder aus. Semantischer EPUB-Lesestand,
 Reader-Profil, Lesezeichen und Textmarkierungen gehören zum Werk und gelten
 unabhängig davon, ob es gerade lokal, remote oder aus dem Offline-Cache gelesen
 wird.
+
+„Ähnlich“ ordnet Werke desselben Medientyps nach der Zahl identischer Tags.
+Favoriten werden als portabler Tag gespeichert und können direkt in jeder
+Bibliotheksansicht gefiltert werden. Das Dashboard berücksichtigt lokale,
+entfernte und heruntergeladene Werke gleichermaßen bei „Fortsetzen“ und
+„Zuletzt hinzugefügt“.
+
+## 17. Portable Einstellungen und Markdown-Notizen
+
+Abweichende Reader-Einstellungen werden zusätzlich zur lokalen
+Gerätekonfiguration im Werk unter `_fundus/reader-settings.yaml` gespiegelt.
+Profile sind nach Geräteklasse und Reader-Typ getrennt, damit beispielsweise
+Android im Webtoon-Modus „An Breite anpassen“ verwenden kann, während macOS
+eine andere Darstellung behält. Bei alleinstehenden Dateien liegt der Spiegel
+unter `_fundus/files/<Dateiname>/`, damit Datei- und Verzeichnisnamen nicht
+kollidieren. Der Server stellt dieselben Profile über seine authentifizierte
+Bibliotheks-API bereit.
+
+Notizen werden als Markdown im Sidecar-Bereich des Werks gespeichert. Ihre
+Synchronisation ist einstellbar; bei aktivierter Synchronisation gleichen
+Clients Notizen und Tags über den Fundus-Server ab. IDs und Erstellzeitpunkte
+bleiben erhalten, damit erneutes Verbinden keine identischen Notizen
+dupliziert. Lesezeichen und Highlights bleiben Teil des gemeinsamen
+Annotationsmodells und werden medientypspezifisch im Reader angelegt.
+
+## 18. Android-Aktualisierungen
+
+Preview-Builds erhalten eine fortlaufende Buildnummer und werden mit einem
+stabilen Preview-Schlüssel signiert. Nach dem einmaligen Wechsel von alten,
+wechselnd signierten Test-APKs können neue APKs über die bestehende App
+installiert werden; App-Daten, Offline-Downloads und lokale Einstellungen
+bleiben dabei erhalten. Für öffentliche Releases wird ein eigener,
+langfristig gesicherter Produktionsschlüssel mit Update-Kanal verwendet.
 
 Visuelle Referenzen:
 

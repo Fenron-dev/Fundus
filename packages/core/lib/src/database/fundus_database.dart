@@ -1472,22 +1472,24 @@ final class FundusDatabase {
       _database.execute('DELETE FROM bookmarks WHERE id = ?', [bookmarkId]);
 
   LibraryHighlight addTextHighlight({
+    String? id,
     required String workId,
     required String fileId,
     required MediaPosition mediaPosition,
     required String quote,
     String color = '#FFF176',
     String? note,
+    DateTime? createdAt,
   }) {
     final highlight = LibraryHighlight(
-      id: FundusId.generate(),
+      id: id ?? FundusId.generate(),
       workId: workId,
       fileId: fileId,
       mediaPosition: mediaPosition,
       quote: quote.trim(),
       color: color,
       note: note?.trim().isEmpty ?? true ? null : note!.trim(),
-      createdAt: DateTime.now(),
+      createdAt: createdAt ?? DateTime.now(),
     );
     _database.execute(
       '''
