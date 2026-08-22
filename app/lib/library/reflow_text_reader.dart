@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:path/path.dart' as p;
 
+import 'publication_reader_settings.dart';
+
 enum ReflowTextReaderAction { previousChapter, nextChapter, selectChapter }
 
 final class ReflowTextReaderResult {
@@ -47,7 +49,11 @@ Future<ReflowTextReaderResult?> showReflowTextReader(
   List<String> chapterTitles = const [],
   bool hasPreviousChapter = false,
   bool hasNextChapter = false,
+  ReflowReaderProfile initialProfile = const ReflowReaderProfile(),
   void Function(MediaPosition position)? onPositionChanged,
+  void Function(ReflowReaderProfile profile)? onProfileChanged,
+  Future<void> Function(ReflowReaderProfile profile)? onSaveAsDefault,
+  Future<ReflowReaderProfile> Function()? onResetWorkProfile,
 }) async {
   final file = File(path);
   if (!await file.exists()) {
@@ -82,7 +88,11 @@ Future<ReflowTextReaderResult?> showReflowTextReader(
     chapterTitles: chapterTitles,
     hasPreviousChapter: hasPreviousChapter,
     hasNextChapter: hasNextChapter,
+    initialProfile: initialProfile,
     onPositionChanged: onPositionChanged,
+    onProfileChanged: onProfileChanged,
+    onSaveAsDefault: onSaveAsDefault,
+    onResetWorkProfile: onResetWorkProfile,
   );
 }
 
@@ -99,7 +109,11 @@ Future<ReflowTextReaderResult?> showReflowDocumentReader(
   List<String> chapterTitles = const [],
   bool hasPreviousChapter = false,
   bool hasNextChapter = false,
+  ReflowReaderProfile initialProfile = const ReflowReaderProfile(),
   void Function(MediaPosition position)? onPositionChanged,
+  void Function(ReflowReaderProfile profile)? onProfileChanged,
+  Future<void> Function(ReflowReaderProfile profile)? onSaveAsDefault,
+  Future<ReflowReaderProfile> Function()? onResetWorkProfile,
 }) {
   return showDialog<ReflowTextReaderResult>(
     context: context,
@@ -116,7 +130,11 @@ Future<ReflowTextReaderResult?> showReflowDocumentReader(
       chapterTitles: chapterTitles,
       hasPreviousChapter: hasPreviousChapter,
       hasNextChapter: hasNextChapter,
+      initialProfile: initialProfile,
       onPositionChanged: onPositionChanged,
+      onProfileChanged: onProfileChanged,
+      onSaveAsDefault: onSaveAsDefault,
+      onResetWorkProfile: onResetWorkProfile,
     ),
   );
 }
@@ -143,7 +161,11 @@ class _ReflowTextReaderDialog extends StatefulWidget {
     required this.chapterTitles,
     required this.hasPreviousChapter,
     required this.hasNextChapter,
+    required this.initialProfile,
     required this.onPositionChanged,
+    required this.onProfileChanged,
+    required this.onSaveAsDefault,
+    required this.onResetWorkProfile,
   });
 
   final ReflowDocument document;
@@ -157,7 +179,11 @@ class _ReflowTextReaderDialog extends StatefulWidget {
   final List<String> chapterTitles;
   final bool hasPreviousChapter;
   final bool hasNextChapter;
+  final ReflowReaderProfile initialProfile;
   final void Function(MediaPosition position)? onPositionChanged;
+  final void Function(ReflowReaderProfile profile)? onProfileChanged;
+  final Future<void> Function(ReflowReaderProfile profile)? onSaveAsDefault;
+  final Future<ReflowReaderProfile> Function()? onResetWorkProfile;
 
   @override
   State<_ReflowTextReaderDialog> createState() =>
@@ -170,21 +196,23 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
   late final List<GlobalKey> _paragraphKeys;
   Timer? _reportTimer;
   bool _restoring = true;
-  double _fontSize = 19;
-  double _lineHeight = 1.55;
-  double _contentWidth = 760;
-  bool _sepia = false;
+  int _restoreEpoch = 0;
+  late ReflowReaderProfile _profile;
   MediaPosition? _lastPosition;
 
   @override
   void initState() {
     super.initState();
+    _profile = widget.initialProfile;
     _paragraphKeys = [
       for (var index = 0; index < widget.document.paragraphs.length; index++)
         GlobalKey(),
     ];
     _scrollController.addListener(_schedulePositionReport);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _restorePosition());
+    final epoch = ++_restoreEpoch;
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _restorePosition(widget.initialPosition, epoch: epoch),
+    );
   }
 
   @override
@@ -205,17 +233,21 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _restorePosition() async {
+  Future<void> _restorePosition(
+    MediaPosition? position, {
+    required int epoch,
+  }) async {
+    if (epoch != _restoreEpoch) return;
     if (!mounted || widget.document.paragraphs.isEmpty) {
       _restoring = false;
       return;
     }
-    final resolved = widget.document.resolve(widget.initialPosition);
+    final resolved = widget.document.resolve(position);
     final targetContext =
         _paragraphKeys[resolved.paragraphIndex].currentContext;
     if (targetContext != null) {
       await Scrollable.ensureVisible(targetContext, alignment: 0);
-      if (!mounted) return;
+      if (!mounted || epoch != _restoreEpoch) return;
       final box =
           _paragraphKeys[resolved.paragraphIndex].currentContext
                   ?.findRenderObject()
@@ -228,9 +260,22 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
         _scrollController.jumpTo(target);
       }
     }
+    if (epoch != _restoreEpoch) return;
     _restoring = false;
     _reportCurrentPosition();
     if (mounted) setState(() {});
+  }
+
+  MediaPosition? _currentPosition() {
+    if (widget.document.paragraphs.isEmpty) return null;
+    final anchor = _visibleAnchor();
+    return widget.document.positionFor(
+      paragraphIndex: anchor.index,
+      innerOffset: anchor.offset,
+      fileId: widget.fileId,
+      chapterId: widget.positionChapterId ?? widget.title,
+      key: widget.relativePath,
+    );
   }
 
   ({int index, double offset}) _visibleAnchor() {
@@ -259,14 +304,8 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
 
   void _reportCurrentPosition() {
     if (_restoring || widget.document.paragraphs.isEmpty) return;
-    final anchor = _visibleAnchor();
-    final position = widget.document.positionFor(
-      paragraphIndex: anchor.index,
-      innerOffset: anchor.offset,
-      fileId: widget.fileId,
-      chapterId: widget.positionChapterId ?? widget.title,
-      key: widget.relativePath,
-    );
+    final position = _currentPosition();
+    if (position == null) return;
     if (_lastPosition?.elementId == position.elementId &&
         ((_lastPosition?.scrollOffset ?? 0) - (position.scrollOffset ?? 0))
                 .abs() <
@@ -275,6 +314,161 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
     }
     _lastPosition = position;
     widget.onPositionChanged?.call(position);
+  }
+
+  void _applyProfile(ReflowReaderProfile profile) {
+    final anchor = _currentPosition();
+    _restoring = true;
+    setState(() => _profile = profile);
+    final epoch = ++_restoreEpoch;
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _restorePosition(anchor, epoch: epoch),
+    );
+  }
+
+  Future<void> _showReaderSettings() async {
+    var draft = _profile;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          void update(ReflowReaderProfile value) {
+            draft = value;
+            setSheetState(() {});
+            _applyProfile(value);
+          }
+
+          return SafeArea(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                24,
+                0,
+                24,
+                24 + MediaQuery.viewInsetsOf(context).bottom,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Lesedarstellung',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<ReflowFontFamily>(
+                    initialValue: draft.fontFamily,
+                    decoration: const InputDecoration(labelText: 'Schriftart'),
+                    items: [
+                      for (final family in ReflowFontFamily.values)
+                        DropdownMenuItem(
+                          value: family,
+                          child: Text(
+                            family.label,
+                            style: TextStyle(fontFamily: family.familyName),
+                          ),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        update(draft.copyWith(fontFamily: value));
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  _ReaderValueSlider(
+                    label: 'Schriftgröße',
+                    valueLabel: '${draft.fontSize.toStringAsFixed(0)} pt',
+                    value: draft.fontSize,
+                    min: 12,
+                    max: 40,
+                    divisions: 28,
+                    onChanged: (value) =>
+                        update(draft.copyWith(fontSize: value)),
+                  ),
+                  _ReaderValueSlider(
+                    label: 'Textbreite',
+                    valueLabel: '${draft.contentWidth.toStringAsFixed(0)} px',
+                    value: draft.contentWidth,
+                    min: 320,
+                    max: 1400,
+                    divisions: 54,
+                    onChanged: (value) =>
+                        update(draft.copyWith(contentWidth: value)),
+                  ),
+                  _ReaderValueSlider(
+                    label: 'Zeilenabstand',
+                    valueLabel: draft.lineHeight.toStringAsFixed(2),
+                    value: draft.lineHeight,
+                    min: 1.1,
+                    max: 2.4,
+                    divisions: 26,
+                    onChanged: (value) =>
+                        update(draft.copyWith(lineHeight: value)),
+                  ),
+                  _ReaderValueSlider(
+                    label: 'Absatzabstand',
+                    valueLabel:
+                        '${draft.paragraphSpacing.toStringAsFixed(0)} px',
+                    value: draft.paragraphSpacing,
+                    min: 0,
+                    max: 48,
+                    divisions: 24,
+                    onChanged: (value) =>
+                        update(draft.copyWith(paragraphSpacing: value)),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Sepia'),
+                    value: draft.sepia,
+                    onChanged: (value) => update(draft.copyWith(sepia: value)),
+                  ),
+                  if (widget.onSaveAsDefault != null ||
+                      widget.onResetWorkProfile != null) ...[
+                    const Divider(height: 28),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
+                      children: [
+                        if (widget.onSaveAsDefault != null)
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              await widget.onSaveAsDefault!(draft);
+                              if (!sheetContext.mounted) return;
+                              ScaffoldMessenger.of(sheetContext).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Als Standard für EPUBs und Webnovels gespeichert.',
+                                  ),
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.bookmark_add_outlined),
+                            label: const Text('Als Standard speichern'),
+                          ),
+                        if (widget.onResetWorkProfile != null)
+                          TextButton.icon(
+                            onPressed: () async {
+                              final fallback =
+                                  await widget.onResetWorkProfile!();
+                              if (!mounted) return;
+                              update(fallback);
+                            },
+                            icon: const Icon(Icons.restart_alt),
+                            label: const Text('Titelwerte zurücksetzen'),
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    if (mounted) widget.onProfileChanged?.call(_profile);
   }
 
   Future<void> _showChapters() async {
@@ -307,10 +501,12 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
     final progress =
         _lastPosition?.fraction ?? widget.initialPosition?.fraction;
     final colors = Theme.of(context).colorScheme;
-    final background = _sepia
+    final background = _profile.sepia
         ? const Color(0xfff2e7cf)
         : colors.surfaceContainerLowest;
-    final foreground = _sepia ? const Color(0xff392f23) : colors.onSurface;
+    final foreground = _profile.sepia
+        ? const Color(0xff392f23)
+        : colors.onSurface;
     return Dialog.fullscreen(
       child: Scaffold(
         backgroundColor: background,
@@ -342,52 +538,10 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
                 tooltip: 'Kapitelübersicht',
                 icon: const Icon(Icons.list_alt),
               ),
-            PopupMenuButton<String>(
+            IconButton(
+              onPressed: _showReaderSettings,
               tooltip: 'Lesedarstellung',
               icon: const Icon(Icons.text_fields),
-              onSelected: (value) => setState(() {
-                switch (value) {
-                  case 'smaller':
-                    _fontSize = (_fontSize - 1).clamp(12, 36);
-                  case 'larger':
-                    _fontSize = (_fontSize + 1).clamp(12, 36);
-                  case 'narrower':
-                    _contentWidth = (_contentWidth - 80).clamp(420, 1200);
-                  case 'wider':
-                    _contentWidth = (_contentWidth + 80).clamp(420, 1200);
-                  case 'line':
-                    _lineHeight = _lineHeight >= 1.8 ? 1.3 : _lineHeight + .1;
-                  case 'sepia':
-                    _sepia = !_sepia;
-                }
-              }),
-              itemBuilder: (context) => [
-                const PopupMenuItem(
-                  value: 'smaller',
-                  child: Text('Schrift kleiner'),
-                ),
-                const PopupMenuItem(
-                  value: 'larger',
-                  child: Text('Schrift größer'),
-                ),
-                const PopupMenuItem(
-                  value: 'narrower',
-                  child: Text('Text schmaler'),
-                ),
-                const PopupMenuItem(
-                  value: 'wider',
-                  child: Text('Text breiter'),
-                ),
-                const PopupMenuItem(
-                  value: 'line',
-                  child: Text('Zeilenabstand ändern'),
-                ),
-                CheckedPopupMenuItem(
-                  value: 'sepia',
-                  checked: _sepia,
-                  child: const Text('Sepia'),
-                ),
-              ],
             ),
           ],
           bottom: progress == null
@@ -431,7 +585,9 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
                 ),
                 child: Center(
                   child: ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: _contentWidth),
+                    constraints: BoxConstraints(
+                      maxWidth: _profile.contentWidth,
+                    ),
                     child: widget.document.paragraphs.isEmpty
                         ? const Padding(
                             padding: EdgeInsets.all(40),
@@ -449,13 +605,17 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
                               )
                                 Padding(
                                   key: _paragraphKeys[index],
-                                  padding: const EdgeInsets.only(bottom: 18),
+                                  padding: EdgeInsets.only(
+                                    bottom: _profile.paragraphSpacing,
+                                  ),
                                   child: Text(
                                     widget.document.paragraphs[index].text,
                                     style: TextStyle(
                                       color: foreground,
-                                      fontSize: _fontSize,
-                                      height: _lineHeight,
+                                      fontFamily:
+                                          _profile.fontFamily.familyName,
+                                      fontSize: _profile.fontSize,
+                                      height: _profile.lineHeight,
                                     ),
                                   ),
                                 ),
@@ -513,4 +673,45 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
       ),
     );
   }
+}
+
+class _ReaderValueSlider extends StatelessWidget {
+  const _ReaderValueSlider({
+    required this.label,
+    required this.valueLabel,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String valueLabel;
+  final double value;
+  final double min;
+  final double max;
+  final int divisions;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Row(
+        children: [
+          Expanded(child: Text(label)),
+          Text(valueLabel, style: Theme.of(context).textTheme.labelLarge),
+        ],
+      ),
+      Slider(
+        value: value,
+        min: min,
+        max: max,
+        divisions: divisions,
+        label: valueLabel,
+        onChanged: onChanged,
+      ),
+    ],
+  );
 }

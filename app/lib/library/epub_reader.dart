@@ -5,6 +5,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:path/path.dart' as p;
 
 import 'reflow_text_reader.dart';
+import 'publication_reader_settings.dart';
 
 bool supportsInternalEpubReader(String path) =>
     p.extension(path).toLowerCase() == '.epub';
@@ -15,7 +16,11 @@ Future<void> showEpubReader(
   MediaPosition? initialPosition,
   String? fileId,
   String? relativePath,
+  ReflowReaderProfile initialProfile = const ReflowReaderProfile(),
   void Function(MediaPosition position)? onPositionChanged,
+  void Function(ReflowReaderProfile profile)? onProfileChanged,
+  Future<void> Function(ReflowReaderProfile profile)? onSaveAsDefault,
+  Future<ReflowReaderProfile> Function()? onResetWorkProfile,
 }) async {
   final navigator = Navigator.of(context, rootNavigator: true);
   var loadingVisible = true;
@@ -47,6 +52,7 @@ Future<void> showEpubReader(
   if (!context.mounted) return;
 
   final chapters = publication.chapters;
+  var readerProfile = initialProfile;
   var chapterIndex = initialPosition?.chapterId == null
       ? 0
       : chapters.indexWhere(
@@ -82,7 +88,14 @@ Future<void> showEpubReader(
       ],
       hasPreviousChapter: chapterIndex > 0,
       hasNextChapter: chapterIndex + 1 < chapters.length,
+      initialProfile: readerProfile,
       onPositionChanged: onPositionChanged,
+      onProfileChanged: (updated) {
+        readerProfile = updated;
+        onProfileChanged?.call(updated);
+      },
+      onSaveAsDefault: onSaveAsDefault,
+      onResetWorkProfile: onResetWorkProfile,
     );
     if (result == null || !context.mounted) return;
     if (result.action == ReflowTextReaderAction.selectChapter &&

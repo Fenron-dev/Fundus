@@ -1067,6 +1067,33 @@ void main() {
     expect(await File(work.coverPath!).readAsBytes(), _tinyPng);
   });
 
+  test(
+    'keeps EPUB and cover together in a series-style Webnovel folder',
+    () async {
+      final root = await Directory.systemTemp.createTemp('fundus-webnovel-');
+      addTearDown(() => root.delete(recursive: true));
+      final story = Directory('${root.path}/Webnovels/Die Testserie');
+      await story.create(recursive: true);
+      await File(
+        '${story.path}/Die Testserie.epub',
+      ).writeAsBytes(_epubWithMetadataAndCover());
+      await File('${story.path}/cover.webp').writeAsBytes([1, 2, 3, 4]);
+
+      final library = await FundusLibrary.create(root);
+      addTearDown(library.close);
+      await library.index().drain<void>();
+
+      final work = library.listWorks().single;
+      final files = library.playbackTracks(work.id);
+      expect(work.kind, 'webnovel');
+      expect(work.coverPath, endsWith('cover.webp'));
+      expect(
+        files.map((file) => file.title),
+        containsAll(['cover.webp', 'Die Testserie.epub']),
+      );
+    },
+  );
+
   test('stores a generated document cover inside the library', () async {
     final root = await Directory.systemTemp.createTemp('fundus-pdf-cover-');
     addTearDown(() => root.delete(recursive: true));

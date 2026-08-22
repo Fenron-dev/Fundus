@@ -71,6 +71,23 @@ oder exportierte Webnovels. HTML, TXT und Markdown sind ergänzende Eingaben fü
 lose Kapitel, Eigenimporte und laufende Download-Quellen; sie bilden nicht den
 Hauptumfang des Webnovel-Supports.
 
+Die portable Standardstruktur ist serien- beziehungsweise werkorientiert; eine
+Autorenebene ist ausdrücklich nicht vorgeschrieben:
+
+```text
+Webnovels/
+  Serien- oder Werktitel/
+    Serien- oder Werktitel.epub
+    cover.webp
+```
+
+Weitere Unterordner unterhalb des Werkordners bleiben zulässig. Fundus leitet
+den Medientyp aus dem konfigurierten Medienbereich und den Dateien ab, nicht aus
+einer starren Autorenhierarchie. Dadurch kann dieselbe Ablage auch von anderen
+Bibliotheksprogrammen genutzt werden. Mehrere Ausgaben sollen später über
+Varianten desselben Werks modelliert werden und nicht durch eine erzwungene
+Ordnerform.
+
 Der Reflow Reader besteht deshalb aus getrennten Schichten:
 
 1. `PublicationSource` liefert lokale, Remote- oder offline gespeicherte Bytes.

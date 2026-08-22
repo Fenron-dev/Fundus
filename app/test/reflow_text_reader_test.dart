@@ -85,4 +85,63 @@ void main() {
     await tester.tap(find.byTooltip('Reader schließen'));
     await tester.pump(const Duration(milliseconds: 400));
   });
+
+  testWidgets('reader restores the precise semantic position after reopening', (
+    tester,
+  ) async {
+    final document = ReflowDocument.parse(
+      [
+        for (var index = 0; index < 100; index++)
+          'Absatz $index enthält ausreichend Text für einen stabilen Anker.',
+      ].join('\n\n'),
+      format: ReflowSourceFormat.plainText,
+    );
+    MediaPosition? saved;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => FilledButton(
+            onPressed: () => unawaited(
+              showReflowDocumentReader(
+                context,
+                document: document,
+                title: 'Testnovel',
+                initialPosition: saved,
+                fileId: 'novel.epub',
+                positionChapterId: 'chapter-1',
+                onPositionChanged: (position) => saved = position,
+              ),
+            ),
+            child: const Text('Öffnen'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Öffnen'));
+    await tester.pumpAndSettle();
+    await tester.drag(
+      find.byType(SingleChildScrollView),
+      const Offset(0, -1900),
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    final expected = saved;
+    expect(expected?.elementId, isNotNull);
+    expect(expected?.numericValue, greaterThan(0));
+    await tester.tap(find.byTooltip('Reader schließen'));
+    await tester.pumpAndSettle();
+
+    saved = expected;
+    await tester.tap(find.text('Öffnen'));
+    await tester.pumpAndSettle();
+    final restored = saved;
+    expect(restored?.elementId, expected?.elementId);
+    expect(
+      restored?.scrollOffset ?? 0,
+      closeTo(expected?.scrollOffset ?? 0, .03),
+    );
+    await tester.tap(find.byTooltip('Reader schließen'));
+    await tester.pumpAndSettle();
+  });
 }

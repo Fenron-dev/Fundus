@@ -4358,10 +4358,16 @@ class _DetailPanelState extends State<_DetailPanel> {
         final files = widget.library?.playbackTracks(work.id) ?? [file];
         await _openReflowWork(work, files, startFileId: file.fileId);
       } else {
+        final profile = await PublicationReaderSettings.loadReflowProfile();
+        if (!mounted) return;
         await showReflowTextReader(
           context,
           path: file.absolutePath,
           title: file.title,
+          initialProfile: profile,
+          onProfileChanged: (updated) =>
+              unawaited(PublicationReaderSettings.saveReflowProfile(updated)),
+          onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
         );
       }
       return;
@@ -4461,10 +4467,15 @@ class _DetailPanelState extends State<_DetailPanel> {
     }
     if (supportsInternalReflowTextReader(path)) {
       try {
+        final profile = await PublicationReaderSettings.loadReflowProfile();
+        if (!mounted) return;
         await showReflowTextReader(
           context,
           path: path,
           title: p.basenameWithoutExtension(path),
+          initialProfile: profile,
+          onProfileChanged: (updated) =>
+              unawaited(PublicationReaderSettings.saveReflowProfile(updated)),
         );
       } on ReflowTextReaderException catch (error) {
         if (!mounted) return;
@@ -4494,7 +4505,16 @@ class _DetailPanelState extends State<_DetailPanel> {
 
   Future<void> _openEpubPath(String path) async {
     try {
-      await showEpubReader(context, path: path);
+      final profile = await PublicationReaderSettings.loadReflowProfile();
+      if (!mounted) return;
+      await showEpubReader(
+        context,
+        path: path,
+        initialProfile: profile,
+        onProfileChanged: (updated) =>
+            unawaited(PublicationReaderSettings.saveReflowProfile(updated)),
+        onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
+      );
     } on EpubPackageException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -4516,6 +4536,10 @@ class _DetailPanelState extends State<_DetailPanel> {
       if (!mounted) return;
     }
     try {
+      final readerProfile = await PublicationReaderSettings.loadReflowProfile(
+        workId: work.id,
+      );
+      if (!mounted) return;
       await showEpubReader(
         context,
         path: file.absolutePath,
@@ -4526,6 +4550,13 @@ class _DetailPanelState extends State<_DetailPanel> {
             : null,
         fileId: file.fileId,
         relativePath: file.relativePath,
+        initialProfile: readerProfile,
+        onProfileChanged: (updated) => unawaited(
+          PublicationReaderSettings.saveReflowProfile(updated, workId: work.id),
+        ),
+        onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
+        onResetWorkProfile: () =>
+            PublicationReaderSettings.clearReflowProfile(work.id),
         onPositionChanged: library == null || library.isReadOnly
             ? null
             : (position) {
@@ -4587,6 +4618,10 @@ class _DetailPanelState extends State<_DetailPanel> {
             progress?.fileId == chapters[chapterIndex].fileId
         ? progress?.position
         : null;
+    var readerProfile = await PublicationReaderSettings.loadReflowProfile(
+      workId: work.id,
+    );
+    if (!mounted) return;
     while (mounted) {
       final chapter = chapters[chapterIndex];
       try {
@@ -4602,6 +4637,19 @@ class _DetailPanelState extends State<_DetailPanel> {
           chapterTitles: chapters.map((item) => item.title).toList(),
           hasPreviousChapter: chapterIndex > 0,
           hasNextChapter: chapterIndex + 1 < chapters.length,
+          initialProfile: readerProfile,
+          onProfileChanged: (updated) {
+            readerProfile = updated;
+            unawaited(
+              PublicationReaderSettings.saveReflowProfile(
+                updated,
+                workId: work.id,
+              ),
+            );
+          },
+          onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
+          onResetWorkProfile: () =>
+              PublicationReaderSettings.clearReflowProfile(work.id),
           onPositionChanged: library == null || library.isReadOnly
               ? null
               : (position) {
