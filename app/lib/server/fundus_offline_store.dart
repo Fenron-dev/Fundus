@@ -1101,6 +1101,7 @@ final class FundusOfflineStore {
         mediaPosition: value['position'] is Map
             ? _mediaPosition(value['position'] as Map)
             : null,
+        updatedAt: DateTime.tryParse('${value['updated_at'] ?? ''}'),
       );
     } on FileSystemException {
       return null;

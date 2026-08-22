@@ -175,6 +175,11 @@ void main() {
     await tester.tap(find.byTooltip('Reader schließen'));
     await tester.pumpAndSettle();
 
+    expect(saved?.elementId, expected?.elementId);
+    expect(
+      saved?.scrollOffset ?? 0,
+      closeTo(expected?.scrollOffset ?? 0, .03),
+    );
     saved = expected;
     await tester.tap(find.text('Öffnen'));
     await tester.pumpAndSettle();

@@ -2828,10 +2828,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     final key = '${server.id}/${library.id}/${work.id}';
     final future = _coverRequests.putIfAbsent(
       key,
-      () => _runWithReconnect(
-        server,
-        (active) => _client.cover(active, library.id, work.id),
-      ).then((result) => result.value),
+      () => _loadCoverWithRetry(server, library, work),
     );
     return FutureBuilder<Uint8List>(
       future: future,
@@ -2854,6 +2851,30 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         return const Center(child: CircularProgressIndicator());
       },
     );
+  }
+
+  Future<Uint8List> _loadCoverWithRetry(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work,
+  ) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final result = await _runWithReconnect(
+          server,
+          (active) => _client.cover(active, library.id, work.id),
+        );
+        return result.value;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) {
+          await Future<void>.delayed(Duration(milliseconds: 250 << attempt));
+        }
+      }
+    }
+    throw lastError ??
+        const HttpException('Cover konnte nicht geladen werden.');
   }
 
   Future<({FundusRemoteServer server, T value})> _runWithReconnect<T>(

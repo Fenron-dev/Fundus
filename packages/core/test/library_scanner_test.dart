@@ -20,6 +20,13 @@ void main() {
     final internal = Directory(p.join(root.path, '.library'));
     await internal.create();
     await File(p.join(internal.path, 'index.db')).writeAsBytes([6]);
+    final generatedChapters = Directory(
+      p.join(root.path, 'Webnovels', 'Titel', '.chapters'),
+    );
+    await generatedChapters.create(recursive: true);
+    await File(
+      p.join(generatedChapters.path, 'ch_0001.json'),
+    ).writeAsString('{}');
     final synologyMetadata = Directory(
       p.join(book.path, '@eaDir', 'cover.jpg'),
     );

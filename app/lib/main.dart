@@ -114,6 +114,7 @@ LibraryWorkSummary _offlineLibrarySummary(FundusOfflineWork work) {
         ? progressTrackIndex
         : null,
     progressFinished: progress?.finished ?? false,
+    lastListenedAt: progress?.updatedAt,
     status: work.incomplete ? 'incomplete' : 'available',
     tags: work.tags,
     offline: true,
@@ -1661,15 +1662,24 @@ class _LibraryShellState extends State<LibraryShell> {
 
   Widget _mobileDashboard(BuildContext context) {
     final available = _allWorks.where((work) => work.available).toList();
-    final continuing = available
-        .where(
-          (work) =>
-              !work.progressFinished &&
-              (work.mediaProgress != null ||
-                  (work.progressPosition ?? Duration.zero) > Duration.zero),
-        )
-        .take(8)
-        .toList();
+    final continuing =
+        available
+            .where(
+              (work) =>
+                  !work.progressFinished &&
+                  (work.mediaProgress != null ||
+                      (work.progressPosition ?? Duration.zero) > Duration.zero),
+            )
+            .toList()
+          ..sort(
+            (left, right) =>
+                (right.lastListenedAt ?? DateTime.fromMillisecondsSinceEpoch(0))
+                    .compareTo(
+                      left.lastListenedAt ??
+                          DateTime.fromMillisecondsSinceEpoch(0),
+                    ),
+          );
+    if (continuing.length > 8) continuing.removeRange(8, continuing.length);
     final recent = available.toList()
       ..sort((left, right) => right.addedAt.compareTo(left.addedAt));
     final sections = <_LibrarySection>[

@@ -370,6 +370,7 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
   MediaPosition? _currentPosition() {
     if (widget.document.paragraphs.isEmpty) return null;
     final anchor = _visibleAnchor();
+    if (anchor == null) return _lastPosition ?? widget.initialPosition;
     return widget.document.positionFor(
       paragraphIndex: anchor.index,
       innerOffset: anchor.offset,
@@ -379,13 +380,11 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
     );
   }
 
-  ({int index, double offset}) _visibleAnchor() {
-    if (widget.document.paragraphs.isEmpty) return (index: 0, offset: 0);
+  ({int index, double offset})? _visibleAnchor() {
+    if (widget.document.paragraphs.isEmpty) return null;
     final viewport =
         _viewportKey.currentContext?.findRenderObject() as RenderBox?;
     final viewportTop = viewport?.localToGlobal(Offset.zero).dy ?? 0;
-    var bestIndex = 0;
-    var bestOffset = 0.0;
     for (var index = 0; index < _paragraphKeys.length; index++) {
       final box =
           _paragraphKeys[index].currentContext?.findRenderObject()
@@ -394,13 +393,14 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
       final top = box.localToGlobal(Offset.zero).dy;
       final bottom = top + box.size.height;
       if (bottom <= viewportTop) continue;
-      bestIndex = index;
-      bestOffset = box.size.height <= 0
-          ? 0
+      final bestOffset = box.size.height <= 0
+          ? 0.0
           : ((viewportTop - top) / box.size.height).clamp(0, 1).toDouble();
-      break;
+      return (index: index, offset: bestOffset);
     }
-    return (index: bestIndex, offset: bestOffset);
+    // Closing the route detaches render objects before dispose on some
+    // platforms. Keep the last real line instead of saving chapter start.
+    return null;
   }
 
   void _reportCurrentPosition() {
@@ -695,6 +695,7 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
         .split(RegExp(r'\s*\n+\s*'))
         .firstWhere((value) => value.isNotEmpty, orElse: () => quote);
     final anchor = _visibleAnchor();
+    if (anchor == null) return null;
     final order = <int>[
       anchor.index,
       for (

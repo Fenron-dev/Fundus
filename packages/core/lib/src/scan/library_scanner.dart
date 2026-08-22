@@ -56,6 +56,7 @@ final class LibraryScanner {
   LibraryScanner({
     this.ignoredDirectoryNames = const {
       '.library',
+      '.chapters',
       '_fundus',
       '.staging',
       '.git',
@@ -101,6 +102,7 @@ final class LibraryScanner {
 
     final pending = <Directory>[root.absolute];
     final visitedDirectories = <String>{};
+    final visitedFiles = <String>{};
     while (pending.isNotEmpty) {
       if (cancellationToken?.isCancelled ?? false) {
         yield ScanEvent(kind: ScanEventKind.cancelled, visitedFiles: visited);
@@ -130,7 +132,6 @@ final class LibraryScanner {
             continue;
           }
 
-          visited++;
           try {
             final stat = await entity.stat();
             final extension = p
@@ -146,12 +147,17 @@ final class LibraryScanner {
               );
               continue;
             }
+            final portableRelative = p.posix.joinAll(p.split(relative));
+            // SMB providers can return an entry more than once while
+            // generated files are changing during a scan.
+            if (!visitedFiles.add(portableRelative)) continue;
+            visited++;
             yield ScanEvent(
               kind: ScanEventKind.file,
               visitedFiles: visited,
               file: ScannedFile(
                 absolutePath: entity.absolute.path,
-                relativePath: p.posix.joinAll(p.split(relative)),
+                relativePath: portableRelative,
                 filename: name,
                 extension: extension,
                 size: stat.size,

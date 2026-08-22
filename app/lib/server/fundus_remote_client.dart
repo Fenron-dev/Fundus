@@ -319,6 +319,7 @@ final class FundusRemoteProgress {
     this.mediaPosition,
     this.deviceId,
     this.deviceName,
+    this.updatedAt,
   });
 
   final String? fileId;
@@ -329,6 +330,7 @@ final class FundusRemoteProgress {
   final int revision;
   final String? deviceId;
   final String? deviceName;
+  final DateTime? updatedAt;
 }
 
 final class FundusRemoteProgressRevision {
@@ -989,6 +991,7 @@ final class FundusRemoteClient {
       deviceName: progress['device_name'] is String
           ? progress['device_name'] as String
           : null,
+      updatedAt: DateTime.tryParse('${progress['updated_at'] ?? ''}'),
     );
   }
 
