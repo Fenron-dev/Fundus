@@ -56,6 +56,18 @@ final class ReflowReaderSearchResult {
 typedef ReflowReaderSearch =
     Future<List<ReflowReaderSearchResult>> Function(String query);
 
+typedef ReflowAddBookmark =
+    Future<WorkAnnotations> Function(MediaPosition position, String? label);
+typedef ReflowAddHighlight =
+    Future<WorkAnnotations> Function(
+      MediaPosition position,
+      String quote,
+      String color,
+      String? note,
+    );
+typedef ReflowDeleteAnnotation =
+    Future<WorkAnnotations> Function(String annotationId);
+
 bool supportsInternalReflowTextReader(String path) => const {
   '.html',
   '.htm',
@@ -75,6 +87,7 @@ Future<ReflowTextReaderResult?> showReflowTextReader(
   int chapterIndex = 0,
   int chapterCount = 1,
   List<String> chapterTitles = const [],
+  List<String> chapterIds = const [],
   bool hasPreviousChapter = false,
   bool hasNextChapter = false,
   ReflowReaderProfile initialProfile = const ReflowReaderProfile(),
@@ -83,6 +96,13 @@ Future<ReflowTextReaderResult?> showReflowTextReader(
   Future<void> Function(ReflowReaderProfile profile)? onSaveAsDefault,
   Future<ReflowReaderProfile> Function()? onResetWorkProfile,
   ReflowReaderSearch? onSearch,
+  List<LibraryBookmark> initialBookmarks = const [],
+  List<LibraryHighlight> initialHighlights = const [],
+  ReflowAddBookmark? onAddBookmark,
+  ReflowAddHighlight? onAddHighlight,
+  ReflowDeleteAnnotation? onDeleteBookmark,
+  ReflowDeleteAnnotation? onDeleteHighlight,
+  Future<void> Function()? onExportAnnotations,
 }) async {
   final file = File(path);
   if (!await file.exists()) {
@@ -115,6 +135,7 @@ Future<ReflowTextReaderResult?> showReflowTextReader(
     chapterIndex: chapterIndex,
     chapterCount: chapterCount,
     chapterTitles: chapterTitles,
+    chapterIds: chapterIds,
     hasPreviousChapter: hasPreviousChapter,
     hasNextChapter: hasNextChapter,
     initialProfile: initialProfile,
@@ -123,6 +144,13 @@ Future<ReflowTextReaderResult?> showReflowTextReader(
     onSaveAsDefault: onSaveAsDefault,
     onResetWorkProfile: onResetWorkProfile,
     onSearch: onSearch,
+    initialBookmarks: initialBookmarks,
+    initialHighlights: initialHighlights,
+    onAddBookmark: onAddBookmark,
+    onAddHighlight: onAddHighlight,
+    onDeleteBookmark: onDeleteBookmark,
+    onDeleteHighlight: onDeleteHighlight,
+    onExportAnnotations: onExportAnnotations,
   );
 }
 
@@ -137,6 +165,7 @@ Future<ReflowTextReaderResult?> showReflowDocumentReader(
   int chapterIndex = 0,
   int chapterCount = 1,
   List<String> chapterTitles = const [],
+  List<String> chapterIds = const [],
   bool hasPreviousChapter = false,
   bool hasNextChapter = false,
   ReflowReaderProfile initialProfile = const ReflowReaderProfile(),
@@ -145,6 +174,13 @@ Future<ReflowTextReaderResult?> showReflowDocumentReader(
   Future<void> Function(ReflowReaderProfile profile)? onSaveAsDefault,
   Future<ReflowReaderProfile> Function()? onResetWorkProfile,
   ReflowReaderSearch? onSearch,
+  List<LibraryBookmark> initialBookmarks = const [],
+  List<LibraryHighlight> initialHighlights = const [],
+  ReflowAddBookmark? onAddBookmark,
+  ReflowAddHighlight? onAddHighlight,
+  ReflowDeleteAnnotation? onDeleteBookmark,
+  ReflowDeleteAnnotation? onDeleteHighlight,
+  Future<void> Function()? onExportAnnotations,
 }) {
   return showDialog<ReflowTextReaderResult>(
     context: context,
@@ -159,6 +195,7 @@ Future<ReflowTextReaderResult?> showReflowDocumentReader(
       chapterIndex: chapterIndex,
       chapterCount: chapterCount,
       chapterTitles: chapterTitles,
+      chapterIds: chapterIds,
       hasPreviousChapter: hasPreviousChapter,
       hasNextChapter: hasNextChapter,
       initialProfile: initialProfile,
@@ -167,6 +204,13 @@ Future<ReflowTextReaderResult?> showReflowDocumentReader(
       onSaveAsDefault: onSaveAsDefault,
       onResetWorkProfile: onResetWorkProfile,
       onSearch: onSearch,
+      initialBookmarks: initialBookmarks,
+      initialHighlights: initialHighlights,
+      onAddBookmark: onAddBookmark,
+      onAddHighlight: onAddHighlight,
+      onDeleteBookmark: onDeleteBookmark,
+      onDeleteHighlight: onDeleteHighlight,
+      onExportAnnotations: onExportAnnotations,
     ),
   );
 }
@@ -191,6 +235,7 @@ class _ReflowTextReaderDialog extends StatefulWidget {
     required this.chapterIndex,
     required this.chapterCount,
     required this.chapterTitles,
+    required this.chapterIds,
     required this.hasPreviousChapter,
     required this.hasNextChapter,
     required this.initialProfile,
@@ -199,6 +244,13 @@ class _ReflowTextReaderDialog extends StatefulWidget {
     required this.onSaveAsDefault,
     required this.onResetWorkProfile,
     required this.onSearch,
+    required this.initialBookmarks,
+    required this.initialHighlights,
+    required this.onAddBookmark,
+    required this.onAddHighlight,
+    required this.onDeleteBookmark,
+    required this.onDeleteHighlight,
+    required this.onExportAnnotations,
   });
 
   final ReflowDocument document;
@@ -210,6 +262,7 @@ class _ReflowTextReaderDialog extends StatefulWidget {
   final int chapterIndex;
   final int chapterCount;
   final List<String> chapterTitles;
+  final List<String> chapterIds;
   final bool hasPreviousChapter;
   final bool hasNextChapter;
   final ReflowReaderProfile initialProfile;
@@ -218,6 +271,13 @@ class _ReflowTextReaderDialog extends StatefulWidget {
   final Future<void> Function(ReflowReaderProfile profile)? onSaveAsDefault;
   final Future<ReflowReaderProfile> Function()? onResetWorkProfile;
   final ReflowReaderSearch? onSearch;
+  final List<LibraryBookmark> initialBookmarks;
+  final List<LibraryHighlight> initialHighlights;
+  final ReflowAddBookmark? onAddBookmark;
+  final ReflowAddHighlight? onAddHighlight;
+  final ReflowDeleteAnnotation? onDeleteBookmark;
+  final ReflowDeleteAnnotation? onDeleteHighlight;
+  final Future<void> Function()? onExportAnnotations;
 
   @override
   State<_ReflowTextReaderDialog> createState() =>
@@ -233,11 +293,16 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
   int _restoreEpoch = 0;
   late ReflowReaderProfile _profile;
   MediaPosition? _lastPosition;
+  late List<LibraryBookmark> _bookmarks;
+  late List<LibraryHighlight> _highlights;
+  String? _selectedText;
 
   @override
   void initState() {
     super.initState();
     _profile = widget.initialProfile;
+    _bookmarks = List.of(widget.initialBookmarks);
+    _highlights = List.of(widget.initialHighlights);
     _paragraphKeys = [
       for (var index = 0; index < widget.document.paragraphs.length; index++)
         GlobalKey(),
@@ -576,6 +641,368 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
     );
   }
 
+  Future<void> _addBookmark() async {
+    final callback = widget.onAddBookmark;
+    final position = _currentPosition();
+    if (callback == null || position == null) return;
+    final controller = TextEditingController(
+      text: position.label ?? position.displayValue,
+    );
+    final label = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.bookmark_add_outlined),
+        title: const Text('Textlesezeichen'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Bezeichnung'),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, controller.text.trim()),
+            child: const Text('Speichern'),
+          ),
+        ],
+      ),
+    );
+    if (label == null || !mounted) return;
+    final annotations = await callback(position, label.isEmpty ? null : label);
+    if (!mounted) return;
+    setState(() => _bookmarks = List.of(annotations.bookmarks));
+  }
+
+  ({MediaPosition position, String quote})? _selectedHighlight() {
+    final quote = _selectedText?.trim();
+    if (quote == null || quote.isEmpty) return null;
+    final firstLine = quote
+        .split(RegExp(r'\s*\n+\s*'))
+        .firstWhere((value) => value.isNotEmpty, orElse: () => quote);
+    final anchor = _visibleAnchor();
+    final order = <int>[
+      anchor.index,
+      for (
+        var distance = 1;
+        distance < widget.document.paragraphs.length;
+        distance++
+      ) ...[
+        if (anchor.index + distance < widget.document.paragraphs.length)
+          anchor.index + distance,
+        if (anchor.index - distance >= 0) anchor.index - distance,
+      ],
+    ];
+    for (final index in order) {
+      final paragraph = widget.document.paragraphs[index];
+      final offset = paragraph.text.toLowerCase().indexOf(
+        firstLine.toLowerCase(),
+      );
+      if (offset < 0) continue;
+      return (
+        position: widget.document.positionFor(
+          paragraphIndex: index,
+          innerOffset: paragraph.text.isEmpty
+              ? 0
+              : offset / paragraph.text.length,
+          fileId: widget.fileId,
+          chapterId: widget.positionChapterId ?? widget.title,
+          key: widget.relativePath,
+        ),
+        quote: quote,
+      );
+    }
+    return null;
+  }
+
+  Future<void> _addHighlight() async {
+    final callback = widget.onAddHighlight;
+    final selected = _selectedHighlight();
+    if (callback == null || selected == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Markiere zuerst einen zusammenhängenden Textabschnitt.',
+          ),
+        ),
+      );
+      return;
+    }
+    final noteController = TextEditingController();
+    var color = '#FFF176';
+    final result = await showDialog<({String color, String? note})>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          icon: const Icon(Icons.border_color_outlined),
+          title: const Text('Text hervorheben'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                selected.quote,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 10,
+                children: [
+                  for (final candidate in const [
+                    '#FFF176',
+                    '#A5D6A7',
+                    '#90CAF9',
+                    '#F8BBD0',
+                  ])
+                    ChoiceChip(
+                      selected: color == candidate,
+                      avatar: CircleAvatar(
+                        backgroundColor: _highlightColor(candidate),
+                      ),
+                      label: const Text(''),
+                      onSelected: (_) =>
+                          setDialogState(() => color = candidate),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: noteController,
+                decoration: const InputDecoration(
+                  labelText: 'Notiz (optional)',
+                  border: OutlineInputBorder(),
+                ),
+                minLines: 2,
+                maxLines: 4,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, (
+                color: color,
+                note: noteController.text.trim().isEmpty
+                    ? null
+                    : noteController.text.trim(),
+              )),
+              child: const Text('Hervorheben'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+    final annotations = await callback(
+      selected.position,
+      selected.quote,
+      result.color,
+      result.note,
+    );
+    if (!mounted) return;
+    setState(() {
+      _highlights = List.of(annotations.highlights);
+      _selectedText = null;
+    });
+  }
+
+  Color _highlightColor(String value) {
+    final normalized = value.replaceFirst('#', '');
+    final parsed = int.tryParse(normalized, radix: 16) ?? 0xfff176;
+    return Color(0xff000000 | parsed);
+  }
+
+  Future<void> _jumpToAnnotation(MediaPosition position) async {
+    final sameChapter =
+        position.chapterId == (widget.positionChapterId ?? widget.title);
+    if (sameChapter) {
+      _restoring = true;
+      final epoch = ++_restoreEpoch;
+      await _restorePosition(position, epoch: epoch);
+      return;
+    }
+    final index = widget.chapterIds.indexOf(position.chapterId ?? '');
+    if (index < 0) return;
+    _reportCurrentPosition();
+    Navigator.pop(
+      context,
+      ReflowTextReaderResult.selectChapter(index, targetPosition: position),
+    );
+  }
+
+  Future<void> _showAnnotations() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: FractionallySizedBox(
+            heightFactor: .72,
+            child: Column(
+              children: [
+                ListTile(
+                  title: const Text('Lesezeichen & Markierungen'),
+                  trailing: widget.onExportAnnotations == null
+                      ? null
+                      : IconButton(
+                          onPressed: widget.onExportAnnotations,
+                          tooltip: 'Annotationen exportieren',
+                          icon: const Icon(Icons.ios_share_outlined),
+                        ),
+                ),
+                Expanded(
+                  child: _bookmarks.isEmpty && _highlights.isEmpty
+                      ? const Center(
+                          child: Text('Noch keine Annotationen vorhanden.'),
+                        )
+                      : ListView(
+                          children: [
+                            for (final bookmark in _bookmarks)
+                              ListTile(
+                                leading: const Icon(Icons.bookmark),
+                                title: Text(
+                                  bookmark.label ?? bookmark.displayPosition,
+                                ),
+                                subtitle: Text(
+                                  bookmark.mediaPosition.chapterId ??
+                                      'Textstelle',
+                                ),
+                                onTap: () {
+                                  Navigator.pop(sheetContext);
+                                  _jumpToAnnotation(bookmark.mediaPosition);
+                                },
+                                trailing: widget.onDeleteBookmark == null
+                                    ? null
+                                    : IconButton(
+                                        onPressed: () async {
+                                          final annotations = await widget
+                                              .onDeleteBookmark!(bookmark.id);
+                                          if (!mounted) return;
+                                          setState(
+                                            () => _bookmarks = List.of(
+                                              annotations.bookmarks,
+                                            ),
+                                          );
+                                          setSheetState(() {});
+                                        },
+                                        icon: const Icon(Icons.delete_outline),
+                                      ),
+                              ),
+                            for (final highlight in _highlights)
+                              ListTile(
+                                leading: Icon(
+                                  Icons.format_color_fill,
+                                  color: _highlightColor(highlight.color),
+                                ),
+                                title: Text(
+                                  highlight.quote,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                subtitle: highlight.note == null
+                                    ? Text(
+                                        highlight.mediaPosition.chapterId ??
+                                            'Textstelle',
+                                      )
+                                    : Text(highlight.note!),
+                                onTap: () {
+                                  Navigator.pop(sheetContext);
+                                  _jumpToAnnotation(highlight.mediaPosition);
+                                },
+                                trailing: widget.onDeleteHighlight == null
+                                    ? null
+                                    : IconButton(
+                                        onPressed: () async {
+                                          final annotations = await widget
+                                              .onDeleteHighlight!(highlight.id);
+                                          if (!mounted) return;
+                                          setState(
+                                            () => _highlights = List.of(
+                                              annotations.highlights,
+                                            ),
+                                          );
+                                          setSheetState(() {});
+                                        },
+                                        icon: const Icon(Icons.delete_outline),
+                                      ),
+                              ),
+                          ],
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildParagraph(int index, TextStyle style) {
+    final paragraph = widget.document.paragraphs[index];
+    final ranges = <({int start, int end, Color color})>[];
+    for (final highlight in _highlights) {
+      final position = highlight.mediaPosition;
+      if (position.chapterId != (widget.positionChapterId ?? widget.title) ||
+          position.elementId != paragraph.id) {
+        continue;
+      }
+      final quote = highlight.quote.split(RegExp(r'\s*\n+\s*')).first.trim();
+      if (quote.isEmpty) continue;
+      var start = ((position.scrollOffset ?? 0) * paragraph.text.length)
+          .round();
+      start = start.clamp(0, paragraph.text.length);
+      final expectedEnd = (start + quote.length).clamp(
+        0,
+        paragraph.text.length,
+      );
+      if (paragraph.text.substring(start, expectedEnd).toLowerCase() !=
+          quote.toLowerCase()) {
+        start = paragraph.text.toLowerCase().indexOf(quote.toLowerCase());
+      }
+      if (start < 0) continue;
+      ranges.add((
+        start: start,
+        end: (start + quote.length).clamp(0, paragraph.text.length),
+        color: _highlightColor(highlight.color),
+      ));
+    }
+    if (ranges.isEmpty) return Text(paragraph.text, style: style);
+    ranges.sort((left, right) => left.start.compareTo(right.start));
+    final spans = <TextSpan>[];
+    var cursor = 0;
+    for (final range in ranges) {
+      if (range.start < cursor) continue;
+      if (range.start > cursor) {
+        spans.add(
+          TextSpan(text: paragraph.text.substring(cursor, range.start)),
+        );
+      }
+      spans.add(
+        TextSpan(
+          text: paragraph.text.substring(range.start, range.end),
+          style: TextStyle(
+            backgroundColor: range.color.withValues(alpha: .62),
+            color: const Color(0xff201a00),
+          ),
+        ),
+      );
+      cursor = range.end;
+    }
+    if (cursor < paragraph.text.length) {
+      spans.add(TextSpan(text: paragraph.text.substring(cursor)));
+    }
+    return Text.rich(TextSpan(children: spans), style: style);
+  }
+
   @override
   Widget build(BuildContext context) {
     final progress =
@@ -612,6 +1039,24 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
             ],
           ),
           actions: [
+            if (widget.onAddBookmark != null)
+              IconButton(
+                onPressed: _addBookmark,
+                tooltip: 'Lesezeichen hinzufügen',
+                icon: const Icon(Icons.bookmark_add_outlined),
+              ),
+            if (widget.onAddHighlight != null)
+              IconButton(
+                onPressed: _addHighlight,
+                tooltip: 'Auswahl hervorheben',
+                icon: const Icon(Icons.border_color_outlined),
+              ),
+            if (_bookmarks.isNotEmpty || _highlights.isNotEmpty)
+              IconButton(
+                onPressed: _showAnnotations,
+                tooltip: 'Lesezeichen und Markierungen',
+                icon: const Icon(Icons.collections_bookmark_outlined),
+              ),
             IconButton(
               onPressed: _showSearch,
               tooltip: 'Im Buch suchen',
@@ -662,6 +1107,10 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
           child: KeyedSubtree(
             key: _viewportKey,
             child: SelectionArea(
+              onSelectionChanged: (selection) {
+                final value = selection?.plainText.trim();
+                if (value != null && value.isNotEmpty) _selectedText = value;
+              },
               child: SingleChildScrollView(
                 controller: _scrollController,
                 padding: const EdgeInsets.symmetric(
@@ -693,9 +1142,9 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
                                   padding: EdgeInsets.only(
                                     bottom: _profile.paragraphSpacing,
                                   ),
-                                  child: Text(
-                                    widget.document.paragraphs[index].text,
-                                    style: TextStyle(
+                                  child: _buildParagraph(
+                                    index,
+                                    TextStyle(
                                       color: foreground,
                                       fontFamily:
                                           _profile.fontFamily.familyName,

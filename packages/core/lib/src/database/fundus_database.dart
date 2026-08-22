@@ -1249,7 +1249,7 @@ final class FundusDatabase {
     final bookmarkRows = _database.select(
       '''
       SELECT id, file_id, position_kind, numeric_value, position_key,
-             position_label, label, note, created_at
+             position_label, label, note, color, quote, created_at
       FROM bookmarks
       WHERE work_id = ? AND user_id = 'default'
       ORDER BY numeric_value, created_at
@@ -1271,6 +1271,7 @@ final class FundusDatabase {
           )
           .toList(growable: false),
       bookmarks: bookmarkRows
+          .where((row) => (row['quote'] as String?)?.trim().isEmpty ?? true)
           .map((row) {
             final fileId = row['file_id'] as String?;
             final storedKey = row['position_key'] as String?;
@@ -1301,6 +1302,39 @@ final class FundusDatabase {
               fileId: fileId,
               mediaPosition: mediaPosition,
               label: row['label'] as String?,
+              note: row['note'] as String?,
+              createdAt: DateTime.fromMillisecondsSinceEpoch(
+                row['created_at'] as int,
+              ),
+            );
+          })
+          .toList(growable: false),
+      highlights: bookmarkRows
+          .where((row) => (row['quote'] as String?)?.trim().isNotEmpty ?? false)
+          .map((row) {
+            final fileId = row['file_id'] as String?;
+            final storedKey = row['position_key'] as String?;
+            MediaPosition mediaPosition;
+            try {
+              mediaPosition = MediaPosition.fromJson(
+                (jsonDecode(storedKey!) as Map).cast<String, Object?>(),
+              ).withFileId(fileId);
+            } catch (_) {
+              mediaPosition = MediaPosition(
+                kind: MediaPositionKind.epubCfi,
+                numericValue: (row['numeric_value'] as num?)?.toDouble() ?? 0,
+                fileId: fileId,
+                key: storedKey,
+                label: row['position_label'] as String?,
+              );
+            }
+            return LibraryHighlight(
+              id: row['id'] as String,
+              workId: workId,
+              fileId: fileId,
+              mediaPosition: mediaPosition,
+              quote: (row['quote'] as String).trim(),
+              color: row['color'] as String? ?? '#FFF176',
               note: row['note'] as String?,
               createdAt: DateTime.fromMillisecondsSinceEpoch(
                 row['created_at'] as int,
@@ -1436,6 +1470,50 @@ final class FundusDatabase {
 
   void deleteBookmark(String bookmarkId) =>
       _database.execute('DELETE FROM bookmarks WHERE id = ?', [bookmarkId]);
+
+  LibraryHighlight addTextHighlight({
+    required String workId,
+    required String fileId,
+    required MediaPosition mediaPosition,
+    required String quote,
+    String color = '#FFF176',
+    String? note,
+  }) {
+    final highlight = LibraryHighlight(
+      id: FundusId.generate(),
+      workId: workId,
+      fileId: fileId,
+      mediaPosition: mediaPosition,
+      quote: quote.trim(),
+      color: color,
+      note: note?.trim().isEmpty ?? true ? null : note!.trim(),
+      createdAt: DateTime.now(),
+    );
+    _database.execute(
+      '''
+      INSERT INTO bookmarks (
+        id, work_id, file_id, user_id, position_kind, numeric_value,
+        position_key, position_label, note, color, quote, created_at
+      ) VALUES (?, ?, ?, 'default', ?, ?, ?, ?, ?, ?, ?, ?)
+      ''',
+      [
+        highlight.id,
+        highlight.workId,
+        highlight.fileId,
+        highlight.mediaPosition.kind.name,
+        highlight.mediaPosition.numericValue,
+        jsonEncode(highlight.mediaPosition.toJson()),
+        highlight.mediaPosition.label ?? highlight.mediaPosition.displayValue,
+        highlight.note,
+        highlight.color,
+        highlight.quote,
+        highlight.createdAt.millisecondsSinceEpoch,
+      ],
+    );
+    return highlight;
+  }
+
+  void deleteHighlight(String highlightId) => deleteBookmark(highlightId);
 
   void markUnseenFilesMissing(Set<String> seenPaths) {
     _database.execute("UPDATE files SET status = 'missing'");

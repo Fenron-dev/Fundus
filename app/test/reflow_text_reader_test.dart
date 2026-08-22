@@ -201,4 +201,127 @@ void main() {
     await tester.tap(find.byTooltip('Reader schließen'));
     await tester.pumpAndSettle();
   });
+
+  testWidgets('reader creates and lists semantic text bookmarks', (
+    tester,
+  ) async {
+    final document = ReflowDocument.parse(
+      'Erster Absatz.\n\nZweiter Absatz.',
+      format: ReflowSourceFormat.plainText,
+    );
+    MediaPosition? bookmarkedAt;
+    var annotations = const WorkAnnotations();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => FilledButton(
+            onPressed: () => unawaited(
+              showReflowDocumentReader(
+                context,
+                document: document,
+                title: 'Lesezeichentest',
+                fileId: 'novel.epub',
+                positionChapterId: 'chapter-1',
+                chapterIds: const ['chapter-1'],
+                onAddBookmark: (position, label) async {
+                  bookmarkedAt = position;
+                  annotations = WorkAnnotations(
+                    bookmarks: [
+                      LibraryBookmark(
+                        id: 'bookmark-1',
+                        workId: 'work-1',
+                        fileId: 'novel.epub',
+                        mediaPosition: position,
+                        label: label,
+                        createdAt: DateTime(2026),
+                      ),
+                    ],
+                  );
+                  return annotations;
+                },
+              ),
+            ),
+            child: const Text('Öffnen'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Öffnen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Lesezeichen hinzufügen'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'Meine Stelle');
+    await tester.tap(find.widgetWithText(FilledButton, 'Speichern'));
+    await tester.pumpAndSettle();
+
+    expect(bookmarkedAt?.chapterId, 'chapter-1');
+    expect(bookmarkedAt?.elementId, document.paragraphs.first.id);
+    await tester.tap(find.byTooltip('Lesezeichen und Markierungen'));
+    await tester.pumpAndSettle();
+    expect(find.text('Meine Stelle'), findsOneWidget);
+    await tester.tap(find.text('Meine Stelle'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Reader schließen'));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('reader renders and opens stored text highlights', (
+    tester,
+  ) async {
+    final document = ReflowDocument.parse(
+      'Ein wichtiges Zitat bleibt sichtbar.',
+      format: ReflowSourceFormat.plainText,
+    );
+    final position = document.positionFor(
+      paragraphIndex: 0,
+      innerOffset: 4 / document.paragraphs.first.text.length,
+      fileId: 'novel.epub',
+      chapterId: 'chapter-1',
+    );
+    final highlight = LibraryHighlight(
+      id: 'highlight-1',
+      workId: 'work-1',
+      fileId: 'novel.epub',
+      mediaPosition: position,
+      quote: 'wichtiges Zitat',
+      color: '#90CAF9',
+      note: 'Merken',
+      createdAt: DateTime(2026),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => FilledButton(
+            onPressed: () => unawaited(
+              showReflowDocumentReader(
+                context,
+                document: document,
+                title: 'Markierungstest',
+                fileId: 'novel.epub',
+                positionChapterId: 'chapter-1',
+                chapterIds: const ['chapter-1'],
+                initialHighlights: [highlight],
+              ),
+            ),
+            child: const Text('Öffnen'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Öffnen'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('wichtiges Zitat'), findsOneWidget);
+    await tester.tap(find.byTooltip('Lesezeichen und Markierungen'));
+    await tester.pumpAndSettle();
+    expect(find.text('Merken'), findsOneWidget);
+    expect(find.textContaining('wichtiges Zitat'), findsWidgets);
+    await tester.tap(find.textContaining('wichtiges Zitat').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Reader schließen'));
+    await tester.pumpAndSettle();
+  });
 }

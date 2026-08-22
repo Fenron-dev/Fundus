@@ -10,7 +10,9 @@ import '../diagnostics/fundus_diagnostics.dart';
 import '../library/comic_book_viewer.dart';
 import '../library/document_file_opener.dart';
 import '../library/document_preview.dart';
+import '../library/epub_reader.dart';
 import '../library/publication_reader_settings.dart';
+import '../library/reflow_text_reader.dart';
 import '../library/reader_progress_conflict.dart';
 import '../library/zip_archive_browser.dart';
 import '../playback/playback_sleep_timer_button.dart';
@@ -3191,6 +3193,29 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     try {
       if (path.toLowerCase().endsWith('.cbz')) {
         await showComicBookViewer(context, archivePath: path);
+      } else if (supportsInternalEpubReader(path)) {
+        final profile = await PublicationReaderSettings.loadReflowProfile();
+        if (!mounted) return;
+        await showEpubReader(
+          context,
+          path: path,
+          initialProfile: profile,
+          onProfileChanged: (updated) =>
+              unawaited(PublicationReaderSettings.saveReflowProfile(updated)),
+          onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
+        );
+      } else if (supportsInternalReflowTextReader(path)) {
+        final profile = await PublicationReaderSettings.loadReflowProfile();
+        if (!mounted) return;
+        await showReflowTextReader(
+          context,
+          path: path,
+          title: path.split(Platform.pathSeparator).last,
+          initialProfile: profile,
+          onProfileChanged: (updated) =>
+              unawaited(PublicationReaderSettings.saveReflowProfile(updated)),
+          onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
+        );
       } else if (path.toLowerCase().endsWith('.zip')) {
         await showZipArchiveBrowser(
           context,
@@ -3207,6 +3232,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         await const DocumentFileOpener().open(path);
       }
     } on DocumentPreviewException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } on EpubPackageException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } on ReflowTextReaderException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,

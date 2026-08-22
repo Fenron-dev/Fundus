@@ -533,6 +533,36 @@ final class FundusLibrary {
     return loadAnnotations(workId);
   }
 
+  Future<WorkAnnotations> addTextHighlight({
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    required String quote,
+    String color = '#FFF176',
+    String? note,
+  }) async {
+    _ensureWritable();
+    if (quote.trim().isEmpty) return loadAnnotations(workId);
+    _database.addTextHighlight(
+      workId: workId,
+      fileId: fileId,
+      mediaPosition: position,
+      quote: quote,
+      color: color,
+      note: note,
+    );
+    return loadAnnotations(workId);
+  }
+
+  Future<WorkAnnotations> deleteHighlight(
+    String workId,
+    String highlightId,
+  ) async {
+    _ensureWritable();
+    _database.deleteHighlight(highlightId);
+    return loadAnnotations(workId);
+  }
+
   Stream<LibraryIndexEvent> index({
     LibraryScanner? scanner,
     AbsImporter? importer,

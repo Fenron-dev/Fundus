@@ -21,6 +21,13 @@ Future<void> showEpubReader(
   void Function(ReflowReaderProfile profile)? onProfileChanged,
   Future<void> Function(ReflowReaderProfile profile)? onSaveAsDefault,
   Future<ReflowReaderProfile> Function()? onResetWorkProfile,
+  List<LibraryBookmark> initialBookmarks = const [],
+  List<LibraryHighlight> initialHighlights = const [],
+  ReflowAddBookmark? onAddBookmark,
+  ReflowAddHighlight? onAddHighlight,
+  ReflowDeleteAnnotation? onDeleteBookmark,
+  ReflowDeleteAnnotation? onDeleteHighlight,
+  Future<void> Function()? onExportAnnotations,
 }) async {
   final navigator = Navigator.of(context, rootNavigator: true);
   var loadingVisible = true;
@@ -52,6 +59,8 @@ Future<void> showEpubReader(
   if (!context.mounted) return;
 
   final chapters = publication.chapters;
+  var bookmarks = List<LibraryBookmark>.of(initialBookmarks);
+  var highlights = List<LibraryHighlight>.of(initialHighlights);
   final documentCache = <int, ReflowDocument>{};
   ReflowDocument documentFor(int index) => documentCache.putIfAbsent(
     index,
@@ -121,6 +130,7 @@ Future<void> showEpubReader(
         for (final item in chapters)
           '${item.depth == 0 ? '' : '${List.filled(item.depth, '  ').join()}↳ '}${item.title}',
       ],
+      chapterIds: [for (final item in chapters) item.id],
       hasPreviousChapter: chapterIndex > 0,
       hasNextChapter: chapterIndex + 1 < chapters.length,
       initialProfile: readerProfile,
@@ -132,6 +142,46 @@ Future<void> showEpubReader(
       onSaveAsDefault: onSaveAsDefault,
       onResetWorkProfile: onResetWorkProfile,
       onSearch: searchBook,
+      initialBookmarks: bookmarks,
+      initialHighlights: highlights,
+      onAddBookmark: onAddBookmark == null
+          ? null
+          : (position, label) async {
+              final annotations = await onAddBookmark(position, label);
+              bookmarks = List.of(annotations.bookmarks);
+              highlights = List.of(annotations.highlights);
+              return annotations;
+            },
+      onAddHighlight: onAddHighlight == null
+          ? null
+          : (position, quote, color, note) async {
+              final annotations = await onAddHighlight(
+                position,
+                quote,
+                color,
+                note,
+              );
+              bookmarks = List.of(annotations.bookmarks);
+              highlights = List.of(annotations.highlights);
+              return annotations;
+            },
+      onDeleteBookmark: onDeleteBookmark == null
+          ? null
+          : (id) async {
+              final annotations = await onDeleteBookmark(id);
+              bookmarks = List.of(annotations.bookmarks);
+              highlights = List.of(annotations.highlights);
+              return annotations;
+            },
+      onDeleteHighlight: onDeleteHighlight == null
+          ? null
+          : (id) async {
+              final annotations = await onDeleteHighlight(id);
+              bookmarks = List.of(annotations.bookmarks);
+              highlights = List.of(annotations.highlights);
+              return annotations;
+            },
+      onExportAnnotations: onExportAnnotations,
     );
     if (result == null || !context.mounted) return;
     if (result.action == ReflowTextReaderAction.selectChapter &&

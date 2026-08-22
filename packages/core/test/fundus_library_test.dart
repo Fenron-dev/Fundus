@@ -1065,6 +1065,46 @@ void main() {
     expect(work.coverPath, contains('.library/covers'));
     expect(work.coverPath, endsWith('.png'));
     expect(await File(work.coverPath!).readAsBytes(), _tinyPng);
+
+    final epub = library
+        .playbackTracks(work.id)
+        .where((file) => file.relativePath.endsWith('.epub'))
+        .single;
+    final annotations = await library.addTextHighlight(
+      workId: work.id,
+      fileId: epub.fileId,
+      position: MediaPosition(
+        kind: MediaPositionKind.epubCfi,
+        numericValue: 42,
+        fileId: epub.fileId,
+        chapterId: 'chapter-1',
+        elementId: 'paragraph-example-1',
+        scrollOffset: .25,
+        label: 'Kapitel 1 · 25 %',
+      ),
+      quote: 'Ein wichtiges Zitat',
+      color: '#90CAF9',
+      note: 'Für später',
+    );
+    expect(annotations.highlights, hasLength(1));
+    expect(annotations.bookmarks, isEmpty);
+    expect(annotations.highlights.single.quote, 'Ein wichtiges Zitat');
+    expect(annotations.highlights.single.color, '#90CAF9');
+    expect(
+      annotations.highlights.single.mediaPosition.elementId,
+      'paragraph-example-1',
+    );
+    final markdown = exportAnnotationsAsMarkdown(
+      workTitle: work.title,
+      annotations: annotations,
+    );
+    final json = exportAnnotationsAsJson(
+      workId: work.id,
+      workTitle: work.title,
+      annotations: annotations,
+    );
+    expect(markdown, contains('> Ein wichtiges Zitat'));
+    expect(json, contains('"color": "#90CAF9"'));
   });
 
   test(

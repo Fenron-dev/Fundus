@@ -4539,6 +4539,8 @@ class _DetailPanelState extends State<_DetailPanel> {
       final readerProfile = await PublicationReaderSettings.loadReflowProfile(
         workId: work.id,
       );
+      var publicationAnnotations =
+          library?.loadAnnotations(work.id) ?? const WorkAnnotations();
       if (!mounted) return;
       await showEpubReader(
         context,
@@ -4557,6 +4559,52 @@ class _DetailPanelState extends State<_DetailPanel> {
         onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
         onResetWorkProfile: () =>
             PublicationReaderSettings.clearReflowProfile(work.id),
+        initialBookmarks: publicationAnnotations.bookmarks,
+        initialHighlights: publicationAnnotations.highlights,
+        onAddBookmark: library == null || library.isReadOnly
+            ? null
+            : (position, label) async {
+                publicationAnnotations = await library.addMediaBookmark(
+                  workId: work.id,
+                  fileId: file.fileId,
+                  position: position,
+                  label: label,
+                );
+                return publicationAnnotations;
+              },
+        onAddHighlight: library == null || library.isReadOnly
+            ? null
+            : (position, quote, color, note) async {
+                publicationAnnotations = await library.addTextHighlight(
+                  workId: work.id,
+                  fileId: file.fileId,
+                  position: position,
+                  quote: quote,
+                  color: color,
+                  note: note,
+                );
+                return publicationAnnotations;
+              },
+        onDeleteBookmark: library == null || library.isReadOnly
+            ? null
+            : (id) async {
+                publicationAnnotations = await library.deleteBookmark(
+                  work.id,
+                  id,
+                );
+                return publicationAnnotations;
+              },
+        onDeleteHighlight: library == null || library.isReadOnly
+            ? null
+            : (id) async {
+                publicationAnnotations = await library.deleteHighlight(
+                  work.id,
+                  id,
+                );
+                return publicationAnnotations;
+              },
+        onExportAnnotations: () =>
+            _exportPublicationAnnotations(work, publicationAnnotations),
         onPositionChanged: library == null || library.isReadOnly
             ? null
             : (position) {
@@ -4588,6 +4636,76 @@ class _DetailPanelState extends State<_DetailPanel> {
           .firstOrNull;
       if (refreshed != null) widget.onMetadataChanged?.call(refreshed);
     }
+  }
+
+  Future<void> _exportPublicationAnnotations(
+    LibraryWorkSummary work,
+    WorkAnnotations annotations,
+  ) async {
+    if (annotations.bookmarks.isEmpty && annotations.highlights.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Es sind noch keine Annotationen vorhanden.'),
+        ),
+      );
+      return;
+    }
+    final format = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('Annotationen exportieren'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(dialogContext, 'md'),
+            child: const ListTile(
+              leading: Icon(Icons.description_outlined),
+              title: Text('Markdown'),
+              subtitle: Text('Gut lesbar und für Notizprogramme geeignet'),
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(dialogContext, 'json'),
+            child: const ListTile(
+              leading: Icon(Icons.data_object),
+              title: Text('JSON'),
+              subtitle: Text(
+                'Strukturiert für Sicherung und Weiterverarbeitung',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (format == null) return;
+    final safeTitle = work.title.replaceAll(
+      RegExp(r'[^\p{L}\p{N}._-]+', unicode: true),
+      '_',
+    );
+    final destination = await FilePicker.saveFile(
+      dialogTitle: 'Fundus-Annotationen exportieren',
+      fileName: '${safeTitle}_annotationen.$format',
+      type: FileType.custom,
+      allowedExtensions: [format],
+    );
+    if (destination == null) return;
+    final contents = format == 'json'
+        ? exportAnnotationsAsJson(
+            workId: work.id,
+            workTitle: work.title,
+            annotations: annotations,
+          )
+        : exportAnnotationsAsMarkdown(
+            workTitle: work.title,
+            annotations: annotations,
+          );
+    await File(destination).writeAsString(contents, flush: true);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Annotationen als ${format.toUpperCase()} exportiert.'),
+      ),
+    );
   }
 
   Future<void> _openReflowWork(
