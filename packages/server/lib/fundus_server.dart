@@ -10,12 +10,47 @@ export 'src/pairing.dart';
 import 'src/pairing.dart';
 
 final class SharedFundusLibrary {
-  const SharedFundusLibrary({required this.name, required this.library});
+  SharedFundusLibrary({required this.name, required this.library})
+    : _works = library.listWorks() {
+    _worksById = {for (final work in _works) work.id: work};
+  }
 
   final String name;
   final FundusLibrary library;
+  final List<LibraryWorkSummary> _works;
+  late final Map<String, LibraryWorkSummary> _worksById;
+  final Map<String, List<LibraryPlaybackTrack>> _tracksByWork = {};
+  final Map<String, ({LibraryWorkSummary work, LibraryPlaybackTrack track})>
+  _tracksById = {};
 
   String get id => library.manifest.libraryId;
+  List<LibraryWorkSummary> get works => _works;
+  LibraryWorkSummary? findWork(String workId) => _worksById[workId];
+
+  List<LibraryPlaybackTrack> tracksFor(String workId) =>
+      _tracksByWork.putIfAbsent(workId, () {
+        final tracks = library.playbackTracks(workId);
+        final work = _worksById[workId];
+        if (work != null) {
+          for (final track in tracks) {
+            _tracksById[track.fileId] = (work: work, track: track);
+          }
+        }
+        return tracks;
+      });
+
+  ({LibraryWorkSummary work, LibraryPlaybackTrack track})? findTrack(
+    String fileId,
+  ) {
+    final cached = _tracksById[fileId];
+    if (cached != null) return cached;
+    for (final work in _works) {
+      tracksFor(work.id);
+      final located = _tracksById[fileId];
+      if (located != null) return located;
+    }
+    return null;
+  }
 }
 
 final class FundusLibraryRegistry {
@@ -103,6 +138,22 @@ final class FundusServerHandler {
       ..get('/v1/libraries/<libraryId>/annotations/<workId>', _annotations)
       ..post('/v1/libraries/<libraryId>/annotations/<workId>/notes', _saveNote)
       ..put('/v1/libraries/<libraryId>/annotations/<workId>/tags', _saveTags)
+      ..post(
+        '/v1/libraries/<libraryId>/annotations/<workId>/bookmarks',
+        _saveBookmark,
+      )
+      ..delete(
+        '/v1/libraries/<libraryId>/annotations/<workId>/bookmarks/<annotationId>',
+        _deleteBookmark,
+      )
+      ..post(
+        '/v1/libraries/<libraryId>/annotations/<workId>/highlights',
+        _saveHighlight,
+      )
+      ..delete(
+        '/v1/libraries/<libraryId>/annotations/<workId>/highlights/<annotationId>',
+        _deleteHighlight,
+      )
       ..get(
         '/v1/libraries/<libraryId>/reader-settings/<workId>/<deviceKey>/<readerKind>',
         _readerProfile,
@@ -238,7 +289,7 @@ final class FundusServerHandler {
     return _json({
       'library_id': libraryId,
       'works': [
-        for (final work in entry.library.listWorks())
+        for (final work in entry.works)
           {
             ..._workJson(work),
             'cover_url': work.coverPath == null
@@ -256,15 +307,14 @@ final class FundusServerHandler {
   ) async {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
-    final work = _findWork(entry.library, workId);
+    final work = entry.findWork(workId);
     if (work == null) return _notFound('work_not_found');
-    final chapters = await entry.library.playbackChapters(workId);
+    final chapters = work.kind == 'audiobook'
+        ? await entry.library.playbackChapters(workId)
+        : const <LibraryPlaybackChapter>[];
     return _json({
       ..._workJson(work),
-      'files': [
-        for (final track in entry.library.playbackTracks(workId))
-          _trackJson(track),
-      ],
+      'files': [for (final track in entry.tracksFor(workId)) _trackJson(track)],
       'chapters': [for (final chapter in chapters) _chapterJson(chapter)],
       'cover_url': work.coverPath == null
           ? null
@@ -279,7 +329,7 @@ final class FundusServerHandler {
   ) async {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
-    final work = _findWork(entry.library, workId);
+    final work = entry.findWork(workId);
     if (work == null) return _notFound('work_not_found');
     final path = work.coverPath;
     if (path == null) return _notFound('cover_not_found');
@@ -289,7 +339,7 @@ final class FundusServerHandler {
   Response _file(Request request, String libraryId, String fileId) {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
-    final located = _findTrack(entry.library, fileId);
+    final located = entry.findTrack(fileId);
     if (located == null) return _notFound('file_not_found');
     return _json({
       ..._trackJson(located.track),
@@ -305,7 +355,7 @@ final class FundusServerHandler {
   ) async {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
-    final located = _findTrack(entry.library, fileId);
+    final located = entry.findTrack(fileId);
     if (located == null) return _notFound('file_not_found');
     return _serveFile(
       request,
@@ -576,7 +626,7 @@ final class FundusServerHandler {
   Response _progress(Request request, String libraryId, String workId) {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
-    if (_findWork(entry.library, workId) == null) {
+    if (entry.findWork(workId) == null) {
       return _notFound('work_not_found');
     }
     final progress = entry.library.loadProgress(workId);
@@ -590,7 +640,7 @@ final class FundusServerHandler {
   Response _annotations(Request request, String libraryId, String workId) {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
-    if (_findWork(entry.library, workId) == null) {
+    if (entry.findWork(workId) == null) {
       return _notFound('work_not_found');
     }
     return _json(_annotationsJson(entry.library.loadAnnotations(workId)));
@@ -606,7 +656,7 @@ final class FundusServerHandler {
     if (entry.library.isReadOnly) {
       return _json({'error': 'library_read_only'}, statusCode: 403);
     }
-    if (_findWork(entry.library, workId) == null) {
+    if (entry.findWork(workId) == null) {
       return _notFound('work_not_found');
     }
     final decoded = await _readJson(request);
@@ -628,7 +678,7 @@ final class FundusServerHandler {
     if (entry.library.isReadOnly) {
       return _json({'error': 'library_read_only'}, statusCode: 403);
     }
-    if (_findWork(entry.library, workId) == null) {
+    if (entry.findWork(workId) == null) {
       return _notFound('work_not_found');
     }
     final decoded = await _readJson(request);
@@ -643,6 +693,124 @@ final class FundusServerHandler {
     return _json(_annotationsJson(annotations));
   }
 
+  Future<Response> _saveBookmark(
+    Request request,
+    String libraryId,
+    String workId,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    if (entry.findWork(workId) == null) return _notFound('work_not_found');
+    final decoded = await _readJson(request);
+    final fileId = decoded?['file_id'];
+    final encodedPosition = decoded?['position'];
+    if (fileId is! String || encodedPosition is! Map) {
+      return _badRequest('invalid_bookmark');
+    }
+    if (!entry.tracksFor(workId).any((track) => track.fileId == fileId)) {
+      return _badRequest('file_not_in_work');
+    }
+    final MediaPosition position;
+    try {
+      position = MediaPosition.fromJson(
+        Map<String, Object?>.from(encodedPosition),
+      );
+    } on Object {
+      return _badRequest('invalid_bookmark');
+    }
+    final annotations = await entry.library.addMediaBookmark(
+      workId: workId,
+      fileId: fileId,
+      position: position,
+      label: decoded?['label'] is String ? decoded!['label'] as String : null,
+      note: decoded?['note'] is String ? decoded!['note'] as String : null,
+    );
+    return _json(_annotationsJson(annotations));
+  }
+
+  Future<Response> _saveHighlight(
+    Request request,
+    String libraryId,
+    String workId,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    if (entry.findWork(workId) == null) return _notFound('work_not_found');
+    final decoded = await _readJson(request);
+    final fileId = decoded?['file_id'];
+    final encodedPosition = decoded?['position'];
+    final quote = decoded?['quote'];
+    if (fileId is! String || encodedPosition is! Map || quote is! String) {
+      return _badRequest('invalid_highlight');
+    }
+    if (!entry.tracksFor(workId).any((track) => track.fileId == fileId)) {
+      return _badRequest('file_not_in_work');
+    }
+    final MediaPosition position;
+    try {
+      position = MediaPosition.fromJson(
+        Map<String, Object?>.from(encodedPosition),
+      );
+    } on Object {
+      return _badRequest('invalid_highlight');
+    }
+    final annotations = await entry.library.addTextHighlight(
+      workId: workId,
+      fileId: fileId,
+      position: position,
+      quote: quote,
+      color: decoded?['color'] is String
+          ? decoded!['color'] as String
+          : '#FFF176',
+      note: decoded?['note'] is String ? decoded!['note'] as String : null,
+    );
+    return _json(_annotationsJson(annotations));
+  }
+
+  Future<Response> _deleteBookmark(
+    Request request,
+    String libraryId,
+    String workId,
+    String annotationId,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    if (entry.findWork(workId) == null) return _notFound('work_not_found');
+    return _json(
+      _annotationsJson(
+        await entry.library.deleteBookmark(workId, annotationId),
+      ),
+    );
+  }
+
+  Future<Response> _deleteHighlight(
+    Request request,
+    String libraryId,
+    String workId,
+    String annotationId,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    if (entry.findWork(workId) == null) return _notFound('work_not_found');
+    return _json(
+      _annotationsJson(
+        await entry.library.deleteHighlight(workId, annotationId),
+      ),
+    );
+  }
+
   Map<String, Object?> _annotationsJson(WorkAnnotations annotations) => {
     'tags': annotations.tags,
     'notes': [
@@ -651,6 +819,29 @@ final class FundusServerHandler {
           'id': note.id,
           'markdown': note.markdown,
           'created_at': note.createdAt.toUtc().toIso8601String(),
+        },
+    ],
+    'bookmarks': [
+      for (final bookmark in annotations.bookmarks)
+        {
+          'id': bookmark.id,
+          'file_id': bookmark.fileId,
+          'position': bookmark.mediaPosition.toJson(),
+          'label': bookmark.label,
+          'note': bookmark.note,
+          'created_at': bookmark.createdAt.toUtc().toIso8601String(),
+        },
+    ],
+    'highlights': [
+      for (final highlight in annotations.highlights)
+        {
+          'id': highlight.id,
+          'file_id': highlight.fileId,
+          'position': highlight.mediaPosition.toJson(),
+          'quote': highlight.quote,
+          'color': highlight.color,
+          'note': highlight.note,
+          'created_at': highlight.createdAt.toUtc().toIso8601String(),
         },
     ],
   };
@@ -664,7 +855,7 @@ final class FundusServerHandler {
   ) async {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
-    if (_findWork(entry.library, workId) == null) {
+    if (entry.findWork(workId) == null) {
       return _notFound('work_not_found');
     }
     final profile = await entry.library.loadPortableReaderProfile(
@@ -687,7 +878,7 @@ final class FundusServerHandler {
     if (entry.library.isReadOnly) {
       return _json({'error': 'library_read_only'}, statusCode: 403);
     }
-    if (_findWork(entry.library, workId) == null) {
+    if (entry.findWork(workId) == null) {
       return _notFound('work_not_found');
     }
     final decoded = await _readJson(request);
@@ -711,7 +902,7 @@ final class FundusServerHandler {
   ) async {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
-    if (_findWork(entry.library, workId) == null) {
+    if (entry.findWork(workId) == null) {
       return _notFound('work_not_found');
     }
     if (entry.library.isReadOnly) {
@@ -737,8 +928,8 @@ final class FundusServerHandler {
         operationId.trim().isEmpty) {
       return _badRequest('invalid_progress');
     }
-    final validTrack = entry.library
-        .playbackTracks(workId)
+    final validTrack = entry
+        .tracksFor(workId)
         .any((track) => track.fileId == fileId);
     if (!validTrack) return _badRequest('file_not_in_work');
     final deviceId = decoded['device_id'] is String
@@ -799,7 +990,7 @@ final class FundusServerHandler {
   ) {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
-    if (_findWork(entry.library, workId) == null) {
+    if (entry.findWork(workId) == null) {
       return _notFound('work_not_found');
     }
     return _json({
@@ -925,24 +1116,12 @@ final class FundusServerHandler {
   static LibraryWorkSummary? _findWork(FundusLibrary library, String workId) =>
       library.listWorks().where((work) => work.id == workId).firstOrNull;
 
-  static ({LibraryWorkSummary work, LibraryPlaybackTrack track})? _findTrack(
-    FundusLibrary library,
-    String fileId,
-  ) {
-    for (final work in library.listWorks()) {
-      for (final track in library.playbackTracks(work.id)) {
-        if (track.fileId == fileId) return (work: work, track: track);
-      }
-    }
-    return null;
-  }
-
   static Map<String, Object?> _libraryJson(SharedFundusLibrary entry) => {
     'id': entry.id,
     'name': entry.name,
     'available': true,
     'read_only': entry.library.isReadOnly,
-    'work_count': entry.library.listWorks().length,
+    'work_count': entry.works.length,
   };
 
   static Map<String, Object?> _workJson(LibraryWorkSummary work) => {

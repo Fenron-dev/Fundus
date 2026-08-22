@@ -1785,6 +1785,50 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       );
   }
 
+  static bool _samePosition(MediaPosition left, MediaPosition right) =>
+      left.kind == right.kind &&
+      left.fileId == right.fileId &&
+      left.chapterId == right.chapterId &&
+      left.elementId == right.elementId &&
+      left.numericValue == right.numericValue &&
+      left.scrollOffset == right.scrollOffset;
+
+  static bool _sameBookmark(LibraryBookmark left, LibraryBookmark right) =>
+      _samePosition(left.mediaPosition, right.mediaPosition) &&
+      left.label == right.label &&
+      left.note == right.note;
+
+  static bool _sameHighlight(LibraryHighlight left, LibraryHighlight right) =>
+      _samePosition(left.mediaPosition, right.mediaPosition) &&
+      left.quote == right.quote &&
+      left.color == right.color &&
+      left.note == right.note;
+
+  static WorkAnnotations _mergeAnnotations(
+    FundusRemoteWork work,
+    WorkAnnotations local,
+    WorkAnnotations remote,
+  ) {
+    final bookmarks = [...remote.bookmarks];
+    for (final bookmark in local.bookmarks) {
+      if (!bookmarks.any((item) => _sameBookmark(item, bookmark))) {
+        bookmarks.add(bookmark);
+      }
+    }
+    final highlights = [...remote.highlights];
+    for (final highlight in local.highlights) {
+      if (!highlights.any((item) => _sameHighlight(item, highlight))) {
+        highlights.add(highlight);
+      }
+    }
+    return WorkAnnotations(
+      tags: {...work.tags, ...local.tags, ...remote.tags}.toList(),
+      notes: remote.notes,
+      bookmarks: bookmarks,
+      highlights: highlights,
+    );
+  }
+
   Future<String?> _showMobilePublicationDetails({
     required FundusRemoteServer server,
     required FundusRemoteLibrary library,
@@ -1943,11 +1987,43 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             markdown: note.markdown,
           );
         }
-        readerAnnotations = WorkAnnotations(
-          tags: {...work.tags, ...remoteAnnotations.tags}.toList(),
-          notes: remoteAnnotations.notes,
-          bookmarks: localAnnotations.bookmarks,
-          highlights: localAnnotations.highlights,
+        for (final bookmark in localAnnotations.bookmarks) {
+          if (remoteAnnotations.bookmarks.any(
+            (remote) => _sameBookmark(remote, bookmark),
+          )) {
+            continue;
+          }
+          remoteAnnotations = await _client.saveBookmark(
+            server,
+            libraryId: library.id,
+            workId: work.id,
+            fileId: bookmark.fileId ?? bookmark.mediaPosition.fileId ?? '',
+            position: bookmark.mediaPosition,
+            label: bookmark.label,
+            note: bookmark.note,
+          );
+        }
+        for (final highlight in localAnnotations.highlights) {
+          if (remoteAnnotations.highlights.any(
+            (remote) => _sameHighlight(remote, highlight),
+          )) {
+            continue;
+          }
+          remoteAnnotations = await _client.saveHighlight(
+            server,
+            libraryId: library.id,
+            workId: work.id,
+            fileId: highlight.fileId ?? highlight.mediaPosition.fileId ?? '',
+            position: highlight.mediaPosition,
+            quote: highlight.quote,
+            color: highlight.color,
+            note: highlight.note,
+          );
+        }
+        readerAnnotations = _mergeAnnotations(
+          work,
+          localAnnotations,
+          remoteAnnotations,
         );
         await _offlineStore.cacheAnnotations(
           serverId: server.id,
@@ -3669,6 +3745,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       libraryId: library.id,
       workId: work.id,
     );
+    final syncAnnotations =
+        !skipServerLookup && await AnnotationSyncSettings.enabled();
     Map<String, Object?>? portableProfile;
     if (!skipServerLookup) {
       try {
@@ -3726,7 +3804,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         initialBookmarks: annotations.bookmarks,
         initialHighlights: annotations.highlights,
         onAddBookmark: (position, label) async {
-          annotations = await _offlineStore.addMediaBookmark(
+          final local = await _offlineStore.addMediaBookmark(
             serverId: server.id,
             libraryId: library.id,
             workId: work.id,
@@ -3734,10 +3812,30 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             position: position,
             label: label,
           );
+          annotations = local;
+          if (syncAnnotations) {
+            try {
+              final remote = await _client.saveBookmark(
+                server,
+                libraryId: library.id,
+                workId: work.id,
+                fileId: track.id,
+                position: position,
+                label: label,
+              );
+              annotations = _mergeAnnotations(work, local, remote);
+              await _offlineStore.cacheAnnotations(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                annotations: annotations,
+              );
+            } catch (_) {}
+          }
           return annotations;
         },
         onAddHighlight: (position, quote, color, note) async {
-          annotations = await _offlineStore.addTextHighlight(
+          final local = await _offlineStore.addTextHighlight(
             serverId: server.id,
             libraryId: library.id,
             workId: work.id,
@@ -3747,24 +3845,84 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             color: color,
             note: note,
           );
+          annotations = local;
+          if (syncAnnotations) {
+            try {
+              final remote = await _client.saveHighlight(
+                server,
+                libraryId: library.id,
+                workId: work.id,
+                fileId: track.id,
+                position: position,
+                quote: quote,
+                color: color,
+                note: note,
+              );
+              annotations = _mergeAnnotations(work, local, remote);
+              await _offlineStore.cacheAnnotations(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                annotations: annotations,
+              );
+            } catch (_) {}
+          }
           return annotations;
         },
         onDeleteBookmark: (id) async {
-          annotations = await _offlineStore.deleteAnnotation(
+          final local = await _offlineStore.deleteAnnotation(
             serverId: server.id,
             libraryId: library.id,
             workId: work.id,
             annotationId: id,
           );
+          annotations = local;
+          if (syncAnnotations) {
+            try {
+              final remote = await _client.deleteAnnotation(
+                server,
+                libraryId: library.id,
+                workId: work.id,
+                annotationId: id,
+                highlight: false,
+              );
+              annotations = _mergeAnnotations(work, local, remote);
+              await _offlineStore.cacheAnnotations(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                annotations: annotations,
+              );
+            } catch (_) {}
+          }
           return annotations;
         },
         onDeleteHighlight: (id) async {
-          annotations = await _offlineStore.deleteAnnotation(
+          final local = await _offlineStore.deleteAnnotation(
             serverId: server.id,
             libraryId: library.id,
             workId: work.id,
             annotationId: id,
           );
+          annotations = local;
+          if (syncAnnotations) {
+            try {
+              final remote = await _client.deleteAnnotation(
+                server,
+                libraryId: library.id,
+                workId: work.id,
+                annotationId: id,
+                highlight: true,
+              );
+              annotations = _mergeAnnotations(work, local, remote);
+              await _offlineStore.cacheAnnotations(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                annotations: annotations,
+              );
+            } catch (_) {}
+          }
           return annotations;
         },
         onExportAnnotations: () => _exportRemoteAnnotations(work, annotations),

@@ -175,6 +175,49 @@ void main() {
     expect(loadedReader?.mediaPosition?.elementId, '007.webp');
     expect(loadedReader?.mediaPosition?.scrollOffset, .35);
 
+    final bookmarkAnnotations = await client.saveBookmark(
+      profile,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+      fileId: detail.tracks.single.id,
+      position: readerPosition,
+      label: 'Remote-Lesezeichen',
+    );
+    expect(bookmarkAnnotations.bookmarks.single.label, 'Remote-Lesezeichen');
+    final highlightAnnotations = await client.saveHighlight(
+      profile,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+      fileId: detail.tracks.single.id,
+      position: readerPosition,
+      quote: 'Remote-Markierung',
+      color: '#FFF176',
+    );
+    expect(highlightAnnotations.highlights.single.quote, 'Remote-Markierung');
+    final loadedAnnotations = await client.annotations(
+      profile,
+      libraries.single.id,
+      works.single.id,
+    );
+    expect(loadedAnnotations.bookmarks, hasLength(1));
+    expect(loadedAnnotations.highlights, hasLength(1));
+    final withoutBookmark = await client.deleteAnnotation(
+      profile,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+      annotationId: loadedAnnotations.bookmarks.single.id,
+      highlight: false,
+    );
+    expect(withoutBookmark.bookmarks, isEmpty);
+    final withoutHighlight = await client.deleteAnnotation(
+      profile,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+      annotationId: loadedAnnotations.highlights.single.id,
+      highlight: true,
+    );
+    expect(withoutHighlight.highlights, isEmpty);
+
     final queueSession = await client.savePlaybackSession(
       profile,
       libraryId: libraries.single.id,

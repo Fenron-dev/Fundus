@@ -1044,6 +1044,87 @@ final class FundusRemoteClient {
     return _annotationsFromJson(value, workId);
   }
 
+  Future<WorkAnnotations> saveBookmark(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    String? label,
+    String? note,
+  }) async => _saveAnnotation(
+    server,
+    path: '/v1/libraries/$libraryId/annotations/$workId/bookmarks',
+    workId: workId,
+    body: {
+      'file_id': fileId,
+      'position': position.toJson(),
+      'label': label,
+      'note': note,
+    },
+  );
+
+  Future<WorkAnnotations> saveHighlight(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    required String quote,
+    required String color,
+    String? note,
+  }) async => _saveAnnotation(
+    server,
+    path: '/v1/libraries/$libraryId/annotations/$workId/highlights',
+    workId: workId,
+    body: {
+      'file_id': fileId,
+      'position': position.toJson(),
+      'quote': quote,
+      'color': color,
+      'note': note,
+    },
+  );
+
+  Future<WorkAnnotations> _saveAnnotation(
+    FundusRemoteServer server, {
+    required String path,
+    required String workId,
+    required Map<String, Object?> body,
+  }) async {
+    final bytes = await _request(
+      server.baseUri.resolve(path),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'POST',
+      body: jsonEncode(body),
+    );
+    final value = jsonDecode(utf8.decode(bytes));
+    if (value is! Map) throw const HttpException('Ungültige Annotationen.');
+    return _annotationsFromJson(value, workId);
+  }
+
+  Future<WorkAnnotations> deleteAnnotation(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String annotationId,
+    required bool highlight,
+  }) async {
+    final kind = highlight ? 'highlights' : 'bookmarks';
+    final bytes = await _request(
+      server.baseUri.resolve(
+        '/v1/libraries/$libraryId/annotations/$workId/$kind/$annotationId',
+      ),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'DELETE',
+    );
+    final value = jsonDecode(utf8.decode(bytes));
+    if (value is! Map) throw const HttpException('Ungültige Annotationen.');
+    return _annotationsFromJson(value, workId);
+  }
+
   Future<Map<String, Object?>?> readerProfile(
     FundusRemoteServer server, {
     required String libraryId,
@@ -1092,9 +1173,71 @@ final class FundusRemoteClient {
         ),
       );
     }
+    final bookmarks = <LibraryBookmark>[];
+    for (final item
+        in (value['bookmarks'] as List? ?? const []).whereType<Map>()) {
+      final id = item['id'];
+      final position = item['position'];
+      if (id is! String || position is! Map) continue;
+      try {
+        bookmarks.add(
+          LibraryBookmark(
+            id: id,
+            workId: workId,
+            fileId: item['file_id'] is String
+                ? item['file_id'] as String
+                : null,
+            mediaPosition: MediaPosition.fromJson(
+              Map<String, Object?>.from(position),
+            ),
+            label: item['label'] is String ? item['label'] as String : null,
+            note: item['note'] is String ? item['note'] as String : null,
+            createdAt:
+                DateTime.tryParse('${item['created_at'] ?? ''}') ??
+                DateTime.fromMillisecondsSinceEpoch(0),
+          ),
+        );
+      } on Object {
+        // Ignore one malformed remote bookmark.
+      }
+    }
+    final highlights = <LibraryHighlight>[];
+    for (final item
+        in (value['highlights'] as List? ?? const []).whereType<Map>()) {
+      final id = item['id'];
+      final position = item['position'];
+      final quote = item['quote'];
+      if (id is! String || position is! Map || quote is! String) continue;
+      try {
+        highlights.add(
+          LibraryHighlight(
+            id: id,
+            workId: workId,
+            fileId: item['file_id'] is String
+                ? item['file_id'] as String
+                : null,
+            mediaPosition: MediaPosition.fromJson(
+              Map<String, Object?>.from(position),
+            ),
+            quote: quote,
+            color: item['color'] is String
+                ? item['color'] as String
+                : '#FFF176',
+            note: item['note'] is String ? item['note'] as String : null,
+            createdAt:
+                DateTime.tryParse('${item['created_at'] ?? ''}') ??
+                DateTime.fromMillisecondsSinceEpoch(0),
+          ),
+        );
+      } on Object {
+        // Ignore one malformed remote highlight.
+      }
+    }
     return WorkAnnotations(
       tags: (value['tags'] as List? ?? const []).whereType<String>().toList(),
       notes: notes,
+      bookmarks: bookmarks,
+      highlights: highlights,
     );
   }
 

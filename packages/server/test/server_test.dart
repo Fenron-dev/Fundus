@@ -360,6 +360,62 @@ void main() {
     expect((profile['profile'] as Map)['font_size'], 23.0);
   });
 
+  test('syncs semantic bookmarks and highlights', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final path = '/v1/libraries/$libraryId/annotations/${work.id}';
+    final position = {
+      'schema_version': 2,
+      'kind': 'epubCfi',
+      'numeric_value': 42.0,
+      'file_id': track.fileId,
+      'chapter_id': 'chapter-4',
+      'element_id': 'paragraph-7',
+      'scroll_offset': .25,
+      'key': 'chapter.xhtml',
+    };
+    final bookmarkResponse = await _post(
+      server,
+      '$path/bookmarks',
+      jsonEncode({
+        'file_id': track.fileId,
+        'position': position,
+        'label': 'Wichtige Stelle',
+      }),
+    );
+    expect(bookmarkResponse.statusCode, 200);
+    final highlightResponse = await _post(
+      server,
+      '$path/highlights',
+      jsonEncode({
+        'file_id': track.fileId,
+        'position': position,
+        'quote': 'Markierter Text',
+        'color': '#FFF176',
+      }),
+    );
+    expect(highlightResponse.statusCode, 200);
+
+    final loaded = await _json(await _get(server, path));
+    final bookmarks = loaded['bookmarks']! as List;
+    final highlights = loaded['highlights']! as List;
+    expect((bookmarks.single as Map)['label'], 'Wichtige Stelle');
+    expect((highlights.single as Map)['quote'], 'Markierter Text');
+
+    final bookmarkId = (bookmarks.single as Map)['id']! as String;
+    final highlightId = (highlights.single as Map)['id']! as String;
+    expect(
+      (await _delete(server, '$path/bookmarks/$bookmarkId')).statusCode,
+      200,
+    );
+    expect(
+      (await _delete(server, '$path/highlights/$highlightId')).statusCode,
+      200,
+    );
+    final deleted = await _json(await _get(server, path));
+    expect(deleted['bookmarks'], isEmpty);
+    expect(deleted['highlights'], isEmpty);
+  });
+
   test('lists and restores progress history as a new revision', () async {
     final libraryId = firstLibrary.manifest.libraryId;
     final path = '/v1/libraries/$libraryId/progress/${work.id}';
