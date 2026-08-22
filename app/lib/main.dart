@@ -14,9 +14,11 @@ import 'library/android_storage_access.dart';
 import 'library/comic_book_viewer.dart';
 import 'library/document_file_opener.dart';
 import 'library/document_preview.dart';
+import 'library/epub_reader.dart';
 import 'library/publication_reader_settings.dart';
 import 'library/reader_progress_conflict.dart';
 import 'library/recent_library_store.dart';
+import 'library/reflow_text_reader.dart';
 import 'library/security_scoped_bookmarks.dart';
 import 'library/zip_archive_browser.dart';
 import 'playback/fundus_player_controller.dart';
@@ -4341,6 +4343,29 @@ class _DetailPanelState extends State<_DetailPanel> {
         return;
       }
     }
+    if (supportsInternalEpubReader(file.absolutePath)) {
+      final work = _editedWork ?? widget.work;
+      if (work != null) {
+        await _openEpubWork(work, file, widget.library?.loadProgress(work.id));
+      } else {
+        await _openEpubPath(file.absolutePath);
+      }
+      return;
+    }
+    if (supportsInternalReflowTextReader(file.absolutePath)) {
+      final work = _editedWork ?? widget.work;
+      if (work != null) {
+        final files = widget.library?.playbackTracks(work.id) ?? [file];
+        await _openReflowWork(work, files, startFileId: file.fileId);
+      } else {
+        await showReflowTextReader(
+          context,
+          path: file.absolutePath,
+          title: file.title,
+        );
+      }
+      return;
+    }
     if (p.extension(file.absolutePath).toLowerCase() == '.zip') {
       await showZipArchiveBrowser(
         context,
@@ -4359,6 +4384,8 @@ class _DetailPanelState extends State<_DetailPanel> {
         final renderer = _publicationFormats.probe(file.absolutePath)?.renderer;
         return renderer == PublicationRendererKind.comic ||
             renderer == PublicationRendererKind.fixedDocument ||
+            supportsInternalEpubReader(file.absolutePath) ||
+            supportsInternalReflowTextReader(file.absolutePath) ||
             supportsInternalDocumentPreview(file.absolutePath);
       })
       .toList(growable: false);
@@ -4378,6 +4405,28 @@ class _DetailPanelState extends State<_DetailPanel> {
         .toList(growable: false);
     if (comics.isNotEmpty) {
       await _openComicWork(work, comics);
+      return;
+    }
+    final epubs = readable
+        .where((file) => supportsInternalEpubReader(file.absolutePath))
+        .toList(growable: false);
+    if (epubs.isNotEmpty) {
+      var progress = widget.library?.loadProgress(work.id);
+      if (widget.library != null) {
+        progress = await _resolveLocalReaderProgress(work, progress);
+        if (!mounted) return;
+      }
+      final selected =
+          epubs.where((file) => file.fileId == progress?.fileId).firstOrNull ??
+          epubs.first;
+      await _openEpubWork(work, selected, progress, resolveConflict: false);
+      return;
+    }
+    final reflow = readable
+        .where((file) => supportsInternalReflowTextReader(file.absolutePath))
+        .toList(growable: false);
+    if (work.kind == 'webnovel' && reflow.isNotEmpty) {
+      await _openReflowWork(work, reflow);
       return;
     }
     final progress = widget.library?.loadProgress(work.id);
@@ -4406,6 +4455,25 @@ class _DetailPanelState extends State<_DetailPanel> {
       );
       return;
     }
+    if (supportsInternalEpubReader(path)) {
+      await _openEpubPath(path);
+      return;
+    }
+    if (supportsInternalReflowTextReader(path)) {
+      try {
+        await showReflowTextReader(
+          context,
+          path: path,
+          title: p.basenameWithoutExtension(path),
+        );
+      } on ReflowTextReaderException catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+      return;
+    }
     if (!supportsInternalDocumentPreview(path)) {
       await _openFileWithSystemApp(path);
       return;
@@ -4421,6 +4489,178 @@ class _DetailPanelState extends State<_DetailPanel> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+
+  Future<void> _openEpubPath(String path) async {
+    try {
+      await showEpubReader(context, path: path);
+    } on EpubPackageException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+
+  Future<void> _openEpubWork(
+    LibraryWorkSummary work,
+    LibraryPlaybackTrack file,
+    LibraryPlaybackProgress? progress, {
+    bool resolveConflict = true,
+  }) async {
+    final library = widget.library;
+    var resolvedProgress = progress;
+    if (resolveConflict && library != null) {
+      resolvedProgress = await _resolveLocalReaderProgress(work, progress);
+      if (!mounted) return;
+    }
+    try {
+      await showEpubReader(
+        context,
+        path: file.absolutePath,
+        initialPosition:
+            resolvedProgress?.fileId == file.fileId &&
+                resolvedProgress?.position.kind == MediaPositionKind.epubCfi
+            ? resolvedProgress?.position
+            : null,
+        fileId: file.fileId,
+        relativePath: file.relativePath,
+        onPositionChanged: library == null || library.isReadOnly
+            ? null
+            : (position) {
+                library.saveMediaProgress(
+                  workId: work.id,
+                  fileId: file.fileId,
+                  position: position,
+                  finished: false,
+                );
+                unawaited(
+                  PublicationReaderSettings.saveDevicePosition(
+                    libraryId: library.manifest.libraryId,
+                    workId: work.id,
+                    position: position,
+                  ),
+                );
+              },
+      );
+    } on EpubPackageException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+    if (library != null) {
+      final refreshed = library
+          .listWorks(includeMissing: true)
+          .where((candidate) => candidate.id == work.id)
+          .firstOrNull;
+      if (refreshed != null) widget.onMetadataChanged?.call(refreshed);
+    }
+  }
+
+  Future<void> _openReflowWork(
+    LibraryWorkSummary work,
+    List<LibraryPlaybackTrack> files, {
+    String? startFileId,
+  }) async {
+    final library = widget.library;
+    final chapters =
+        files
+            .where(
+              (file) => supportsInternalReflowTextReader(file.absolutePath),
+            )
+            .toList(growable: false)
+          ..sort((left, right) => left.index.compareTo(right.index));
+    if (chapters.isEmpty) return;
+    var progress = library?.loadProgress(work.id);
+    if (library != null) {
+      progress = await _resolveLocalReaderProgress(work, progress);
+      if (!mounted) return;
+    }
+    var chapterIndex = chapters.indexWhere(
+      (chapter) => chapter.fileId == (startFileId ?? progress?.fileId),
+    );
+    if (chapterIndex < 0) chapterIndex = 0;
+    MediaPosition? initialPosition =
+        progress?.position.kind == MediaPositionKind.epubCfi &&
+            progress?.fileId == chapters[chapterIndex].fileId
+        ? progress?.position
+        : null;
+    while (mounted) {
+      final chapter = chapters[chapterIndex];
+      try {
+        final result = await showReflowTextReader(
+          context,
+          path: chapter.absolutePath,
+          title: chapter.title,
+          initialPosition: initialPosition,
+          fileId: chapter.fileId,
+          relativePath: chapter.relativePath,
+          chapterIndex: chapterIndex,
+          chapterCount: chapters.length,
+          chapterTitles: chapters.map((item) => item.title).toList(),
+          hasPreviousChapter: chapterIndex > 0,
+          hasNextChapter: chapterIndex + 1 < chapters.length,
+          onPositionChanged: library == null || library.isReadOnly
+              ? null
+              : (position) {
+                  library.saveMediaProgress(
+                    workId: work.id,
+                    fileId: chapter.fileId,
+                    position: position,
+                    finished:
+                        chapterIndex + 1 == chapters.length &&
+                        (position.fraction ?? 0) >= .999,
+                  );
+                  unawaited(
+                    PublicationReaderSettings.saveDevicePosition(
+                      libraryId: library.manifest.libraryId,
+                      workId: work.id,
+                      position: position,
+                    ),
+                  );
+                },
+        );
+        if (!mounted || result == null) break;
+        if (result.action == ReflowTextReaderAction.selectChapter &&
+            result.chapterIndex != null &&
+            result.chapterIndex! >= 0 &&
+            result.chapterIndex! < chapters.length) {
+          chapterIndex = result.chapterIndex!;
+          initialPosition = null;
+          continue;
+        }
+        if (result.action == ReflowTextReaderAction.nextChapter &&
+            chapterIndex + 1 < chapters.length) {
+          chapterIndex++;
+          initialPosition = null;
+          continue;
+        }
+        if (result.action == ReflowTextReaderAction.previousChapter &&
+            chapterIndex > 0) {
+          chapterIndex--;
+          initialPosition = const MediaPosition(
+            kind: MediaPositionKind.epubCfi,
+            numericValue: 1e18,
+          );
+          continue;
+        }
+        break;
+      } on ReflowTextReaderException catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+        break;
+      }
+    }
+    if (library != null) {
+      final refreshed = library
+          .listWorks(includeMissing: true)
+          .where((candidate) => candidate.id == work.id)
+          .firstOrNull;
+      if (refreshed != null) widget.onMetadataChanged?.call(refreshed);
     }
   }
 

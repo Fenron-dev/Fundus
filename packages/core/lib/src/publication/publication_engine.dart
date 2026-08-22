@@ -231,6 +231,7 @@ final class PublicationFormatRegistry {
         '.epub' => epub,
         '.pdf' => pdf,
         '.cbz' => cbz,
+        '.html' || '.htm' => webDocument,
         '.txt' || '.md' || '.markdown' => plainText,
         _ => null,
       };
@@ -296,6 +297,22 @@ final class PublicationFormatRegistry {
     capabilities: {
       MediaEngineCapability.search,
       MediaEngineCapability.layout,
+      MediaEngineCapability.continuousScroll,
+      MediaEngineCapability.textSelection,
+      MediaEngineCapability.annotations,
+      MediaEngineCapability.externalOpen,
+    },
+  );
+
+  static const webDocument = PublicationFormatDescriptor(
+    format: 'HTML',
+    renderer: PublicationRendererKind.reflow,
+    positionKind: MediaPositionKind.epubCfi,
+    capabilities: {
+      MediaEngineCapability.chapterNavigation,
+      MediaEngineCapability.search,
+      MediaEngineCapability.layout,
+      MediaEngineCapability.readingDirection,
       MediaEngineCapability.continuousScroll,
       MediaEngineCapability.textSelection,
       MediaEngineCapability.annotations,

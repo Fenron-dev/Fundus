@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:archive/archive.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
@@ -1038,6 +1039,34 @@ void main() {
     expect(library.listWorks().single.mediaProgress?.numericValue, 4);
   });
 
+  test('indexes EPUB package metadata and its embedded cover', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-epub-');
+    addTearDown(() => root.delete(recursive: true));
+    final webnovels = Directory('${root.path}/Webnovels');
+    await webnovels.create(recursive: true);
+    await File(
+      '${webnovels.path}/fallback.epub',
+    ).writeAsBytes(_epubWithMetadataAndCover());
+
+    final library = await FundusLibrary.create(root);
+    addTearDown(library.close);
+    await library.index().drain<void>();
+
+    final work = library.listWorks().single;
+    expect(work.kind, 'webnovel');
+    expect(work.title, 'Die Testnovel');
+    expect(work.author, 'Erika Beispiel');
+    expect(work.authors, ['Erika Beispiel']);
+    expect(work.language, 'de');
+    expect(work.description, 'Eine sichere Testbeschreibung.');
+    expect(work.genres, ['Fantasy']);
+    expect(work.publisher, 'Fundus Testverlag');
+    expect(work.coverPath, isNotNull);
+    expect(work.coverPath, contains('.library/covers'));
+    expect(work.coverPath, endsWith('.png'));
+    expect(await File(work.coverPath!).readAsBytes(), _tinyPng);
+  });
+
   test('stores a generated document cover inside the library', () async {
     final root = await Directory.systemTemp.createTemp('fundus-pdf-cover-');
     addTearDown(() => root.delete(recursive: true));
@@ -1101,6 +1130,69 @@ List<int> _m4bWithJpegCover() => _atom('moov', [
     ]),
   ]),
 ]);
+
+final _tinyPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+);
+
+List<int> _epubWithMetadataAndCover() {
+  final archive = Archive()
+    ..addFile(ArchiveFile.string('mimetype', 'application/epub+zip'))
+    ..addFile(
+      ArchiveFile.string('META-INF/container.xml', '''<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>'''),
+    )
+    ..addFile(
+      ArchiveFile.string(
+        'OEBPS/content.opf',
+        '''<?xml version="1.0" encoding="UTF-8"?>
+<package version="2.0" unique-identifier="book-id" xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:identifier id="book-id">urn:uuid:fundus-library-test</dc:identifier>
+    <dc:title>Die Testnovel</dc:title>
+    <dc:creator>Erika Beispiel</dc:creator>
+    <dc:language>de</dc:language>
+    <dc:subject>Fantasy</dc:subject>
+    <dc:publisher>Fundus Testverlag</dc:publisher>
+    <dc:description>Eine sichere Testbeschreibung.</dc:description>
+    <meta name="cover" content="cover"/>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="cover" href="Images/cover.png" media-type="image/png"/>
+    <item id="chapter" href="Text/chapter.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine toc="ncx"><itemref idref="chapter"/></spine>
+</package>''',
+      ),
+    )
+    ..addFile(
+      ArchiveFile.string(
+        'OEBPS/toc.ncx',
+        '''<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head><meta name="dtb:uid" content="urn:uuid:fundus-library-test"/></head>
+  <docTitle><text>Die Testnovel</text></docTitle>
+  <navMap><navPoint id="chapter" playOrder="1">
+    <navLabel><text>Kapitel Eins</text></navLabel>
+    <content src="Text/chapter.xhtml"/>
+  </navPoint></navMap>
+</ncx>''',
+      ),
+    )
+    ..addFile(
+      ArchiveFile.string(
+        'OEBPS/Text/chapter.xhtml',
+        '<html><body><p>Der erste Absatz.</p></body></html>',
+      ),
+    )
+    ..addFile(ArchiveFile('OEBPS/Images/cover.png', _tinyPng.length, _tinyPng));
+  return ZipEncoder().encode(archive);
+}
 
 List<int> _m4bWithIdentityMetadata({String title = 'Titel aus Tags'}) =>
     _atom('moov', [

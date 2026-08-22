@@ -318,7 +318,10 @@ final class FundusDatabase {
       kind: candidate.kind,
       sourcePath: candidate.directory,
       title: candidate.title,
-      metadata: const {'author': 'Unbekannt'},
+      metadata: {'author': 'Unbekannt', ...candidate.metadata},
+      source: candidate.metadata.isEmpty
+          ? WorkMetadataSource.filename
+          : WorkMetadataSource.embedded,
     );
     _database.execute('UPDATE works SET cover_file_id = NULL WHERE id = ?', [
       workId,

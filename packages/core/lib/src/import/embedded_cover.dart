@@ -672,17 +672,28 @@ final class EmbeddedCoverExtractor {
   }
 
   static EmbeddedCover? _identifyFromPayload(List<int> payload) {
-    for (var index = 0; index < payload.length - 8; index++) {
+    for (var index = 0; index <= payload.length - 3; index++) {
       final jpeg =
           payload[index] == 0xff &&
           payload[index + 1] == 0xd8 &&
           payload[index + 2] == 0xff;
       final png =
+          index <= payload.length - 4 &&
           payload[index] == 0x89 &&
           payload[index + 1] == 0x50 &&
           payload[index + 2] == 0x4e &&
           payload[index + 3] == 0x47;
-      if (jpeg || png) return _identify(payload.sublist(index));
+      final webp =
+          index <= payload.length - 12 &&
+          payload[index] == 0x52 &&
+          payload[index + 1] == 0x49 &&
+          payload[index + 2] == 0x46 &&
+          payload[index + 3] == 0x46 &&
+          payload[index + 8] == 0x57 &&
+          payload[index + 9] == 0x45 &&
+          payload[index + 10] == 0x42 &&
+          payload[index + 11] == 0x50;
+      if (jpeg || png || webp) return _identify(payload.sublist(index));
     }
     return null;
   }
@@ -704,6 +715,21 @@ final class EmbeddedCoverExtractor {
         bytes: Uint8List.fromList(bytes),
         extension: 'png',
         mimeType: 'image/png',
+      );
+    }
+    if (bytes.length >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50) {
+      return EmbeddedCover(
+        bytes: Uint8List.fromList(bytes),
+        extension: 'webp',
+        mimeType: 'image/webp',
       );
     }
     return null;

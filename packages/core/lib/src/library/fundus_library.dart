@@ -18,6 +18,7 @@ import '../model/library_saved_view.dart';
 import '../model/media_position.dart';
 import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
+import '../publication/epub_package.dart';
 import '../scan/library_scanner.dart';
 import '../search/library_work_query.dart';
 import 'work_annotations.dart';
@@ -569,9 +570,13 @@ final class FundusLibrary {
                   mediaRootNames: configuration.rootsFor('audiobook'),
                 ))
             .group(files);
-    final documentCandidates = DocumentImporter(
+    final groupedDocumentCandidates = DocumentImporter(
       mediaRoots: configuration.mediaRoots,
     ).group(files);
+    final documentCandidates = <DocumentImportCandidate>[];
+    for (final candidate in groupedDocumentCandidates) {
+      documentCandidates.add(await _withEpubMetadata(candidate));
+    }
     final candidates = <AudiobookImportCandidate>[];
     final portableIdentities = <String, _PortableWorkIdentity>{};
     for (final grouped in groupedCandidates) {
@@ -597,6 +602,8 @@ final class FundusLibrary {
       fileCount: files.length,
       workCount: candidates.length + documentCandidates.length,
     );
+    final indexedDocuments =
+        <({DocumentImportCandidate candidate, String workId})>[];
     final indexedCandidates = _database.transaction(() {
       final ids = <String, String>{};
       final indexed = <({AudiobookImportCandidate candidate, String workId})>[];
@@ -617,11 +624,17 @@ final class FundusLibrary {
         ));
       }
       for (final candidate in documentCandidates) {
-        _database.upsertDocumentCandidate(candidate, ids);
+        indexedDocuments.add((
+          candidate: candidate,
+          workId: _database.upsertDocumentCandidate(candidate, ids),
+        ));
       }
       _database.markWorksWithoutAvailableContentMissing();
       return indexed;
     });
+    for (final indexed in indexedDocuments) {
+      await _cachePublicationCover(indexed.candidate, indexed.workId);
+    }
     for (final indexed in indexedCandidates) {
       try {
         await _importLanguage(indexed.candidate, indexed.workId);
@@ -650,6 +663,79 @@ final class FundusLibrary {
       fileCount: files.length,
       workCount: candidates.length + documentCandidates.length,
     );
+  }
+
+  Future<DocumentImportCandidate> _withEpubMetadata(
+    DocumentImportCandidate candidate,
+  ) async {
+    if (candidate.kind != 'ebook' && candidate.kind != 'webnovel') {
+      return candidate;
+    }
+    final source = candidate.files
+        .where((file) => file.extension.toLowerCase() == 'epub')
+        .firstOrNull;
+    if (source == null) return candidate;
+    try {
+      final publication = await const EpubPackageAdapter().openFile(
+        source.absolutePath,
+      );
+      return candidate.copyWith(
+        title: publication.title,
+        metadata: {
+          if (publication.authors.isNotEmpty)
+            'author': publication.authors.join(', '),
+          if (publication.authors.isNotEmpty) 'authors': publication.authors,
+          if (publication.languages.isNotEmpty)
+            'language': publication.languages.first,
+          'description': ?publication.description,
+          if (publication.subjects.isNotEmpty) 'genres': publication.subjects,
+          if (publication.publishers.isNotEmpty)
+            'publisher': publication.publishers.join(', '),
+        },
+        embeddedCoverBytes: candidate.coverFile == null
+            ? publication.coverBytes
+            : null,
+        embeddedCoverMimeType: candidate.coverFile == null
+            ? publication.coverMimeType
+            : null,
+      );
+    } on FileSystemException {
+      return candidate;
+    } on EpubPackageException {
+      return candidate;
+    }
+  }
+
+  Future<void> _cachePublicationCover(
+    DocumentImportCandidate candidate,
+    String workId,
+  ) async {
+    if (candidate.coverFile != null) return;
+    final bytes = candidate.embeddedCoverBytes;
+    if (bytes == null || bytes.isEmpty) return;
+    final extension = switch (candidate.embeddedCoverMimeType?.toLowerCase()) {
+      'image/png' => 'png',
+      'image/webp' => 'webp',
+      'image/jpeg' || 'image/jpg' => 'jpg',
+      _ => null,
+    };
+    if (extension == null) return;
+    final coverDirectory = Directory(
+      p.join(root.path, metadataDirectoryName, 'covers'),
+    );
+    try {
+      await coverDirectory.create(recursive: true);
+      final filename = '$workId.$extension';
+      await File(
+        p.join(coverDirectory.path, filename),
+      ).writeAsBytes(bytes, flush: true);
+      _database.setGeneratedCoverPath(
+        workId,
+        p.posix.join(metadataDirectoryName, 'covers', filename),
+      );
+    } on FileSystemException {
+      // Metadata remains usable when an embedded cover cannot be cached.
+    }
   }
 
   Future<AudiobookImportCandidate> _withAbsMetadata(

@@ -2,7 +2,7 @@
 
 > Status: verbindliche Ergänzung zum Fundus-Konzept
 >
-> Stand: 15. August 2026
+> Stand: 22. August 2026
 > Bezug: [KONZEPT.md](KONZEPT.md),
 > [Modulare Medien-Engine und Manga-/Comic-Reader](KONZEPT_ERWEITERUNG_MEDIA_ENGINE_UND_MANGA_READER.md)
 > sowie
@@ -35,6 +35,9 @@ virtuellen Spieltisch.
 | Stirling-PDF | gekapselte PDF-Operationen, API, Pipelines, OCR, Konvertierung, Signaturprüfung und Redaktion | keine 1:1-Nachbildung von über 50 Werkzeugen in Fundus |
 | PDF Scan Explorer | Inbox für Scans, OCR-Regeln, Vorschau, Umbenennen/Verschieben, Vorschläge und Unknown-Queue | KI ist optional; keine automatische Dateioperation ohne Vorschau |
 | Grimoire | TTRPG-Systeme, Kategorien, Karten, Tokens, Audio, OCR-Volltextsuche, Kampagnenressourcen, Metadaten-Diff und kuratierte Vokabulare | kein vollständiger Kampagnenplaner, Charaktermanager oder VTT im Kernprodukt |
+| [flutter_epub_viewer](https://pub.dev/packages/flutter_epub_viewer) | EPUB.js-basierte Darstellung, CFI-Resume, Suche, Annotationen, Textauswahl, Kapitel und ein Controller-Vertrag für Navigation und Laufzeiteinstellungen | keine pauschale Übernahme der WebView-, Cleartext- oder Netzwerkfreigaben; bekannte Scrolled-Flow-/Relocation-Grenzen werden nicht in das Fundus-Positionsmodell übernommen |
+| [cosmos_epub](https://github.com/Mamasodikov/cosmos_epub) | mehrstufiges TOC-/Spine-Fallback, verschachtelte Kapitel, RTL, eingebettete Bilder, native Textdarstellung, Themes und lokale Quellen | Kapitel-/Seitenindex allein ist nicht layoutstabil; globale Paketspeicher und paketinterne Fortschrittsdatenbanken werden nicht zur Fundus-Wahrheitsquelle |
+| [epubx_kuebiko](https://pub.dev/packages/epubx_kuebiko) | gewarteter, mit `archive` 4 kompatibler Fork für das plattformunabhängige Lesen von EPUB-Paket, Manifest, Spine, Navigation, Metadaten und Ressourcen | Parser bleibt hinter dem Fundus-Adapter austauschbar; Archivgrenzen, Pfadauflösung, aktive Inhalte und Speicherverbrauch werden zusätzlich durch Fundus kontrolliert |
 
 ## 3. Publication Engine als Engine-Familie
 
@@ -60,6 +63,55 @@ Gemeinsame Komponenten:
 - Geräte- und Werkprofile
 
 ## 4. E-Book- und Webnovel-Reader
+
+### 4.0 EPUB als Primärformat und Adapterarchitektur
+
+EPUB ist das Primärformat für E-Books, Light Novels und viele abgeschlossene
+oder exportierte Webnovels. HTML, TXT und Markdown sind ergänzende Eingaben für
+lose Kapitel, Eigenimporte und laufende Download-Quellen; sie bilden nicht den
+Hauptumfang des Webnovel-Supports.
+
+Der Reflow Reader besteht deshalb aus getrennten Schichten:
+
+1. `PublicationSource` liefert lokale, Remote- oder offline gespeicherte Bytes.
+2. `PublicationPackageAdapter` liest Container, Metadaten, Manifest, Spine,
+   Navigation, Ressourcen, Sprache und Schreibrichtung. Ein EPUB-Adapter kann
+   dabei eine Bibliothek wie `epubx_kuebiko` verwenden, bleibt aber durch einen
+   Fundus-Vertrag austauschbar.
+3. `PublicationDocument` normalisiert Kapitel und Ressourcen zu stabilen IDs,
+   ohne die originale EPUB-Datei umzuschreiben.
+4. `ReflowRendererAdapter` projiziert ein Kapitel paginiert oder kontinuierlich.
+   Eine native Flutter- oder gekapselte EPUB.js/WebView-Implementierung bleibt
+   austauschbar und darf das portable Datenmodell nicht bestimmen.
+5. `PublicationController` stellt Navigation, Suche, Textauswahl, Annotation,
+   Rücksprünge und Laufzeiteinstellungen unabhängig vom Renderer bereit.
+6. Die gemeinsame Media Experience Shell verwaltet Profile, Konflikte,
+   Vollbild, Gerätewechsel und lokale/Remote-/Offline-Parität.
+
+Fundus speichert niemals nur eine virtuelle Seite. Die kanonische Position
+enthält mindestens Werk-/Datei-ID, Spine-/Kapitel-ID, EPUB-CFI oder stabilen
+Textanker, kurzen Textkontext und einen prozentualen Fallback. Kapitel- und
+Seitenindex dürfen zusätzlich für die Anzeige und eine letzte Notfallauflösung
+gespeichert werden. Damit bleibt Resume nach Änderung von Schrift, Breite,
+Spaltenzahl, Gerät oder Renderer möglichst am gleichen Satz.
+
+Für fehlerhafte EPUBs gilt eine nachvollziehbare Fallback-Reihenfolge:
+
+1. EPUB-3-Navigation (`nav.xhtml`)
+2. EPUB-2-NCX
+3. vorhandene normalisierte Kapitelstruktur des Parser-Adapters
+4. lineare Spine-Reihenfolge
+5. Diagnosezustand mit einzeln sichtbaren, aber nicht still neu sortierten
+   Inhaltsdateien
+
+Ein EPUB wird ausschließlich aus lokalen beziehungsweise bereits autorisierten
+Bytes geöffnet. Externe Skripte, Remote-Fonts, Tracker, Formulare und
+unaufgeforderte Netzwerkzugriffe bleiben blockiert. Ressourcenpfade werden
+normalisiert und dürfen den Container nicht verlassen; Anzahl, Einzelgröße,
+Gesamtgröße und Kompressionsverhältnis des Archivs besitzen feste Grenzen.
+Eine WebView-Implementierung läuft mit deaktiviertem Netzwerk und Navigation
+außerhalb des internen Buchursprungs. Fundus aktiviert dafür insbesondere keine
+globale Android-Cleartext-Freigabe.
 
 ### 4.1 Darstellung
 

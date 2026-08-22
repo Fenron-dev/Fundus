@@ -12,6 +12,10 @@ void main() {
         PublicationRendererKind.reflow,
       );
       expect(
+        registry.probe('/library/Webnovels/Chapter 1.HTML')?.renderer,
+        PublicationRendererKind.reflow,
+      );
+      expect(
         registry.probe('/library/Manga/Chapter 1.cbz')?.renderer,
         PublicationRendererKind.comic,
       );

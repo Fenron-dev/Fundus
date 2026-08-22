@@ -60,6 +60,47 @@ void main() {
     expect(await const EmbeddedCoverExtractor().extractLanguage(file), 'de-DE');
   });
 
+  test('extracts WebP artwork from an M4B covr atom', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'fundus-webp-cover-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final webp = Uint8List.fromList([
+      ...'RIFF'.codeUnits,
+      4,
+      0,
+      0,
+      0,
+      ...'WEBP'.codeUnits,
+      ...'VP8 '.codeUnits,
+    ]);
+    final file = File('${directory.path}/book.m4b');
+    await file.writeAsBytes(
+      _atom('moov', [
+        ..._atom('udta', [
+          ..._atom('meta', [
+            0,
+            0,
+            0,
+            0,
+            ..._atom('ilst', [
+              ..._atom('covr', [
+                ..._atom('data', [0, 0, 0, 14, 0, 0, 0, 0, ...webp]),
+              ]),
+            ]),
+          ]),
+        ]),
+      ]),
+    );
+
+    final cover = await const EmbeddedCoverExtractor().extract(file);
+
+    expect(cover, isNotNull);
+    expect(cover!.extension, 'webp');
+    expect(cover.mimeType, 'image/webp');
+    expect(cover.bytes, webp);
+  });
+
   test('extracts UTF-16 language from an MP3 TLAN frame', () async {
     final directory = await Directory.systemTemp.createTemp('fundus-language-');
     addTearDown(() => directory.delete(recursive: true));

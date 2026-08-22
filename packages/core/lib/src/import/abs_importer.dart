@@ -67,7 +67,11 @@ final class AbsImporter {
     'cover.jpg',
     'cover.jpeg',
     'cover.png',
+    'cover.webp',
     'folder.jpg',
+    'folder.jpeg',
+    'folder.png',
+    'folder.webp',
   };
 
   AbsImporter({this.mediaRootNames = const ['Audiobooks', 'Hörbücher']});
