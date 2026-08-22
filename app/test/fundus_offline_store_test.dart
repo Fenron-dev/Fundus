@@ -8,6 +8,66 @@ import 'package:fundus_core/fundus_core.dart';
 
 void main() {
   test(
+    'remote EPUB annotations remain available in the offline store',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'fundus-offline-annotations-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final store = FundusOfflineStore(root: root);
+      const position = MediaPosition(
+        kind: MediaPositionKind.epubCfi,
+        numericValue: 4,
+        total: 12,
+        fileId: 'novel.epub',
+        chapterId: 'chapter-4',
+        elementId: 'paragraph-7',
+        scrollOffset: .42,
+      );
+
+      var annotations = await store.addMediaBookmark(
+        serverId: 'server',
+        libraryId: 'library',
+        workId: 'novel',
+        fileId: 'novel.epub',
+        position: position,
+        label: 'Wichtige Stelle',
+      );
+      annotations = await store.addTextHighlight(
+        serverId: 'server',
+        libraryId: 'library',
+        workId: 'novel',
+        fileId: 'novel.epub',
+        position: position,
+        quote: 'Ein markierter Satz.',
+        color: '#90CAF9',
+        note: 'Später prüfen',
+      );
+
+      expect(annotations.bookmarks.single.label, 'Wichtige Stelle');
+      expect(annotations.highlights.single.quote, 'Ein markierter Satz.');
+      final reopened = FundusOfflineStore(root: root);
+      final restored = await reopened.loadAnnotations(
+        serverId: 'server',
+        libraryId: 'library',
+        workId: 'novel',
+      );
+      expect(restored.bookmarks.single.mediaPosition.elementId, 'paragraph-7');
+      expect(restored.highlights.single.mediaPosition.scrollOffset, .42);
+      expect(restored.highlights.single.note, 'Später prüfen');
+
+      final cleaned = await reopened.deleteAnnotation(
+        serverId: 'server',
+        libraryId: 'library',
+        workId: 'novel',
+        annotationId: restored.bookmarks.single.id,
+      );
+      expect(cleaned.bookmarks, isEmpty);
+      expect(cleaned.highlights, hasLength(1));
+    },
+  );
+
+  test(
     'portable store includes fallback downloads and keeps incomplete works',
     () async {
       final temporary = await Directory.systemTemp.createTemp(

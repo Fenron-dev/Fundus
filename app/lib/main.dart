@@ -1530,66 +1530,26 @@ class _LibraryShellState extends State<LibraryShell> {
 
   Widget _mobile(BuildContext context) {
     final pages = [
+      _mobileDashboard(context),
       _library(context, detailAsDialog: true),
       _library(context, detailAsDialog: true, showSearch: true),
-      _playlists(context),
-      widget.offlineWorks.isEmpty
-          ? const Center(child: Text('Noch keine Offline-Downloads.'))
-          : ListView(
-              padding: const EdgeInsets.all(12),
-              children: [
-                for (final offline in widget.offlineWorks)
-                  Card(
-                    child: ListTile(
-                      leading: offline.coverPath == null
-                          ? const Icon(Icons.download_done)
-                          : ClipRRect(
-                              borderRadius: BorderRadius.circular(4),
-                              child: Image.file(
-                                File(offline.coverPath!),
-                                width: 42,
-                                height: 52,
-                                fit: BoxFit.cover,
-                              ),
-                            ),
-                      title: Text(offline.title),
-                      subtitle: Text(
-                        '${offline.sourceServerName ?? offline.serverId} · '
-                        '${offline.sourceLibraryName ?? offline.libraryId}',
-                      ),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => widget.onOpenOfflineWork?.call(offline),
-                    ),
-                  ),
-              ],
-            ),
       ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const Text('Medienbereiche', style: TextStyle(fontSize: 18)),
+          const Text('Fundus', style: TextStyle(fontSize: 18)),
           const SizedBox(height: 8),
           ListTile(
-            leading: const Icon(Icons.headphones_outlined),
-            title: const Text('Hörbücher & Hörspiele'),
+            leading: const Icon(Icons.queue_music_outlined),
+            title: const Text('Playlists'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => setState(() {
-              _section = _LibrarySection.library;
-              _mobileDestination = 0;
-            }),
+            onTap: () => _openMobileSubpage('Playlists', _playlists(context)),
           ),
-          for (final section in _LibrarySection.values.where(
-            (section) => section.isDocumentSection,
-          ))
-            ListTile(
-              leading: Icon(section.icon),
-              title: Text(section.label),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => setState(() {
-                _section = section;
-                _grouping = _LibraryGrouping.books;
-                _mobileDestination = 0;
-              }),
-            ),
+          ListTile(
+            leading: const Icon(Icons.download_outlined),
+            title: const Text('Downloads'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _openMobileSubpage('Downloads', _mobileDownloads()),
+          ),
           const Divider(height: 32),
           FilledButton.icon(
             onPressed: widget.peerServer == null
@@ -1607,11 +1567,11 @@ class _LibraryShellState extends State<LibraryShell> {
           _playerExpanded
               ? widget.player?.work?.title ?? 'Player'
               : _mobileDestination == 2
-              ? 'Playlists'
+              ? 'Suche'
               : _mobileDestination == 3
-              ? 'Downloads'
-              : _mobileDestination == 4
               ? 'Mehr'
+              : _mobileDestination == 0
+              ? 'Übersicht'
               : _browserTitle,
         ),
         actions: [
@@ -1662,20 +1622,17 @@ class _LibraryShellState extends State<LibraryShell> {
                       setState(() => _mobileDestination = value),
                   destinations: const [
                     NavigationDestination(
+                      icon: Icon(Icons.home_outlined),
+                      selectedIcon: Icon(Icons.home),
+                      label: 'Home',
+                    ),
+                    NavigationDestination(
                       icon: Icon(Icons.library_books_outlined),
                       label: 'Bibliothek',
                     ),
                     NavigationDestination(
                       icon: Icon(Icons.search),
                       label: 'Suche',
-                    ),
-                    NavigationDestination(
-                      icon: Icon(Icons.queue_music_outlined),
-                      label: 'Playlists',
-                    ),
-                    NavigationDestination(
-                      icon: Icon(Icons.download_outlined),
-                      label: 'Downloads',
                     ),
                     NavigationDestination(
                       icon: Icon(Icons.more_horiz),
@@ -1687,6 +1644,150 @@ class _LibraryShellState extends State<LibraryShell> {
             ),
     );
   }
+
+  Widget _mobileDashboard(BuildContext context) {
+    final available = widget.works.where((work) => work.available).toList();
+    final continuing = available
+        .where(
+          (work) =>
+              !work.progressFinished &&
+              (work.mediaProgress != null ||
+                  (work.progressPosition ?? Duration.zero) > Duration.zero),
+        )
+        .take(8)
+        .toList();
+    final recent = available.toList()
+      ..sort((left, right) => right.addedAt.compareTo(left.addedAt));
+    final sections = <_LibrarySection>[
+      _LibrarySection.library,
+      ..._LibrarySection.values.where((section) => section.isDocumentSection),
+    ];
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+      children: [
+        Text(
+          'Willkommen zurück',
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        if (continuing.isNotEmpty) ...[
+          const SizedBox(height: 22),
+          Text('Fortsetzen', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 210,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: continuing.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 12),
+              itemBuilder: (context, index) => _MobileDashboardCard(
+                work: continuing[index],
+                width: 142,
+                onTap: () => _openWorkDetails(continuing[index]),
+              ),
+            ),
+          ),
+        ],
+        const SizedBox(height: 22),
+        Text(
+          'Zuletzt hinzugefügt',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 190,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: recent.take(10).length,
+            separatorBuilder: (_, _) => const SizedBox(width: 10),
+            itemBuilder: (context, index) => _MobileDashboardCard(
+              work: recent[index],
+              width: 118,
+              onTap: () => _openWorkDetails(recent[index]),
+            ),
+          ),
+        ),
+        const SizedBox(height: 22),
+        Text('Medientypen', style: Theme.of(context).textTheme.titleLarge),
+        const SizedBox(height: 10),
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          childAspectRatio: 1.65,
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          children: [
+            for (final section in sections)
+              Card(
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => setState(() {
+                    _section = section;
+                    if (section.isDocumentSection) {
+                      _grouping = _LibraryGrouping.books;
+                    }
+                    _mobileDestination = 1;
+                  }),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        Icon(section.icon, size: 30),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            section.label,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _mobileDownloads() => widget.offlineWorks.isEmpty
+      ? const Center(child: Text('Noch keine Offline-Downloads.'))
+      : ListView(
+          padding: const EdgeInsets.all(12),
+          children: [
+            for (final offline in widget.offlineWorks)
+              Card(
+                child: ListTile(
+                  leading: offline.coverPath == null
+                      ? const Icon(Icons.download_done)
+                      : Image.file(
+                          File(offline.coverPath!),
+                          width: 42,
+                          height: 52,
+                          fit: BoxFit.cover,
+                        ),
+                  title: Text(offline.title),
+                  subtitle: Text(
+                    '${offline.sourceServerName ?? offline.serverId} · '
+                    '${offline.sourceLibraryName ?? offline.libraryId}',
+                  ),
+                  onTap: () => widget.onOpenOfflineWork?.call(offline),
+                ),
+              ),
+          ],
+        );
+
+  Future<void> _openMobileSubpage(String title, Widget child) =>
+      Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (context) => Scaffold(
+            appBar: AppBar(title: Text(title)),
+            body: SafeArea(child: child),
+          ),
+        ),
+      );
 
   static const _playlistMediaTypes = {
     'audiobook': 'Hörbücher & Hörspiele',
@@ -2137,113 +2238,117 @@ class _LibraryShellState extends State<LibraryShell> {
     ],
   );
 
-  Widget _libraryControls() => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      _AdvancedFilterButton(
-        query: _query,
-        works: _allWorks,
-        onChanged: (query) => setState(() {
-          _query = query;
-          _selectedIndex = 0;
-        }),
-      ),
-      const SizedBox(width: 4),
-      MenuAnchor(
-        builder: (context, controller, child) => IconButton(
-          onPressed: controller.isOpen ? controller.close : controller.open,
-          tooltip: 'Gespeicherte Ansichten',
-          icon: const Icon(Icons.bookmarks_outlined),
+  Widget _libraryControls() {
+    final mobile = MediaQuery.sizeOf(context).width < 760;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _AdvancedFilterButton(
+          query: _query,
+          works: _allWorks,
+          onChanged: (query) => setState(() {
+            _query = query;
+            _selectedIndex = 0;
+          }),
         ),
-        menuChildren: [
-          MenuItemButton(
-            onPressed: widget.library?.isReadOnly == false
-                ? _saveCurrentView
-                : null,
-            leadingIcon: const Icon(Icons.bookmark_add_outlined),
-            child: const Text('Aktuelle Ansicht speichern'),
+        const SizedBox(width: 4),
+        MenuAnchor(
+          builder: (context, controller, child) => IconButton(
+            onPressed: controller.isOpen ? controller.close : controller.open,
+            tooltip: 'Gespeicherte Ansichten',
+            icon: const Icon(Icons.bookmarks_outlined),
           ),
-          if (_savedViews.isNotEmpty) const Divider(),
-          for (final view in _savedViews)
+          menuChildren: [
             MenuItemButton(
-              onPressed: () => _applySavedView(view),
-              leadingIcon: const Icon(Icons.bookmark_outline),
-              child: Text(view.name),
+              onPressed: widget.library?.isReadOnly == false
+                  ? _saveCurrentView
+                  : null,
+              leadingIcon: const Icon(Icons.bookmark_add_outlined),
+              child: const Text('Aktuelle Ansicht speichern'),
             ),
-          if (_savedViews.isNotEmpty)
-            MenuItemButton(
-              onPressed: _manageSavedViews,
-              leadingIcon: const Icon(Icons.edit_outlined),
-              child: const Text('Ansichten verwalten'),
+            if (_savedViews.isNotEmpty) const Divider(),
+            for (final view in _savedViews)
+              MenuItemButton(
+                onPressed: () => _applySavedView(view),
+                leadingIcon: const Icon(Icons.bookmark_outline),
+                child: Text(view.name),
+              ),
+            if (_savedViews.isNotEmpty)
+              MenuItemButton(
+                onPressed: _manageSavedViews,
+                leadingIcon: const Icon(Icons.edit_outlined),
+                child: const Text('Ansichten verwalten'),
+              ),
+          ],
+        ),
+        if (_section == _LibrarySection.library)
+          PopupMenuButton<_LibraryGrouping>(
+            tooltip: 'Gliederung wählen',
+            initialValue: _grouping,
+            onSelected: _setGrouping,
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: _LibraryGrouping.books,
+                child: Text('Nach Büchern'),
+              ),
+              PopupMenuItem(
+                value: _LibraryGrouping.authors,
+                child: Text('Nach Autoren'),
+              ),
+              PopupMenuItem(
+                value: _LibraryGrouping.series,
+                child: Text('Nach Serien'),
+              ),
+              PopupMenuItem(
+                value: _LibraryGrouping.narrators,
+                child: Text('Nach Sprechern'),
+              ),
+            ],
+            child: Chip(
+              avatar: const Icon(Icons.account_tree_outlined, size: 18),
+              label: Text(_groupingLabel),
             ),
-        ],
-      ),
-      if (_section == _LibrarySection.library)
-        PopupMenuButton<_LibraryGrouping>(
-          tooltip: 'Gliederung wählen',
-          initialValue: _grouping,
-          onSelected: _setGrouping,
-          itemBuilder: (context) => const [
-            PopupMenuItem(
-              value: _LibraryGrouping.books,
-              child: Text('Nach Büchern'),
+          ),
+        if (_section == _LibrarySection.library) const SizedBox(width: 8),
+        SegmentedButton<_LibraryLayout>(
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(
+              value: _LibraryLayout.grid,
+              icon: Icon(Icons.grid_view),
+              tooltip: 'Kacheln',
             ),
-            PopupMenuItem(
-              value: _LibraryGrouping.authors,
-              child: Text('Nach Autoren'),
-            ),
-            PopupMenuItem(
-              value: _LibraryGrouping.series,
-              child: Text('Nach Serien'),
-            ),
-            PopupMenuItem(
-              value: _LibraryGrouping.narrators,
-              child: Text('Nach Sprechern'),
+            ButtonSegment(
+              value: _LibraryLayout.table,
+              icon: Icon(Icons.table_rows_outlined),
+              tooltip: 'Tabelle',
             ),
           ],
-          child: Chip(
-            avatar: const Icon(Icons.account_tree_outlined, size: 18),
-            label: Text(_groupingLabel),
-          ),
+          selected: {_layout},
+          onSelectionChanged: (value) => setState(() => _layout = value.single),
         ),
-      if (_section == _LibrarySection.library) const SizedBox(width: 8),
-      SegmentedButton<_LibraryLayout>(
-        showSelectedIcon: false,
-        segments: const [
-          ButtonSegment(
-            value: _LibraryLayout.grid,
-            icon: Icon(Icons.grid_view),
-            tooltip: 'Kacheln',
-          ),
-          ButtonSegment(
-            value: _LibraryLayout.table,
-            icon: Icon(Icons.table_rows_outlined),
-            tooltip: 'Tabelle',
-          ),
-        ],
-        selected: {_layout},
-        onSelectionChanged: (value) => setState(() => _layout = value.single),
-      ),
-      const SizedBox(width: 8),
-      MenuAnchor(
-        builder: (context, controller, child) => OutlinedButton.icon(
-          onPressed: controller.isOpen ? controller.close : controller.open,
-          icon: const Icon(Icons.sort, size: 18),
-          label: Text(_sortLabel(_query.sort)),
-        ),
-        menuChildren: [
-          for (final sort in LibraryWorkSort.values)
-            MenuItemButton(
-              onPressed: () => _setSort(sort),
-              leadingIcon: _query.sort == sort
-                  ? const Icon(Icons.check)
-                  : const SizedBox(width: 24),
-              child: Text(_sortLabel(sort)),
+        if (!mobile) const SizedBox(width: 8),
+        if (!mobile)
+          MenuAnchor(
+            builder: (context, controller, child) => OutlinedButton.icon(
+              onPressed: controller.isOpen ? controller.close : controller.open,
+              icon: const Icon(Icons.sort, size: 18),
+              label: Text(_sortLabel(_query.sort)),
             ),
-        ],
-      ),
-    ],
-  );
+            menuChildren: [
+              for (final sort in LibraryWorkSort.values)
+                MenuItemButton(
+                  onPressed: () => _setSort(sort),
+                  leadingIcon: _query.sort == sort
+                      ? const Icon(Icons.check)
+                      : const SizedBox(width: 24),
+                  child: Text(_sortLabel(sort)),
+                ),
+            ],
+          ),
+      ],
+    );
+  }
 
   String get _browserTitle {
     if (_selectedSeries != null) {
@@ -3007,6 +3112,7 @@ class _AdvancedFilterButton extends StatelessWidget {
     var tags = {...query.tags};
     var progress = query.progress;
     var offlineOnly = query.offlineOnly;
+    var sort = query.sort;
     final result = await showDialog<LibraryWorkQuery>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -3071,6 +3177,22 @@ class _AdvancedFilterButton extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    DropdownButtonFormField<LibraryWorkSort>(
+                      initialValue: sort,
+                      decoration: const InputDecoration(
+                        labelText: 'Sortierung',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        for (final value in LibraryWorkSort.values)
+                          DropdownMenuItem(
+                            value: value,
+                            child: Text(_LibraryShellState._sortLabel(value)),
+                          ),
+                      ],
+                      onChanged: (value) => setState(() => sort = value!),
+                    ),
+                    const SizedBox(height: 12),
                     DropdownButtonFormField<LibraryProgressFilter>(
                       initialValue: progress,
                       decoration: const InputDecoration(
@@ -3126,6 +3248,7 @@ class _AdvancedFilterButton extends StatelessWidget {
                 onPressed: () => Navigator.pop(
                   context,
                   query.copyWith(
+                    sort: LibraryWorkSort.relevance,
                     kinds: {},
                     progress: LibraryProgressFilter.any,
                     offlineOnly: false,
@@ -3146,6 +3269,7 @@ class _AdvancedFilterButton extends StatelessWidget {
                 onPressed: () => Navigator.pop(
                   context,
                   query.copyWith(
+                    sort: sort,
                     kinds: kinds,
                     progress: progress,
                     offlineOnly: offlineOnly,
@@ -3653,6 +3777,72 @@ class _DocumentHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final mobile = MediaQuery.sizeOf(context).width < 600;
+    final cover = GestureDetector(
+      onTap: () => showDialog<void>(
+        context: context,
+        builder: (dialogContext) => Dialog(
+          clipBehavior: Clip.antiAlias,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520, maxHeight: 720),
+            child: AspectRatio(
+              aspectRatio: 2 / 3,
+              child: _WorkCover(work: work, iconSize: 84),
+            ),
+          ),
+        ),
+      ),
+      child: SizedBox(
+        width: mobile ? 156 : 112,
+        height: mobile ? 220 : 112,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: _WorkCover(work: work, iconSize: 58),
+        ),
+      ),
+    );
+    final details = Column(
+      crossAxisAlignment: mobile
+          ? CrossAxisAlignment.center
+          : CrossAxisAlignment.start,
+      children: [
+        Text(
+          work.title,
+          textAlign: mobile ? TextAlign.center : TextAlign.start,
+          style: Theme.of(context).textTheme.headlineMedium,
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          alignment: mobile ? WrapAlignment.center : WrapAlignment.start,
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            Chip(
+              avatar: Icon(_workKindIcon(work.kind), size: 18),
+              label: Text(_workKindLabel(work.kind)),
+            ),
+            Chip(label: Text('${work.fileCount} Datei(en)')),
+            if (!work.available) const Chip(label: Text('Dateien fehlen')),
+          ],
+        ),
+        if (directoryPath case final path?) ...[
+          const SizedBox(height: 18),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.folder_outlined, size: 18),
+              const SizedBox(width: 7),
+              Expanded(
+                child: SelectableText(
+                  path,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
@@ -3668,60 +3858,16 @@ class _DocumentHero extends StatelessWidget {
       ),
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox.square(
-              dimension: 112,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: _WorkCover(work: work, iconSize: 58),
-              ),
-            ),
-            const SizedBox(width: 24),
-            Expanded(
-              child: Column(
+        child: mobile
+            ? Column(children: [cover, const SizedBox(height: 18), details])
+            : Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    work.title,
-                    style: Theme.of(context).textTheme.headlineMedium,
-                  ),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      Chip(
-                        avatar: Icon(_workKindIcon(work.kind), size: 18),
-                        label: Text(_workKindLabel(work.kind)),
-                      ),
-                      Chip(label: Text('${work.fileCount} Datei(en)')),
-                      if (!work.available)
-                        const Chip(label: Text('Dateien fehlen')),
-                    ],
-                  ),
-                  if (directoryPath case final path?) ...[
-                    const SizedBox(height: 18),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Icon(Icons.folder_outlined, size: 18),
-                        const SizedBox(width: 7),
-                        Expanded(
-                          child: SelectableText(
-                            path,
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                  cover,
+                  const SizedBox(width: 24),
+                  Expanded(child: details),
                 ],
               ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -3984,6 +4130,8 @@ class _DetailPanelState extends State<_DetailPanel> {
   bool _workIsPlaying = false;
   bool _workIsQueued = false;
   LibraryWorkSummary? _editedWork;
+  int _mobileDetailTab = 0;
+  int _mobileNotesTab = 0;
 
   @override
   void initState() {
@@ -4075,6 +4223,14 @@ class _DetailPanelState extends State<_DetailPanel> {
     final workFiles = selectedWork.available
         ? widget.library?.playbackTracks(selectedWork.id)
         : null;
+    if (selectedWork.kind != 'audiobook' &&
+        MediaQuery.sizeOf(context).width < 760) {
+      return _buildMobilePublicationDetail(
+        selectedWork,
+        directoryPath,
+        workFiles ?? const [],
+      );
+    }
     return ListView(
       key: const ValueKey('detail-panel-scroll'),
       padding: const EdgeInsets.all(20),
@@ -4321,6 +4477,207 @@ class _DetailPanelState extends State<_DetailPanel> {
                 : const Icon(Icons.save_outlined),
             label: const Text('Notiz speichern'),
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMobilePublicationDetail(
+    LibraryWorkSummary work,
+    String? directoryPath,
+    List<LibraryPlaybackTrack> files,
+  ) {
+    final readable = _readableDocumentFiles(files);
+    final progress = widget.library?.loadProgress(work.id);
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+          child: Column(
+            children: [
+              _DocumentHero(work: work, directoryPath: directoryPath),
+              if (readable.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () => _openDocumentWork(work, files),
+                    icon: const Icon(Icons.menu_book_outlined),
+                    label: Text(progress == null ? 'Lesen' : 'Fortsetzen'),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              SegmentedButton<int>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(value: 0, label: Text('Info')),
+                  ButtonSegment(value: 1, label: Text('Kapitel')),
+                  ButtonSegment(value: 2, label: Text('Notizen')),
+                ],
+                selected: {_mobileDetailTab},
+                onSelectionChanged: (value) =>
+                    setState(() => _mobileDetailTab = value.single),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: switch (_mobileDetailTab) {
+            0 => ListView(
+              padding: const EdgeInsets.all(18),
+              children: [
+                if (work.description case final description?) ...[
+                  Text(
+                    'Zusammenfassung',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  SelectableText(description),
+                  const SizedBox(height: 20),
+                ],
+                Text('Details', style: Theme.of(context).textTheme.titleMedium),
+                if ((work.authors.isEmpty ? [work.author] : work.authors)
+                    .isNotEmpty)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.person_outline),
+                    title: const Text('Autor'),
+                    subtitle: Text(
+                      (work.authors.isEmpty ? [work.author] : work.authors)
+                          .join(', '),
+                    ),
+                  ),
+                if (work.series case final series?)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.library_books_outlined),
+                    title: const Text('Serie'),
+                    subtitle: Text(series),
+                  ),
+                if (work.language case final language?)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.language),
+                    title: const Text('Sprache'),
+                    subtitle: Text(language),
+                  ),
+                if (_annotations.tags.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final tag in _annotations.tags)
+                        Chip(label: Text('#$tag')),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+            1 =>
+              readable.isEmpty
+                  ? const Center(
+                      child: Text('Keine lesbaren Dateien gefunden.'),
+                    )
+                  : _DocumentFilesPanel(
+                      files: readable,
+                      progress: progress,
+                      onOpen: _openDocument,
+                    ),
+            _ => Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: SegmentedButton<int>(
+                    showSelectedIcon: false,
+                    segments: const [
+                      ButtonSegment(value: 0, label: Text('Notizen')),
+                      ButtonSegment(
+                        value: 1,
+                        label: Text('Lesezeichen & Highlights'),
+                      ),
+                    ],
+                    selected: {_mobileNotesTab},
+                    onSelectionChanged: (value) =>
+                        setState(() => _mobileNotesTab = value.single),
+                  ),
+                ),
+                Expanded(
+                  child: _mobileNotesTab == 0
+                      ? ListView(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                          children: [
+                            for (final note in _annotations.notes)
+                              Card(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: SelectableText(note.markdown),
+                                ),
+                              ),
+                            TextField(
+                              controller: _noteController,
+                              minLines: 3,
+                              maxLines: 8,
+                              decoration: const InputDecoration(
+                                hintText: 'Notiz schreiben …',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            FilledButton.icon(
+                              onPressed: widget.library == null || _saving
+                                  ? null
+                                  : _saveNote,
+                              icon: const Icon(Icons.save_outlined),
+                              label: const Text('Notiz speichern'),
+                            ),
+                          ],
+                        )
+                      : ListView(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          children: [
+                            if (_annotations.bookmarks.isEmpty &&
+                                _annotations.highlights.isEmpty)
+                              const Padding(
+                                padding: EdgeInsets.all(24),
+                                child: Text(
+                                  'Noch keine Lesezeichen oder Highlights vorhanden.',
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            for (final bookmark in _annotations.bookmarks)
+                              ListTile(
+                                leading: const Icon(Icons.bookmark_outline),
+                                title: Text(
+                                  bookmark.label ?? bookmark.displayPosition,
+                                ),
+                                subtitle: Text(
+                                  bookmark.mediaPosition.chapterId ??
+                                      'Textstelle',
+                                ),
+                              ),
+                            for (final highlight in _annotations.highlights)
+                              ListTile(
+                                leading: const Icon(
+                                  Icons.border_color_outlined,
+                                ),
+                                title: Text(
+                                  highlight.quote,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                subtitle: highlight.note == null
+                                    ? null
+                                    : Text(highlight.note!),
+                              ),
+                          ],
+                        ),
+                ),
+              ],
+            ),
+          },
         ),
       ],
     );
@@ -5757,6 +6114,53 @@ class _WorkMetadataDialogState extends State<_WorkMetadataDialog> {
 }
 
 enum _BookmarkJumpAction { jumpDirectly, rememberAndJump }
+
+class _MobileDashboardCard extends StatelessWidget {
+  const _MobileDashboardCard({
+    required this.work,
+    required this.width,
+    required this.onTap,
+  });
+
+  final LibraryWorkSummary work;
+  final double width;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: width,
+    child: Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: _WorkCover(work: work, iconSize: 36)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 7, 8, 3),
+              child: Text(
+                work.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 7),
+              child: Text(
+                _workKindLabel(work.kind),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
 
 class _WorkCover extends StatelessWidget {
   const _WorkCover({required this.work, required this.iconSize, this.player});

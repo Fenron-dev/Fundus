@@ -296,6 +296,8 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
   late List<LibraryBookmark> _bookmarks;
   late List<LibraryHighlight> _highlights;
   String? _selectedText;
+  bool _chromeVisible = true;
+  Offset? _readerTapStart;
 
   @override
   void initState() {
@@ -423,6 +425,14 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _restorePosition(anchor, epoch: epoch),
     );
+  }
+
+  void _toggleChrome(Offset position) {
+    final width = MediaQuery.sizeOf(context).width;
+    if (position.dx < width * .25 || position.dx > width * .75) {
+      return;
+    }
+    setState(() => _chromeVisible = !_chromeVisible);
   }
 
   Future<void> _showReaderSettings() async {
@@ -1017,144 +1027,158 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
     return Dialog.fullscreen(
       child: Scaffold(
         backgroundColor: background,
-        appBar: AppBar(
-          backgroundColor: background,
-          leading: IconButton(
-            onPressed: () {
-              _reportCurrentPosition();
-              Navigator.pop(context);
-            },
-            tooltip: 'Reader schließen',
-            icon: const Icon(Icons.close),
-          ),
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(widget.title, overflow: TextOverflow.ellipsis),
-              if (widget.chapterCount > 1)
-                Text(
-                  'Kapitel ${widget.chapterIndex + 1} von ${widget.chapterCount}',
-                  style: Theme.of(context).textTheme.labelSmall,
+        appBar: !_chromeVisible
+            ? null
+            : AppBar(
+                backgroundColor: background,
+                leading: IconButton(
+                  onPressed: () {
+                    _reportCurrentPosition();
+                    Navigator.pop(context);
+                  },
+                  tooltip: 'Reader schließen',
+                  icon: const Icon(Icons.close),
                 ),
-            ],
-          ),
-          actions: [
-            if (widget.onAddBookmark != null)
-              IconButton(
-                onPressed: _addBookmark,
-                tooltip: 'Lesezeichen hinzufügen',
-                icon: const Icon(Icons.bookmark_add_outlined),
-              ),
-            if (widget.onAddHighlight != null)
-              IconButton(
-                onPressed: _addHighlight,
-                tooltip: 'Auswahl hervorheben',
-                icon: const Icon(Icons.border_color_outlined),
-              ),
-            if (_bookmarks.isNotEmpty || _highlights.isNotEmpty)
-              IconButton(
-                onPressed: _showAnnotations,
-                tooltip: 'Lesezeichen und Markierungen',
-                icon: const Icon(Icons.collections_bookmark_outlined),
-              ),
-            IconButton(
-              onPressed: _showSearch,
-              tooltip: 'Im Buch suchen',
-              icon: const Icon(Icons.search),
-            ),
-            if (widget.chapterTitles.length > 1)
-              IconButton(
-                onPressed: _showChapters,
-                tooltip: 'Kapitelübersicht',
-                icon: const Icon(Icons.list_alt),
-              ),
-            IconButton(
-              onPressed: _showReaderSettings,
-              tooltip: 'Lesedarstellung',
-              icon: const Icon(Icons.text_fields),
-            ),
-          ],
-          bottom: progress == null
-              ? null
-              : PreferredSize(
-                  preferredSize: const Size.fromHeight(3),
-                  child: LinearProgressIndicator(value: progress),
+                title: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(widget.title, overflow: TextOverflow.ellipsis),
+                    if (widget.chapterCount > 1)
+                      Text(
+                        'Kapitel ${widget.chapterIndex + 1} von ${widget.chapterCount}',
+                        style: Theme.of(context).textTheme.labelSmall,
+                      ),
+                  ],
                 ),
-        ),
-        body: Focus(
-          autofocus: true,
-          onKeyEvent: (node, event) {
-            if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
-              return KeyEventResult.ignored;
-            }
-            if (!_scrollController.hasClients) return KeyEventResult.ignored;
-            final delta = switch (event.logicalKey) {
-              LogicalKeyboardKey.pageUp => -500.0,
-              LogicalKeyboardKey.pageDown => 500.0,
-              _ => null,
-            };
-            if (delta == null) return KeyEventResult.ignored;
-            _scrollController.animateTo(
-              (_scrollController.offset + delta).clamp(
-                0,
-                _scrollController.position.maxScrollExtent,
-              ),
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOut,
-            );
-            return KeyEventResult.handled;
-          },
-          child: KeyedSubtree(
-            key: _viewportKey,
-            child: SelectionArea(
-              onSelectionChanged: (selection) {
-                final value = selection?.plainText.trim();
-                if (value != null && value.isNotEmpty) _selectedText = value;
-              },
-              child: SingleChildScrollView(
-                controller: _scrollController,
-                padding: const EdgeInsets.symmetric(
-                  vertical: 36,
-                  horizontal: 20,
-                ),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: _profile.contentWidth,
+                actions: [
+                  if (widget.onAddBookmark != null)
+                    IconButton(
+                      onPressed: _addBookmark,
+                      tooltip: 'Lesezeichen hinzufügen',
+                      icon: const Icon(Icons.bookmark_add_outlined),
                     ),
-                    child: widget.document.paragraphs.isEmpty
-                        ? const Padding(
-                            padding: EdgeInsets.all(40),
-                            child: Text(
-                              'Dieses Kapitel enthält keinen lesbaren Text.',
-                            ),
-                          )
-                        : Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              for (
-                                var index = 0;
-                                index < widget.document.paragraphs.length;
-                                index++
-                              )
-                                Padding(
-                                  key: _paragraphKeys[index],
-                                  padding: EdgeInsets.only(
-                                    bottom: _profile.paragraphSpacing,
-                                  ),
-                                  child: _buildParagraph(
-                                    index,
-                                    TextStyle(
-                                      color: foreground,
-                                      fontFamily:
-                                          _profile.fontFamily.familyName,
-                                      fontSize: _profile.fontSize,
-                                      height: _profile.lineHeight,
+                  if (widget.onAddHighlight != null)
+                    IconButton(
+                      onPressed: _addHighlight,
+                      tooltip: 'Auswahl hervorheben',
+                      icon: const Icon(Icons.border_color_outlined),
+                    ),
+                  if (_bookmarks.isNotEmpty || _highlights.isNotEmpty)
+                    IconButton(
+                      onPressed: _showAnnotations,
+                      tooltip: 'Lesezeichen und Markierungen',
+                      icon: const Icon(Icons.collections_bookmark_outlined),
+                    ),
+                  IconButton(
+                    onPressed: _showSearch,
+                    tooltip: 'Im Buch suchen',
+                    icon: const Icon(Icons.search),
+                  ),
+                  if (widget.chapterTitles.length > 1)
+                    IconButton(
+                      onPressed: _showChapters,
+                      tooltip: 'Kapitelübersicht',
+                      icon: const Icon(Icons.list_alt),
+                    ),
+                  IconButton(
+                    onPressed: _showReaderSettings,
+                    tooltip: 'Lesedarstellung',
+                    icon: const Icon(Icons.text_fields),
+                  ),
+                ],
+                bottom: progress == null
+                    ? null
+                    : PreferredSize(
+                        preferredSize: const Size.fromHeight(3),
+                        child: LinearProgressIndicator(value: progress),
+                      ),
+              ),
+        body: Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: (event) => _readerTapStart = event.localPosition,
+          onPointerUp: (event) {
+            final start = _readerTapStart;
+            _readerTapStart = null;
+            if (start != null && (event.localPosition - start).distance <= 12) {
+              _toggleChrome(event.localPosition);
+            }
+          },
+          onPointerCancel: (_) => _readerTapStart = null,
+          child: Focus(
+            autofocus: true,
+            onKeyEvent: (node, event) {
+              if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+                return KeyEventResult.ignored;
+              }
+              if (!_scrollController.hasClients) return KeyEventResult.ignored;
+              final delta = switch (event.logicalKey) {
+                LogicalKeyboardKey.pageUp => -500.0,
+                LogicalKeyboardKey.pageDown => 500.0,
+                _ => null,
+              };
+              if (delta == null) return KeyEventResult.ignored;
+              _scrollController.animateTo(
+                (_scrollController.offset + delta).clamp(
+                  0,
+                  _scrollController.position.maxScrollExtent,
+                ),
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+              );
+              return KeyEventResult.handled;
+            },
+            child: KeyedSubtree(
+              key: _viewportKey,
+              child: SelectionArea(
+                onSelectionChanged: (selection) {
+                  final value = selection?.plainText.trim();
+                  if (value != null && value.isNotEmpty) _selectedText = value;
+                },
+                child: SingleChildScrollView(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 36,
+                    horizontal: 20,
+                  ),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: _profile.contentWidth,
+                      ),
+                      child: widget.document.paragraphs.isEmpty
+                          ? const Padding(
+                              padding: EdgeInsets.all(40),
+                              child: Text(
+                                'Dieses Kapitel enthält keinen lesbaren Text.',
+                              ),
+                            )
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                for (
+                                  var index = 0;
+                                  index < widget.document.paragraphs.length;
+                                  index++
+                                )
+                                  Padding(
+                                    key: _paragraphKeys[index],
+                                    padding: EdgeInsets.only(
+                                      bottom: _profile.paragraphSpacing,
+                                    ),
+                                    child: _buildParagraph(
+                                      index,
+                                      TextStyle(
+                                        color: foreground,
+                                        fontFamily:
+                                            _profile.fontFamily.familyName,
+                                        fontSize: _profile.fontSize,
+                                        height: _profile.lineHeight,
+                                      ),
                                     ),
                                   ),
-                                ),
-                            ],
-                          ),
+                              ],
+                            ),
+                    ),
                   ),
                 ),
               ),
@@ -1162,7 +1186,8 @@ class _ReflowTextReaderDialogState extends State<_ReflowTextReaderDialog> {
           ),
         ),
         bottomNavigationBar:
-            !widget.hasPreviousChapter && !widget.hasNextChapter
+            !_chromeVisible ||
+                (!widget.hasPreviousChapter && !widget.hasNextChapter)
             ? null
             : SafeArea(
                 child: Padding(

@@ -8,6 +8,49 @@ import 'package:fundus/library/epub_reader.dart';
 import 'package:fundus/library/reflow_text_reader.dart';
 
 void main() {
+  testWidgets('mobile reader toggles its chrome with a center tap', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 780);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final document = ReflowDocument.parse(
+      'Ein ausreichend langer Absatz für die mobile Leseansicht.',
+      format: ReflowSourceFormat.plainText,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => FilledButton(
+            onPressed: () => unawaited(
+              showReflowDocumentReader(
+                context,
+                document: document,
+                title: 'Mobile EPUB',
+              ),
+            ),
+            child: const Text('Öffnen'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Öffnen'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Reader schließen'), findsOneWidget);
+
+    final readerCenter = tester.getCenter(find.byType(SelectionArea));
+    await tester.tapAt(readerCenter);
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Reader schließen'), findsNothing);
+
+    await tester.tapAt(readerCenter);
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Reader schließen'), findsOneWidget);
+    await tester.tap(find.byTooltip('Reader schließen'));
+    await tester.pumpAndSettle();
+  });
+
   test('internal reflow support is limited to safe text formats', () {
     expect(supportsInternalReflowTextReader('/books/chapter.HTML'), isTrue);
     expect(supportsInternalReflowTextReader('/books/chapter.md'), isTrue);

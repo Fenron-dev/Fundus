@@ -97,9 +97,7 @@ void main() {
     await tester.pumpWidget(FundusApp(initialWorks: [...testWorks, document]));
     await tester.pumpAndSettle();
 
-    expect(find.text('Mobile Kampagnenbox'), findsNothing);
-    await tester.tap(find.text('Mehr'));
-    await tester.pumpAndSettle();
+    expect(find.text('Mobile Kampagnenbox'), findsOneWidget);
     await tester.tap(find.text('TTRPG'));
     await tester.pumpAndSettle();
 

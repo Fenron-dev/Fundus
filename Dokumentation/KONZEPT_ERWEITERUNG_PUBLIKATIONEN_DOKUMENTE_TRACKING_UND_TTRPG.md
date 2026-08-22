@@ -557,3 +557,35 @@ Primärquellen:
 - <https://github.com/Stirling-Tools/Stirling-PDF>
 - <https://github.com/maschhoff/pdfscanexplorer>
 - <https://github.com/hunter-read/grimoire>
+
+## 16. Mobile Informationsarchitektur für Publikationen
+
+Die Mobile-App behält die Vault-Auswahl als ersten Screen. Nach Auswahl eines
+lokalen oder entfernten Vaults folgt ein Dashboard mit Fortsetzen, zuletzt
+hinzugefügten Titeln und direkten Einstiegen nach Medientyp. Lokale, entfernte
+und heruntergeladene Werke verwenden anschließend dieselben Karten und
+Detailseiten; Herkunft und Offline-Status werden als Zustände angezeigt und
+nicht als getrennte Bedienwelten umgesetzt.
+
+Die Detailseite für Manga, Webnovels und E-Books besteht aus:
+
+1. Cover, Titel, Autor/Serie und Fortschritt,
+2. den Aktionen „Lesen/Fortsetzen“ und „Zur Bibliothek/Download verwalten“
+   unterhalb des Covers,
+3. den Hauptbereichen „Info“, „Kapitel“ und „Notizen“,
+4. „Notizen“ mit den Unterbereichen „Notizen“ sowie „Lesezeichen & Highlights“,
+5. Filter und Sortierung gesammelt hinter dem Filter-Symbol.
+
+Ein Tippen auf das Cover öffnet eine große, nicht destruktive Vorschau. Der
+Download-Dialog bleibt eine explizite Auswahl von Kapiteln beziehungsweise
+Dateien. Reader öffnen bildschirmfüllend; ein Tippen in die Mitte blendet die
+obere und untere Bedienleiste ein oder aus. Semantischer EPUB-Lesestand,
+Reader-Profil, Lesezeichen und Textmarkierungen gehören zum Werk und gelten
+unabhängig davon, ob es gerade lokal, remote oder aus dem Offline-Cache gelesen
+wird.
+
+Visuelle Referenzen:
+
+- `Mobile_app_dashboard_UI_mockup_202608221622.jpeg`
+- `Mobile_app_ebook_library_mockup_202608221603.jpeg`
+- `Mobile_app_UI_mockup_2K_202608221559.jpeg`

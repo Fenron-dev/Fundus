@@ -776,6 +776,219 @@ final class FundusOfflineStore {
     return _loadProgressFromDirectory(directory);
   }
 
+  Future<WorkAnnotations> loadAnnotations({
+    required String serverId,
+    required String libraryId,
+    required String workId,
+  }) async {
+    final fallback = await _fallbackContaining(serverId, libraryId, workId);
+    if (fallback != null) {
+      return fallback.loadAnnotations(
+        serverId: serverId,
+        libraryId: libraryId,
+        workId: workId,
+      );
+    }
+    final directory = await _workDirectory(serverId, libraryId, workId);
+    final file = File(p.join(directory.path, 'annotations.json'));
+    if (!await file.exists()) return const WorkAnnotations();
+    try {
+      final value = jsonDecode(await file.readAsString());
+      if (value is! Map) return const WorkAnnotations();
+      final bookmarks = <LibraryBookmark>[];
+      for (final item
+          in (value['bookmarks'] as List? ?? const []).whereType<Map>()) {
+        final position = item['position'];
+        if (item['id'] is! String || position is! Map) continue;
+        final mediaPosition = _mediaPosition(position);
+        if (mediaPosition == null) continue;
+        bookmarks.add(
+          LibraryBookmark(
+            id: item['id'] as String,
+            workId: workId,
+            fileId: item['file_id'] as String?,
+            mediaPosition: mediaPosition,
+            label: item['label'] as String?,
+            note: item['note'] as String?,
+            createdAt:
+                DateTime.tryParse('${item['created_at'] ?? ''}') ??
+                DateTime.fromMillisecondsSinceEpoch(0),
+          ),
+        );
+      }
+      final highlights = <LibraryHighlight>[];
+      for (final item
+          in (value['highlights'] as List? ?? const []).whereType<Map>()) {
+        final position = item['position'];
+        if (item['id'] is! String ||
+            item['quote'] is! String ||
+            position is! Map) {
+          continue;
+        }
+        final mediaPosition = _mediaPosition(position);
+        if (mediaPosition == null) continue;
+        highlights.add(
+          LibraryHighlight(
+            id: item['id'] as String,
+            workId: workId,
+            fileId: item['file_id'] as String?,
+            mediaPosition: mediaPosition,
+            quote: item['quote'] as String,
+            color: item['color'] is String
+                ? item['color'] as String
+                : '#FFF176',
+            note: item['note'] as String?,
+            createdAt:
+                DateTime.tryParse('${item['created_at'] ?? ''}') ??
+                DateTime.fromMillisecondsSinceEpoch(0),
+          ),
+        );
+      }
+      return WorkAnnotations(bookmarks: bookmarks, highlights: highlights);
+    } on FileSystemException {
+      return const WorkAnnotations();
+    } on FormatException {
+      return const WorkAnnotations();
+    }
+  }
+
+  Future<WorkAnnotations> addMediaBookmark({
+    required String serverId,
+    required String libraryId,
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    String? label,
+  }) async {
+    final annotations = await loadAnnotations(
+      serverId: serverId,
+      libraryId: libraryId,
+      workId: workId,
+    );
+    final updated = WorkAnnotations(
+      bookmarks: [
+        ...annotations.bookmarks,
+        LibraryBookmark(
+          id: FundusId.generate(),
+          workId: workId,
+          fileId: fileId,
+          mediaPosition: position,
+          label: label?.trim().isEmpty ?? true ? null : label!.trim(),
+          createdAt: DateTime.now(),
+        ),
+      ],
+      highlights: annotations.highlights,
+    );
+    await _saveAnnotations(serverId, libraryId, workId, updated);
+    return updated;
+  }
+
+  Future<WorkAnnotations> addTextHighlight({
+    required String serverId,
+    required String libraryId,
+    required String workId,
+    required String fileId,
+    required MediaPosition position,
+    required String quote,
+    required String color,
+    String? note,
+  }) async {
+    final annotations = await loadAnnotations(
+      serverId: serverId,
+      libraryId: libraryId,
+      workId: workId,
+    );
+    final updated = WorkAnnotations(
+      bookmarks: annotations.bookmarks,
+      highlights: [
+        ...annotations.highlights,
+        LibraryHighlight(
+          id: FundusId.generate(),
+          workId: workId,
+          fileId: fileId,
+          mediaPosition: position,
+          quote: quote.trim(),
+          color: color,
+          note: note?.trim().isEmpty ?? true ? null : note!.trim(),
+          createdAt: DateTime.now(),
+        ),
+      ],
+    );
+    await _saveAnnotations(serverId, libraryId, workId, updated);
+    return updated;
+  }
+
+  Future<WorkAnnotations> deleteAnnotation({
+    required String serverId,
+    required String libraryId,
+    required String workId,
+    required String annotationId,
+  }) async {
+    final annotations = await loadAnnotations(
+      serverId: serverId,
+      libraryId: libraryId,
+      workId: workId,
+    );
+    final updated = WorkAnnotations(
+      bookmarks: annotations.bookmarks
+          .where((item) => item.id != annotationId)
+          .toList(growable: false),
+      highlights: annotations.highlights
+          .where((item) => item.id != annotationId)
+          .toList(growable: false),
+    );
+    await _saveAnnotations(serverId, libraryId, workId, updated);
+    return updated;
+  }
+
+  Future<void> _saveAnnotations(
+    String serverId,
+    String libraryId,
+    String workId,
+    WorkAnnotations annotations,
+  ) async {
+    final fallback = await _fallbackContaining(serverId, libraryId, workId);
+    if (fallback != null) {
+      await fallback._saveAnnotations(serverId, libraryId, workId, annotations);
+      return;
+    }
+    final directory = await _workDirectory(serverId, libraryId, workId);
+    await directory.create(recursive: true);
+    final destination = File(p.join(directory.path, 'annotations.json'));
+    final partial = File('${destination.path}.part');
+    await partial.writeAsString(
+      jsonEncode({
+        'format_version': 1,
+        'bookmarks': [
+          for (final item in annotations.bookmarks)
+            {
+              'id': item.id,
+              'file_id': item.fileId,
+              'position': item.mediaPosition.toJson(),
+              'label': item.label,
+              'note': item.note,
+              'created_at': item.createdAt.toUtc().toIso8601String(),
+            },
+        ],
+        'highlights': [
+          for (final item in annotations.highlights)
+            {
+              'id': item.id,
+              'file_id': item.fileId,
+              'position': item.mediaPosition.toJson(),
+              'quote': item.quote,
+              'color': item.color,
+              'note': item.note,
+              'created_at': item.createdAt.toUtc().toIso8601String(),
+            },
+        ],
+      }),
+      flush: true,
+    );
+    if (await destination.exists()) await destination.delete();
+    await partial.rename(destination.path);
+  }
+
   Future<FundusRemoteProgress?> _loadProgressFromDirectory(
     Directory directory,
   ) async {
