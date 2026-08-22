@@ -4181,6 +4181,7 @@ class _DetailPanelState extends State<_DetailPanel> {
   LibraryWorkSummary? _editedWork;
   int _mobileDetailTab = 0;
   int _mobileNotesTab = 0;
+  final Map<String, Future<EpubPublication>> _epubPublicationRequests = {};
 
   @override
   void initState() {
@@ -4655,14 +4656,7 @@ class _DetailPanelState extends State<_DetailPanel> {
                       progress: progress,
                       onOpen: _openDocument,
                     ),
-            2 =>
-              _chapterDocumentFiles(readable).isEmpty
-                  ? const Center(child: Text('Keine Kapitel gefunden.'))
-                  : _DocumentFilesPanel(
-                      files: _chapterDocumentFiles(readable),
-                      progress: progress,
-                      onOpen: _openDocument,
-                    ),
+            2 => _publicationChapters(work, readable, progress),
             3 => Column(
               children: [
                 Padding(
@@ -4734,6 +4728,14 @@ class _DetailPanelState extends State<_DetailPanel> {
                                   bookmark.mediaPosition.chapterId ??
                                       'Textstelle',
                                 ),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: () => unawaited(
+                                  _openPublicationAnnotation(
+                                    work,
+                                    readable,
+                                    bookmark.mediaPosition,
+                                  ),
+                                ),
                               ),
                             for (final highlight in _annotations.highlights)
                               ListTile(
@@ -4748,6 +4750,14 @@ class _DetailPanelState extends State<_DetailPanel> {
                                 subtitle: highlight.note == null
                                     ? null
                                     : Text(highlight.note!),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: () => unawaited(
+                                  _openPublicationAnnotation(
+                                    work,
+                                    readable,
+                                    highlight.mediaPosition,
+                                  ),
+                                ),
                               ),
                           ],
                         ),
@@ -4781,6 +4791,104 @@ class _DetailPanelState extends State<_DetailPanel> {
         }.contains(extension);
       })
       .toList(growable: false);
+
+  Widget _publicationChapters(
+    LibraryWorkSummary work,
+    List<LibraryPlaybackTrack> readable,
+    LibraryPlaybackProgress? progress,
+  ) {
+    final epub = readable
+        .where(
+          (file) => p.extension(file.absolutePath).toLowerCase() == '.epub',
+        )
+        .firstOrNull;
+    if (epub == null) {
+      final chapters = _chapterDocumentFiles(readable);
+      return chapters.isEmpty
+          ? const Center(child: Text('Keine Kapitel gefunden.'))
+          : _DocumentFilesPanel(
+              files: chapters,
+              progress: progress,
+              onOpen: _openDocument,
+            );
+    }
+    final future = _epubPublicationRequests.putIfAbsent(
+      epub.absolutePath,
+      () => loadEpubPublication(epub.absolutePath),
+    );
+    return FutureBuilder<EpubPublication>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return const Center(
+            child: Text(
+              'Das EPUB-Inhaltsverzeichnis konnte nicht geladen werden.',
+            ),
+          );
+        }
+        final publication = snapshot.data;
+        if (publication == null) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          itemCount: publication.chapters.length,
+          itemBuilder: (context, index) {
+            final chapter = publication.chapters[index];
+            return ListTile(
+              contentPadding: EdgeInsets.only(
+                left: 8.0 + chapter.depth * 16,
+                right: 8,
+              ),
+              leading: CircleAvatar(child: Text('${index + 1}')),
+              title: Text(chapter.title),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => unawaited(
+                _openEpubWork(
+                  work,
+                  epub,
+                  progress,
+                  resolveConflict: false,
+                  initialChapterIndex: index,
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _openPublicationAnnotation(
+    LibraryWorkSummary work,
+    List<LibraryPlaybackTrack> readable,
+    MediaPosition position,
+  ) async {
+    final file = readable
+        .where((candidate) => candidate.fileId == position.fileId)
+        .firstOrNull;
+    if (file == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Die zugehörige Datei fehlt.')),
+      );
+      return;
+    }
+    final progress = LibraryPlaybackProgress(
+      workId: work.id,
+      fileId: file.fileId,
+      position: position,
+      finished: false,
+      revision: 0,
+      updatedAt: DateTime.now().toUtc(),
+    );
+    final extension = p.extension(file.absolutePath).toLowerCase();
+    if (extension == '.epub') {
+      await _openEpubWork(work, file, progress, resolveConflict: false);
+      return;
+    }
+    await _openDocument(file);
+  }
 
   Widget _similarWorks(LibraryWorkSummary work) {
     final sourceTags = {...work.tags, ..._annotations.tags}
@@ -5066,6 +5174,7 @@ class _DetailPanelState extends State<_DetailPanel> {
     LibraryPlaybackTrack file,
     LibraryPlaybackProgress? progress, {
     bool resolveConflict = true,
+    int? initialChapterIndex,
   }) async {
     final library = widget.library;
     var resolvedProgress = progress;
@@ -5090,8 +5199,10 @@ class _DetailPanelState extends State<_DetailPanel> {
       await showEpubReader(
         context,
         path: file.absolutePath,
+        initialChapterIndex: initialChapterIndex,
         initialPosition:
-            resolvedProgress?.fileId == file.fileId &&
+            initialChapterIndex == null &&
+                resolvedProgress?.fileId == file.fileId &&
                 resolvedProgress?.position.kind == MediaPositionKind.epubCfi
             ? resolvedProgress?.position
             : null,

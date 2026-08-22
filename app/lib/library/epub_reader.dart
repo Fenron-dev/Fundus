@@ -15,10 +15,15 @@ bool supportsInternalEpubReader(String path) =>
 Future<EpubPublication> _openEpubPackage(String path) =>
     const EpubPackageAdapter().openFile(path);
 
+/// Loads an EPUB on a worker isolate for detail views that need the real TOC.
+Future<EpubPublication> loadEpubPublication(String path) =>
+    compute(_openEpubPackage, path);
+
 Future<void> showEpubReader(
   BuildContext context, {
   required String path,
   MediaPosition? initialPosition,
+  int? initialChapterIndex,
   String? fileId,
   String? relativePath,
   ReflowReaderProfile initialProfile = const ReflowReaderProfile(),
@@ -109,7 +114,7 @@ Future<void> showEpubReader(
 
   var readerProfile = initialProfile;
   var chapterIndex = initialPosition?.chapterId == null
-      ? 0
+      ? (initialChapterIndex ?? 0).clamp(0, chapters.length - 1)
       : chapters.indexWhere(
           (chapter) =>
               chapter.id == initialPosition!.chapterId ||

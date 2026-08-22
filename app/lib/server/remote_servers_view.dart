@@ -1794,38 +1794,60 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     required int progressIndex,
     required WorkAnnotations annotations,
     required bool isOffline,
+    required FundusOfflineWork? offlineWork,
     required Future<WorkAnnotations> Function(String markdown) onSaveNote,
     required Future<WorkAnnotations> Function(Set<String> tags) onSaveTags,
-  }) => Navigator.of(context).push<String>(
-    MaterialPageRoute(
-      fullscreenDialog: true,
-      builder: (pageContext) => _MobileRemotePublicationDetails(
-        work: work,
-        tracks: tracks,
-        relatedWorks: _works,
-        progressPosition: progressPosition,
-        progressIndex: progressIndex,
-        annotations: annotations,
-        isOffline: isOffline,
-        onSaveNote: onSaveNote,
-        onSaveTags: onSaveTags,
-        coverBuilder: () => work.hasCover
-            ? _remoteCover(
-                server,
-                library,
-                work,
-                borderRadius: BorderRadius.circular(14),
-              )
-            : Icon(_kindIcon(work.kind), size: 72),
+  }) {
+    final epubTrack = tracks
+        .where((track) => track.title.toLowerCase().endsWith('.epub'))
+        .firstOrNull;
+    Future<EpubPublication> Function()? epubPublicationLoader;
+    if (epubTrack != null) {
+      epubPublicationLoader = () async {
+        final offlineTrack = offlineWork?.tracks
+            .where((track) => track.id == epubTrack.id)
+            .firstOrNull;
+        final file = offlineTrack == null
+            ? await _cachedRemoteDocument(server, library, epubTrack)
+            : File(offlineTrack.path);
+        return loadEpubPublication(file.path);
+      };
+    }
+    return Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (pageContext) => _MobileRemotePublicationDetails(
+          work: work,
+          tracks: tracks,
+          relatedWorks: _works,
+          progressPosition: progressPosition,
+          progressIndex: progressIndex,
+          annotations: annotations,
+          isOffline: isOffline,
+          epubPublicationLoader: epubPublicationLoader,
+          onSaveNote: onSaveNote,
+          onSaveTags: onSaveTags,
+          coverBuilder: () => offlineWork?.coverPath != null
+              ? Image.file(File(offlineWork!.coverPath!), fit: BoxFit.cover)
+              : work.hasCover
+              ? _remoteCover(
+                  server,
+                  library,
+                  work,
+                  borderRadius: BorderRadius.circular(14),
+                )
+              : Icon(_kindIcon(work.kind), size: 72),
+        ),
       ),
-    ),
-  );
+    );
+  }
 
   Future<void> _showWork(
     FundusRemoteServer server,
     FundusRemoteLibrary library,
-    FundusRemoteWork work,
-  ) async {
+    FundusRemoteWork work, {
+    bool forceOffline = false,
+  }) async {
     final pageContext = context;
     final mobilePublicationLayout = MediaQuery.sizeOf(pageContext).width < 760;
     final key = _offlineKey(server, library, work);
@@ -1852,18 +1874,20 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           ),
       ];
     } else {
-      try {
-        final result = await _runWithReconnect(
-          server,
-          (active) => _client.work(active, library.id, work),
-        );
-        detailTracks = result.value.tracks;
-      } catch (_) {
-        // Summary details remain usable if the server becomes unavailable.
+      if (!forceOffline) {
+        try {
+          final result = await _runWithReconnect(
+            server,
+            (active) => _client.work(active, library.id, work),
+          );
+          detailTracks = result.value.tracks;
+        } catch (_) {
+          // Summary details remain usable if the server becomes unavailable.
+        }
       }
     }
     final syncAnnotations = await AnnotationSyncSettings.enabled();
-    if (isDocument && syncAnnotations) {
+    if (isDocument) {
       if (offlineWork != null) {
         final offlineProgress = await _offlineStore.loadProgress(
           serverId: server.id,
@@ -1873,16 +1897,18 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         documentPosition = offlineProgress?.mediaPosition;
         documentProgressFileId = offlineProgress?.fileId;
       }
-      try {
-        final result = await _runWithReconnect(
-          server,
-          (active) => _client.progress(active, library.id, work.id),
-        );
-        server = result.server;
-        documentPosition ??= result.value?.mediaPosition;
-        documentProgressFileId ??= result.value?.fileId;
-      } catch (_) {
-        // Offline reading remains available without the server.
+      if (!forceOffline) {
+        try {
+          final result = await _runWithReconnect(
+            server,
+            (active) => _client.progress(active, library.id, work.id),
+          );
+          server = result.server;
+          documentPosition ??= result.value?.mediaPosition;
+          documentProgressFileId ??= result.value?.fileId;
+        } catch (_) {
+          // Offline reading remains available without the server.
+        }
       }
     }
     final documentProgressIndex = detailTracks.indexWhere(
@@ -1895,7 +1921,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             workId: work.id,
           )
         : const WorkAnnotations();
-    if (isDocument) {
+    if (isDocument && !forceOffline) {
       try {
         final localAnnotations = readerAnnotations;
         final result = await _runWithReconnect(
@@ -1946,6 +1972,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         progressIndex: documentProgressIndex,
         annotations: readerAnnotations,
         isOffline: isOffline,
+        offlineWork: offlineWork,
         onSaveNote: (markdown) async {
           if (!syncAnnotations) {
             return _offlineStore.saveWorkNote(
@@ -2295,6 +2322,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       );
     }
     if (action == null) {
+      if (forceOffline) return;
       try {
         final result = await _runWithReconnect(
           server,
@@ -2310,6 +2338,18 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       return;
     }
     if (action == 'download') {
+      if (forceOffline) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Kapitel können wieder am Server verwaltet werden.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
       final selectedTrackIds = isDocument
           ? await _selectDownloadTracks(
               detailTracks,
@@ -2332,6 +2372,49 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       final relatedId = action.substring('similar:'.length);
       final related = _works.where((item) => item.id == relatedId).firstOrNull;
       if (related != null) await _showWork(server, library, related);
+      return;
+    }
+    if (action.startsWith('annotation:')) {
+      final annotationId = action.substring('annotation:'.length);
+      final bookmark = readerAnnotations.bookmarks
+          .where((item) => item.id == annotationId)
+          .firstOrNull;
+      final highlight = readerAnnotations.highlights
+          .where((item) => item.id == annotationId)
+          .firstOrNull;
+      final position = bookmark?.mediaPosition ?? highlight?.mediaPosition;
+      if (position == null) return;
+      await _openRemoteEpubWork(
+        server,
+        library,
+        work,
+        detailTracks,
+        offlineWork: offlineWork,
+        startFileId: position.fileId,
+        startPosition: position,
+        skipServerLookup: offlineWork != null && _selectedServer == null,
+      );
+      return;
+    }
+    if (action.startsWith('epub_chapter:')) {
+      final chapterIndex = int.tryParse(
+        action.substring('epub_chapter:'.length),
+      );
+      if (chapterIndex == null) return;
+      final epub = detailTracks
+          .where((track) => track.title.toLowerCase().endsWith('.epub'))
+          .firstOrNull;
+      if (epub == null) return;
+      await _openRemoteEpubWork(
+        server,
+        library,
+        work,
+        detailTracks,
+        offlineWork: offlineWork,
+        startFileId: epub.id,
+        initialChapterIndex: chapterIndex,
+        skipServerLookup: offlineWork != null && _selectedServer == null,
+      );
       return;
     }
     if (action == 'remove_download') {
@@ -2380,6 +2463,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           detailTracks,
           offlineWork: offlineWork,
           startFileId: resume ? null : detailTracks[index].id,
+          skipServerLookup: forceOffline,
         );
         return;
       }
@@ -2391,6 +2475,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           detailTracks,
           offlineWork: offlineWork,
           startFileId: resume ? null : detailTracks[index].id,
+          skipServerLookup: forceOffline,
         );
       } else if (detailTracks[index].title.toLowerCase().endsWith('.epub')) {
         await _openRemoteEpubWork(
@@ -2400,6 +2485,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           detailTracks,
           offlineWork: offlineWork,
           startFileId: resume ? null : detailTracks[index].id,
+          skipServerLookup: forceOffline,
         );
       } else if (offlineWork != null && index < offlineWork.tracks.length) {
         await _openDocumentPath(offlineWork.tracks[index].path);
@@ -2866,6 +2952,15 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           (active) => _client.cover(active, library.id, work.id),
         );
         return result.value;
+      } on FundusRemoteRequestException catch (error) {
+        // A missing/forbidden cover is a permanent response. Retrying it and
+        // relocating the server created hundreds of requests and could block
+        // both Flutter clients while the embedded server handled the storm.
+        if (error.statusCode >= 400 && error.statusCode < 500) rethrow;
+        lastError = error;
+        if (attempt < 2) {
+          await Future<void>.delayed(Duration(milliseconds: 250 << attempt));
+        }
       } catch (error) {
         lastError = error;
         if (attempt < 2) {
@@ -2883,33 +2978,46 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   ) async {
     try {
       return (server: server, value: await operation(server));
+    } on FundusRemoteRequestException catch (error) {
+      // Relocation can only help transport/server failures, never a valid 4xx
+      // response such as a permanently missing cover.
+      if (error.statusCode >= 400 && error.statusCode < 500) rethrow;
+      return _retryAfterRelocation(server, operation, error);
     } catch (firstError) {
+      return _retryAfterRelocation(server, operation, firstError);
+    }
+  }
+
+  Future<({FundusRemoteServer server, T value})> _retryAfterRelocation<T>(
+    FundusRemoteServer server,
+    Future<T> Function(FundusRemoteServer server) operation,
+    Object firstError,
+  ) async {
+    unawaited(
+      FundusDiagnostics.instance.record('remote.reconnect_started', {
+        'server_id': server.id,
+        'reason': _safeNetworkError(firstError),
+      }),
+    );
+    final relocated = await _resolveShared(server);
+    await _replaceServer(relocated);
+    try {
+      final value = await operation(relocated);
       unawaited(
-        FundusDiagnostics.instance.record('remote.reconnect_started', {
+        FundusDiagnostics.instance.record('remote.reconnect_completed', {
           'server_id': server.id,
-          'reason': _safeNetworkError(firstError),
+          'endpoint_changed': relocated.baseUri != server.baseUri,
         }),
       );
-      final relocated = await _resolveShared(server);
-      await _replaceServer(relocated);
-      try {
-        final value = await operation(relocated);
-        unawaited(
-          FundusDiagnostics.instance.record('remote.reconnect_completed', {
-            'server_id': server.id,
-            'endpoint_changed': relocated.baseUri != server.baseUri,
-          }),
-        );
-        return (server: relocated, value: value);
-      } catch (retryError) {
-        unawaited(
-          FundusDiagnostics.instance.record('remote.reconnect_failed', {
-            'server_id': server.id,
-            'reason': _safeNetworkError(retryError),
-          }),
-        );
-        rethrow;
-      }
+      return (server: relocated, value: value);
+    } catch (retryError) {
+      unawaited(
+        FundusDiagnostics.instance.record('remote.reconnect_failed', {
+          'server_id': server.id,
+          'reason': _safeNetworkError(retryError),
+        }),
+      );
+      rethrow;
     }
   }
 
@@ -3490,6 +3598,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     List<FundusRemoteTrack> tracks, {
     required FundusOfflineWork? offlineWork,
     String? startFileId,
+    MediaPosition? startPosition,
+    int? initialChapterIndex,
     bool skipServerLookup = false,
   }) async {
     final epubs =
@@ -3516,8 +3626,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     }
     final localPosition = localProgress?.mediaPosition;
     final serverPosition = serverProgress?.mediaPosition;
-    var selectedPosition = serverPosition ?? localPosition;
-    if (startFileId == null &&
+    var selectedPosition = startPosition ?? serverPosition ?? localPosition;
+    if (startPosition == null &&
+        startFileId == null &&
         localPosition != null &&
         serverPosition != null &&
         readerPositionsDiffer(localPosition, serverPosition)) {
@@ -3581,8 +3692,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         path: file.path,
         fileId: track.id,
         relativePath: track.title,
+        initialChapterIndex: initialChapterIndex,
         initialPosition:
-            selectedPosition?.kind == MediaPositionKind.epubCfi &&
+            initialChapterIndex == null &&
+                selectedPosition?.kind == MediaPositionKind.epubCfi &&
                 selectedPosition?.fileId == track.id
             ? selectedPosition
             : null,
@@ -3832,6 +3945,40 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
 
   Future<void> _showOfflineWork(FundusOfflineWork offline) async {
     final isDocument = _isDocumentKind(offline.kind);
+    if (isDocument) {
+      final server =
+          _servers.where((item) => item.id == offline.serverId).firstOrNull ??
+          FundusRemoteServer(
+            id: offline.serverId,
+            name: offline.sourceServerName ?? 'Offline',
+            baseUri: Uri.parse('https://127.0.0.1'),
+            certificateFingerprint: ''.padLeft(64, '0'),
+            token: '',
+          );
+      final library = FundusRemoteLibrary(
+        id: offline.libraryId,
+        name: offline.sourceLibraryName ?? 'Offline-Bibliothek',
+        workCount: 1,
+      );
+      final work = FundusRemoteWork(
+        id: offline.workId,
+        title: offline.title,
+        authors: offline.authors,
+        hasCover: offline.coverPath != null,
+        kind: offline.kind,
+        subtitle: offline.subtitle,
+        series: offline.series,
+        seriesSequence: offline.seriesSequence,
+        narrators: offline.narrators,
+        language: offline.language,
+        description: offline.description,
+        publisher: offline.publisher,
+        publishedYear: offline.publishedYear,
+        fileCount: offline.tracks.length,
+      );
+      await _showWork(server, library, work, forceOffline: true);
+      return;
+    }
     final progress = await _offlineStore.loadProgress(
       serverId: offline.serverId,
       libraryId: offline.libraryId,
@@ -4230,6 +4377,7 @@ class _MobileRemotePublicationDetails extends StatefulWidget {
     required this.progressIndex,
     required this.annotations,
     required this.isOffline,
+    required this.epubPublicationLoader,
     required this.onSaveNote,
     required this.onSaveTags,
     required this.coverBuilder,
@@ -4242,6 +4390,7 @@ class _MobileRemotePublicationDetails extends StatefulWidget {
   final int progressIndex;
   final WorkAnnotations annotations;
   final bool isOffline;
+  final Future<EpubPublication> Function()? epubPublicationLoader;
   final Future<WorkAnnotations> Function(String markdown) onSaveNote;
   final Future<WorkAnnotations> Function(Set<String> tags) onSaveTags;
   final Widget Function() coverBuilder;
@@ -4259,6 +4408,7 @@ class _MobileRemotePublicationDetailsState
   var _sort = _DocumentTrackSort.oldestFirst;
   String _filter = '';
   late WorkAnnotations _annotations;
+  Future<EpubPublication>? _epubPublication;
 
   @override
   void initState() {
@@ -4430,20 +4580,7 @@ class _MobileRemotePublicationDetailsState
       ],
     ),
     1 => _trackList(_tracks),
-    2 => _trackList(
-      _tracks
-          .where((entry) {
-            final title = entry.track.title.toLowerCase();
-            return title.endsWith('.cbz') ||
-                title.endsWith('.pdf') ||
-                title.endsWith('.epub') ||
-                title.endsWith('.html') ||
-                title.endsWith('.htm') ||
-                title.endsWith('.md') ||
-                title.endsWith('.txt');
-          })
-          .toList(growable: false),
-    ),
+    2 => _chapterList(),
     3 => Column(
       children: [
         Padding(
@@ -4489,6 +4626,59 @@ class _MobileRemotePublicationDetailsState
     ],
   );
 
+  Widget _chapterList() {
+    final loader = widget.epubPublicationLoader;
+    if (loader == null) {
+      return _trackList(
+        _tracks
+            .where((entry) {
+              final title = entry.track.title.toLowerCase();
+              return title.endsWith('.cbz') ||
+                  title.endsWith('.pdf') ||
+                  title.endsWith('.html') ||
+                  title.endsWith('.htm') ||
+                  title.endsWith('.md') ||
+                  title.endsWith('.txt');
+            })
+            .toList(growable: false),
+      );
+    }
+    _epubPublication ??= loader();
+    return FutureBuilder<EpubPublication>(
+      future: _epubPublication,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return const Center(
+            child: Text(
+              'Das EPUB-Inhaltsverzeichnis konnte nicht geladen werden.',
+            ),
+          );
+        }
+        final publication = snapshot.data;
+        if (publication == null) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          itemCount: publication.chapters.length,
+          itemBuilder: (context, index) {
+            final chapter = publication.chapters[index];
+            return ListTile(
+              contentPadding: EdgeInsets.only(
+                left: 8.0 + chapter.depth * 16,
+                right: 8,
+              ),
+              leading: CircleAvatar(child: Text('${index + 1}')),
+              title: Text(chapter.title),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.pop(context, 'epub_chapter:$index'),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _annotationList() {
     final bookmarks = _annotations.bookmarks;
     final highlights = _annotations.highlights;
@@ -4503,6 +4693,8 @@ class _MobileRemotePublicationDetailsState
             leading: const Icon(Icons.bookmark_outline),
             title: Text(item.label ?? item.displayPosition),
             subtitle: Text(item.mediaPosition.chapterId ?? 'Textstelle'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.pop(context, 'annotation:${item.id}'),
           ),
         for (final item in highlights)
           ListTile(
@@ -4513,6 +4705,8 @@ class _MobileRemotePublicationDetailsState
               overflow: TextOverflow.ellipsis,
             ),
             subtitle: item.note == null ? null : Text(item.note!),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.pop(context, 'annotation:${item.id}'),
           ),
       ],
     );
