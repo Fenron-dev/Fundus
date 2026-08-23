@@ -147,9 +147,12 @@ class _FundusAppState extends State<FundusApp> {
   FundusLibrary? _library;
   List<LibraryWorkSummary>? _works;
   LibraryIndexEvent? _indexEvent;
+  ScanCancellationToken? _scanToken;
+  Completer<void>? _scanCompletion;
   FundusPlayerController? _player;
   String? _error;
   bool _busy = false;
+  bool _scanning = false;
   late RecentLibraryStore _recentStore;
   late final Future<void> _recentStoreReady;
   final _remoteStore = FundusRemoteServerStore();
@@ -236,7 +239,7 @@ class _FundusAppState extends State<FundusApp> {
                   .split(Platform.pathSeparator)
                   .last,
               indexEvent: _indexEvent,
-              onRescan: _library == null || _busy ? null : _scan,
+              onRescan: _library == null || _busy || _scanning ? null : _scan,
               onClose: _library == null ? null : _closeLibrary,
               player: _player,
               onPlay: _library == null ? null : _startPlayback,
@@ -367,6 +370,7 @@ class _FundusAppState extends State<FundusApp> {
     String? securityBookmark,
     bool showError = true,
   }) async {
+    final openTimer = Stopwatch()..start();
     setState(() {
       _busy = true;
       _error = null;
@@ -375,6 +379,7 @@ class _FundusAppState extends State<FundusApp> {
       final library = create
           ? await FundusLibrary.create(Directory(path))
           : await FundusLibrary.open(Directory(path));
+      final libraryOpenMilliseconds = openTimer.elapsedMilliseconds;
       await _stopPlayer();
       _library?.close();
       _library = library;
@@ -385,12 +390,17 @@ class _FundusAppState extends State<FundusApp> {
       final adoptedDownloads = await _offlineStore.adoptFallbackDownloads();
       _offlineWorks = await _offlineStore.listAll();
       await FundusDiagnostics.instance.configure(library.root);
+      final catalogueTimer = Stopwatch()..start();
+      _works = library.listWorks(includeMissing: true);
+      final catalogueMilliseconds = catalogueTimer.elapsedMilliseconds;
       await FundusDiagnostics.instance.record('library.opened', {
         'library_id': library.manifest.libraryId,
         'create': create,
         'adopted_downloads': adoptedDownloads,
+        'library_open_ms': libraryOpenMilliseconds,
+        'catalogue_load_ms': catalogueMilliseconds,
+        'total_ms': openTimer.elapsedMilliseconds,
       });
-      _works = library.listWorks(includeMissing: true);
       await _recentStoreReady;
       _recentLibraries = await _recentStore.remember(
         path,
@@ -399,7 +409,11 @@ class _FundusAppState extends State<FundusApp> {
       );
       await _syncPeerSources();
       if (mounted) setState(() {});
-      await _scan();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && identical(_library, library)) {
+          unawaited(_scan(blockUi: false));
+        }
+      });
       return true;
     } catch (error) {
       if (mounted && showError) {
@@ -677,18 +691,23 @@ class _FundusAppState extends State<FundusApp> {
     ),
   );
 
-  Future<void> _scan() async {
+  Future<void> _scan({bool blockUi = true}) async {
     final library = _library;
-    if (library == null || library.isReadOnly) return;
+    if (library == null || library.isReadOnly || _scanning) return;
+    final token = ScanCancellationToken();
+    final completion = Completer<void>();
+    _scanToken = token;
+    _scanCompletion = completion;
+    _scanning = true;
     setState(() {
-      _busy = true;
+      if (blockUi) _busy = true;
       _error = null;
     });
     try {
       await FundusDiagnostics.instance.record('library.scan_started');
       var lastProgressMilestone = 0;
-      await for (final event in library.index()) {
-        if (!mounted) return;
+      await for (final event in library.index(cancellationToken: token)) {
+        if (!mounted || !identical(_library, library)) return;
         setState(() => _indexEvent = event);
         final milestone = event.fileCount ~/ 1000;
         if (event.phase == LibraryIndexPhase.scanning &&
@@ -701,7 +720,7 @@ class _FundusAppState extends State<FundusApp> {
         }
       }
       await _generateDocumentCovers(library);
-      if (mounted) {
+      if (mounted && identical(_library, library)) {
         setState(() => _works = library.listWorks(includeMissing: true));
       }
       await _recordAudioCompatibility(library);
@@ -715,9 +734,21 @@ class _FundusAppState extends State<FundusApp> {
       await FundusDiagnostics.instance.record('library.scan_failed', {
         'error': error.toString(),
       });
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted && identical(_library, library)) {
+        setState(() => _error = error.toString());
+      }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (identical(_scanToken, token)) {
+        _scanToken = null;
+        _scanCompletion = null;
+        _scanning = false;
+      }
+      if (!completion.isCompleted) completion.complete();
+      if (mounted && identical(_library, library)) {
+        setState(() {
+          if (blockUi) _busy = false;
+        });
+      }
     }
   }
 
@@ -891,6 +922,8 @@ class _FundusAppState extends State<FundusApp> {
   }
 
   Future<void> _closeLibrary() async {
+    _scanToken?.cancel();
+    await _scanCompletion?.future;
     await _stopPlayer();
     _library?.close();
     if (!mounted) return;
@@ -5190,9 +5223,12 @@ class _DetailPanelState extends State<_DetailPanel> {
               deviceKey: Platform.operatingSystem,
               readerKind: 'epub',
             );
-      final readerProfile = portableProfile == null
+      var readerProfile = portableProfile == null
           ? await PublicationReaderSettings.loadReflowProfile(workId: work.id)
           : ReflowReaderProfile.fromJson(portableProfile);
+      var readerProfileDirty = false;
+      MediaPosition? latestPosition;
+      Timer? deviceCheckpointTimer;
       var publicationAnnotations =
           library?.loadAnnotations(work.id) ?? const WorkAnnotations();
       if (!mounted) return;
@@ -5210,22 +5246,14 @@ class _DetailPanelState extends State<_DetailPanel> {
         relativePath: file.relativePath,
         initialProfile: readerProfile,
         onProfileChanged: (updated) {
+          readerProfile = updated;
+          readerProfileDirty = true;
           unawaited(
             PublicationReaderSettings.saveReflowProfile(
               updated,
               workId: work.id,
             ),
           );
-          if (library != null && !library.isReadOnly) {
-            unawaited(
-              library.savePortableReaderProfile(
-                workId: work.id,
-                deviceKey: Platform.operatingSystem,
-                readerKind: 'epub',
-                profile: updated.toJson(),
-              ),
-            );
-          }
         },
         onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
         onResetWorkProfile: () =>
@@ -5279,21 +5307,48 @@ class _DetailPanelState extends State<_DetailPanel> {
         onPositionChanged: library == null || library.isReadOnly
             ? null
             : (position) {
-                library.saveMediaProgress(
-                  workId: work.id,
-                  fileId: file.fileId,
-                  position: position,
-                  finished: false,
-                );
-                unawaited(
-                  PublicationReaderSettings.saveDevicePosition(
-                    libraryId: library.manifest.libraryId,
-                    workId: work.id,
-                    position: position,
+                latestPosition = position;
+                deviceCheckpointTimer?.cancel();
+                deviceCheckpointTimer = Timer(
+                  const Duration(seconds: 1),
+                  () => unawaited(
+                    PublicationReaderSettings.saveDevicePosition(
+                      libraryId: library.manifest.libraryId,
+                      workId: work.id,
+                      position: position,
+                    ),
                   ),
                 );
               },
       );
+      deviceCheckpointTimer?.cancel();
+      if (library != null && !library.isReadOnly && latestPosition != null) {
+        library.saveMediaProgress(
+          workId: work.id,
+          fileId: file.fileId,
+          position: latestPosition!,
+          finished: false,
+        );
+        await PublicationReaderSettings.saveDevicePosition(
+          libraryId: library.manifest.libraryId,
+          workId: work.id,
+          position: latestPosition!,
+        );
+      }
+      if (readerProfileDirty) {
+        await PublicationReaderSettings.saveReflowProfile(
+          readerProfile,
+          workId: work.id,
+        );
+        if (library != null && !library.isReadOnly) {
+          await library.savePortableReaderProfile(
+            workId: work.id,
+            deviceKey: Platform.operatingSystem,
+            readerKind: 'epub',
+            profile: readerProfile.toJson(),
+          );
+        }
+      }
     } on EpubPackageException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -5305,13 +5360,11 @@ class _DetailPanelState extends State<_DetailPanel> {
         SnackBar(content: Text('EPUB konnte nicht geöffnet werden: $error')),
       );
     }
-    if (library != null) {
-      final refreshed = library
-          .listWorks(includeMissing: true)
-          .where((candidate) => candidate.id == work.id)
-          .firstOrNull;
-      if (refreshed != null) widget.onMetadataChanged?.call(refreshed);
-    }
+    // Progress and profile writes above already persist the changed reader
+    // state. Re-reading the complete work catalogue here is particularly
+    // expensive for network-mounted libraries and made closing an EPUB look
+    // frozen for several seconds. The next incremental scan/dashboard refresh
+    // will pick up the updated summary without delaying the reader close.
   }
 
   Future<void> _exportPublicationAnnotations(
@@ -5559,6 +5612,7 @@ class _DetailPanelState extends State<_DetailPanel> {
     var readerProfile = portableProfile == null
         ? await PublicationReaderSettings.loadComicProfile(workId: work?.id)
         : PublicationReaderProfile.fromJson(portableProfile);
+    var readerProfileDirty = false;
     if (!mounted) return;
     while (mounted) {
       final file = comics[chapterIndex];
@@ -5631,24 +5685,30 @@ class _DetailPanelState extends State<_DetailPanel> {
               },
         onProfileChanged: (profile) {
           readerProfile = profile;
+          readerProfileDirty = true;
           unawaited(
             PublicationReaderSettings.saveComicProfile(
               profile,
               workId: work?.id,
             ),
           );
-          if (library != null && work != null && !library.isReadOnly) {
-            unawaited(
-              library.savePortableReaderProfile(
-                workId: work.id,
-                deviceKey: Platform.operatingSystem,
-                readerKind: 'comic',
-                profile: profile.toJson(),
-              ),
-            );
-          }
         },
       );
+      if (readerProfileDirty) {
+        await PublicationReaderSettings.saveComicProfile(
+          readerProfile,
+          workId: work?.id,
+        );
+        if (library != null && work != null && !library.isReadOnly) {
+          await library.savePortableReaderProfile(
+            workId: work.id,
+            deviceKey: Platform.operatingSystem,
+            readerKind: 'comic',
+            profile: readerProfile.toJson(),
+          );
+        }
+        readerProfileDirty = false;
+      }
       if (!mounted || result == null) break;
       if (result.action == ComicBookViewerAction.selectChapter &&
           result.chapterIndex != null &&

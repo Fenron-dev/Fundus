@@ -3351,6 +3351,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     var profile = portableProfile == null
         ? await PublicationReaderSettings.loadComicProfile(workId: work.id)
         : PublicationReaderProfile.fromJson(portableProfile);
+    var profileDirty = false;
     if (selectedDeviceProgress && localPosition != null) {
       await _saveRemoteReaderProgress(
         server,
@@ -3410,24 +3411,13 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         chapterFileId: track.id,
         onProfileChanged: (updated) {
           profile = updated;
+          profileDirty = true;
           unawaited(
             PublicationReaderSettings.saveComicProfile(
               updated,
               workId: work.id,
             ),
           );
-          if (!skipServerLookup) {
-            unawaited(
-              _client.saveReaderProfile(
-                server,
-                libraryId: library.id,
-                workId: work.id,
-                deviceKey: Platform.operatingSystem,
-                readerKind: 'comic',
-                profile: updated.toJson(),
-              ),
-            );
-          }
         },
         onPositionChanged: (page, total, elementId, scrollOffset) {
           final mediaPosition = MediaPosition(
@@ -3456,6 +3446,31 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           );
         },
       );
+      if (profileDirty) {
+        await PublicationReaderSettings.saveComicProfile(
+          profile,
+          workId: work.id,
+        );
+        if (!skipServerLookup) {
+          try {
+            final saved = await _runWithReconnect(
+              server,
+              (active) => _client.saveReaderProfile(
+                active,
+                libraryId: library.id,
+                workId: work.id,
+                deviceKey: Platform.operatingSystem,
+                readerKind: 'comic',
+                profile: profile.toJson(),
+              ),
+            );
+            server = saved.server;
+          } catch (_) {
+            // The local profile remains available for a later online save.
+          }
+        }
+        profileDirty = false;
+      }
       await _readerProgressQueue;
       if (!mounted || result == null) return;
       if (result.action == ComicBookViewerAction.selectChapter &&
@@ -3759,9 +3774,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         );
       } catch (_) {}
     }
-    final profile = portableProfile == null
+    var profile = portableProfile == null
         ? await PublicationReaderSettings.loadReflowProfile(workId: work.id)
         : ReflowReaderProfile.fromJson(portableProfile);
+    var profileDirty = false;
     final deviceId = await _store.deviceId();
     if (!mounted) return;
     try {
@@ -3779,24 +3795,14 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             : null,
         initialProfile: profile,
         onProfileChanged: (updated) {
+          profile = updated;
+          profileDirty = true;
           unawaited(
             PublicationReaderSettings.saveReflowProfile(
               updated,
               workId: work.id,
             ),
           );
-          if (!skipServerLookup) {
-            unawaited(
-              _client.saveReaderProfile(
-                server,
-                libraryId: library.id,
-                workId: work.id,
-                deviceKey: Platform.operatingSystem,
-                readerKind: 'epub',
-                profile: updated.toJson(),
-              ),
-            );
-          }
         },
         onSaveAsDefault: PublicationReaderSettings.saveReflowProfile,
         onResetWorkProfile: () =>
@@ -3941,6 +3947,30 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           );
         },
       );
+      if (profileDirty) {
+        await PublicationReaderSettings.saveReflowProfile(
+          profile,
+          workId: work.id,
+        );
+        if (!skipServerLookup) {
+          try {
+            final saved = await _runWithReconnect(
+              server,
+              (active) => _client.saveReaderProfile(
+                active,
+                libraryId: library.id,
+                workId: work.id,
+                deviceKey: Platform.operatingSystem,
+                readerKind: 'epub',
+                profile: profile.toJson(),
+              ),
+            );
+            server = saved.server;
+          } catch (_) {
+            // The local profile remains available for a later online save.
+          }
+        }
+      }
       await _readerProgressQueue;
     } on EpubPackageException catch (error) {
       if (!mounted) return;

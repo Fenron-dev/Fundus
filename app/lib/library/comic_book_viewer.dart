@@ -280,6 +280,7 @@ Future<ComicBookViewerResult?> showComicBookViewer(
 }) => showDialog<ComicBookViewerResult>(
   context: context,
   barrierDismissible: false,
+  useSafeArea: false,
   builder: (context) => _ComicBookDialog(
     archivePath: archivePath,
     initialPage: initialPage,

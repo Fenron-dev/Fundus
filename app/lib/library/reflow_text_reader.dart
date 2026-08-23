@@ -185,6 +185,7 @@ Future<ReflowTextReaderResult?> showReflowDocumentReader(
   return showDialog<ReflowTextReaderResult>(
     context: context,
     barrierDismissible: false,
+    useSafeArea: false,
     builder: (context) => _ReflowTextReaderDialog(
       document: document,
       title: title,
