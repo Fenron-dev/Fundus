@@ -196,6 +196,16 @@ Engine-Einstellungen werden nur zwischen Geräten synchronisiert, wenn sie dort
 sinnvoll und unterstützt sind. Displaybreite oder Android-Tap-Zonen bleiben
 beispielsweise gerätebezogen; Leserichtung einer Serie ist werkbezogen.
 
+Heruntergeladene Werke führen ihre gerätebezogenen Reader-Einstellungen im
+portablen Offline-Bestand mit. Die Datei `_fundus/offline-media/<Werk>/reader-settings.json`
+verwendet stabile Geräteklassen wie `android` und `macos`, nicht den frei
+wählbaren Gerätenamen oder eine installationsabhängige Geräte-ID. Damit bleiben
+beispielsweise Webtoon-Modus und Breitenanpassung nach einer Neuinstallation
+erhalten, sofern der externe Offline-Bestand nicht gelöscht wurde. Beim
+Onlinezugriff wird ein vorhandenes Serverprofil in diesen Bestand gespiegelt;
+Änderungen werden lokal atomar geschrieben und anschließend zum Server
+synchronisiert.
+
 Ein benanntes Profil kann zusätzlich an Engine, Bibliothek, Serie und Gerät
 gebunden werden. Änderungen während einer Sitzung dürfen zunächst als
 „implizites Profil“ bestehen und anschließend verworfen oder bewusst als

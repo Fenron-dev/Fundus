@@ -684,6 +684,40 @@ final class FundusOfflineStore {
       );
       if (await manifest.exists()) await manifest.delete();
       await partialManifest.rename(manifest.path);
+      final readerKinds = <String>{
+        if (offlineTracks.any(
+          (track) => track.title.toLowerCase().endsWith('.cbz'),
+        ))
+          'comic',
+        if (offlineTracks.any(
+          (track) => track.title.toLowerCase().endsWith('.epub'),
+        ))
+          'epub',
+      };
+      for (final readerKind in readerKinds) {
+        try {
+          final profile = await client.readerProfile(
+            server,
+            libraryId: library.id,
+            workId: work.id,
+            deviceKey: Platform.operatingSystem,
+            readerKind: readerKind,
+          );
+          if (profile != null) {
+            await saveReaderProfile(
+              serverId: server.id,
+              libraryId: library.id,
+              workId: work.id,
+              deviceKey: Platform.operatingSystem,
+              readerKind: readerKind,
+              profile: profile,
+            );
+          }
+        } catch (_) {
+          // A download remains usable when optional reader settings cannot be
+          // reached; opening it online can mirror the profile later.
+        }
+      }
       try {
         final progress = await client.progress(server, library.id, work.id);
         if (progress != null) {
@@ -1266,6 +1300,98 @@ final class FundusOfflineStore {
       finished: finished,
       operationId: 'offline-$operationId',
     );
+  }
+
+  Future<Map<String, Object?>?> loadReaderProfile({
+    required String serverId,
+    required String libraryId,
+    required String workId,
+    required String deviceKey,
+    required String readerKind,
+  }) async {
+    final fallback = await _fallbackContaining(serverId, libraryId, workId);
+    if (fallback != null) {
+      return fallback.loadReaderProfile(
+        serverId: serverId,
+        libraryId: libraryId,
+        workId: workId,
+        deviceKey: deviceKey,
+        readerKind: readerKind,
+      );
+    }
+    final directory = await _workDirectory(serverId, libraryId, workId);
+    final file = File(p.join(directory.path, 'reader-settings.json'));
+    if (!await file.exists()) return null;
+    try {
+      final value = jsonDecode(await file.readAsString());
+      if (value is! Map) return null;
+      final devices = value['devices'];
+      if (devices is! Map) return null;
+      final device = devices[deviceKey];
+      if (device is! Map) return null;
+      final profile = device[readerKind];
+      return profile is Map
+          ? Map<String, Object?>.from(profile.cast<Object?, Object?>())
+          : null;
+    } on FileSystemException {
+      return null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  Future<void> saveReaderProfile({
+    required String serverId,
+    required String libraryId,
+    required String workId,
+    required String deviceKey,
+    required String readerKind,
+    required Map<String, Object?> profile,
+  }) async {
+    final fallback = await _fallbackContaining(serverId, libraryId, workId);
+    if (fallback != null) {
+      await fallback.saveReaderProfile(
+        serverId: serverId,
+        libraryId: libraryId,
+        workId: workId,
+        deviceKey: deviceKey,
+        readerKind: readerKind,
+        profile: profile,
+      );
+      return;
+    }
+    final directory = await _workDirectory(serverId, libraryId, workId);
+    if (!await File(p.join(directory.path, 'manifest.json')).exists()) return;
+    final file = File(p.join(directory.path, 'reader-settings.json'));
+    var values = <String, Object?>{'format_version': 1};
+    if (await file.exists()) {
+      try {
+        final decoded = jsonDecode(await file.readAsString());
+        if (decoded is Map) {
+          values = Map<String, Object?>.from(decoded.cast<Object?, Object?>());
+        }
+      } on FileSystemException {
+        // An unreadable optional profile can be replaced atomically below.
+      } on FormatException {
+        // A malformed optional profile must not block reading.
+      }
+    }
+    final devices = values['devices'] is Map
+        ? Map<String, Object?>.from(values['devices'] as Map)
+        : <String, Object?>{};
+    final device = devices[deviceKey] is Map
+        ? Map<String, Object?>.from(devices[deviceKey] as Map)
+        : <String, Object?>{};
+    device[readerKind] = profile;
+    devices[deviceKey] = device;
+    values['devices'] = devices;
+    final partial = File('${file.path}.part');
+    await partial.writeAsString(
+      const JsonEncoder.withIndent('  ').convert(values),
+      flush: true,
+    );
+    if (await file.exists()) await file.delete();
+    await partial.rename(file.path);
   }
 
   Future<List<FundusOfflinePendingProgress>> pendingProgress() async {

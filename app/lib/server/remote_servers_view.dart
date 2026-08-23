@@ -3337,6 +3337,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         ? storedPosition?.scrollOffset
         : null;
     Map<String, Object?>? portableProfile;
+    var profileLoadedFromServer = false;
     if (!skipServerLookup) {
       try {
         portableProfile = await _client.readerProfile(
@@ -3346,7 +3347,27 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           deviceKey: Platform.operatingSystem,
           readerKind: 'comic',
         );
+        profileLoadedFromServer = portableProfile != null;
       } catch (_) {}
+    }
+    portableProfile ??= offlineWork == null
+        ? null
+        : await _offlineStore.loadReaderProfile(
+            serverId: server.id,
+            libraryId: library.id,
+            workId: work.id,
+            deviceKey: Platform.operatingSystem,
+            readerKind: 'comic',
+          );
+    if (profileLoadedFromServer && offlineWork != null) {
+      await _offlineStore.saveReaderProfile(
+        serverId: server.id,
+        libraryId: library.id,
+        workId: work.id,
+        deviceKey: Platform.operatingSystem,
+        readerKind: 'comic',
+        profile: portableProfile!,
+      );
     }
     var profile = portableProfile == null
         ? await PublicationReaderSettings.loadComicProfile(workId: work.id)
@@ -3451,6 +3472,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           profile,
           workId: work.id,
         );
+        if (offlineWork != null) {
+          await _offlineStore.saveReaderProfile(
+            serverId: server.id,
+            libraryId: library.id,
+            workId: work.id,
+            deviceKey: Platform.operatingSystem,
+            readerKind: 'comic',
+            profile: profile.toJson(),
+          );
+        }
         if (!skipServerLookup) {
           try {
             final saved = await _runWithReconnect(
@@ -3763,6 +3794,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     final syncAnnotations =
         !skipServerLookup && await AnnotationSyncSettings.enabled();
     Map<String, Object?>? portableProfile;
+    var profileLoadedFromServer = false;
     if (!skipServerLookup) {
       try {
         portableProfile = await _client.readerProfile(
@@ -3772,7 +3804,27 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           deviceKey: Platform.operatingSystem,
           readerKind: 'epub',
         );
+        profileLoadedFromServer = portableProfile != null;
       } catch (_) {}
+    }
+    portableProfile ??= offlineWork == null
+        ? null
+        : await _offlineStore.loadReaderProfile(
+            serverId: server.id,
+            libraryId: library.id,
+            workId: work.id,
+            deviceKey: Platform.operatingSystem,
+            readerKind: 'epub',
+          );
+    if (profileLoadedFromServer && offlineWork != null) {
+      await _offlineStore.saveReaderProfile(
+        serverId: server.id,
+        libraryId: library.id,
+        workId: work.id,
+        deviceKey: Platform.operatingSystem,
+        readerKind: 'epub',
+        profile: portableProfile!,
+      );
     }
     var profile = portableProfile == null
         ? await PublicationReaderSettings.loadReflowProfile(workId: work.id)
@@ -3952,6 +4004,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           profile,
           workId: work.id,
         );
+        if (offlineWork != null) {
+          await _offlineStore.saveReaderProfile(
+            serverId: server.id,
+            libraryId: library.id,
+            workId: work.id,
+            deviceKey: Platform.operatingSystem,
+            readerKind: 'epub',
+            profile: profile.toJson(),
+          );
+        }
         if (!skipServerLookup) {
           try {
             final saved = await _runWithReconnect(

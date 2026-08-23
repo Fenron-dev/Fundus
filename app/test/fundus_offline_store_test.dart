@@ -170,11 +170,37 @@ void main() {
       expect(progress?.mediaPosition?.numericValue, 8);
       expect(await portableStore.pendingProgress(), hasLength(1));
 
+      await portableStore.saveReaderProfile(
+        serverId: serverId,
+        libraryId: libraryId,
+        workId: workId,
+        deviceKey: 'android',
+        readerKind: 'comic',
+        profile: const {'layout': 'webtoon', 'page_scale': 'fitWidth'},
+      );
+      final profileBeforeAdoption = await deviceStore.loadReaderProfile(
+        serverId: serverId,
+        libraryId: libraryId,
+        workId: workId,
+        deviceKey: 'android',
+        readerKind: 'comic',
+      );
+      expect(profileBeforeAdoption?['layout'], 'webtoon');
+      expect(profileBeforeAdoption?['page_scale'], 'fitWidth');
+
       expect(await portableStore.adoptFallbackDownloads(), 1);
       await deviceRoot.delete(recursive: true);
       final adopted = (await portableStore.listAll()).single;
       expect(adopted.title, 'Test-Manga');
       expect(adopted.progress?.mediaPosition?.numericValue, 8);
+      final profileAfterAdoption = await portableStore.loadReaderProfile(
+        serverId: serverId,
+        libraryId: libraryId,
+        workId: workId,
+        deviceKey: 'android',
+        readerKind: 'comic',
+      );
+      expect(profileAfterAdoption, profileBeforeAdoption);
       expect(
         await File('${portableRoot.path}/$key/manifest.json').exists(),
         isTrue,
