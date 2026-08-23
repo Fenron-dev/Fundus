@@ -32,22 +32,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Restore preview signing key
-        uses: actions/cache@v5
-        with:
-          path: ~/.android/debug.keystore
-          key: fundus-android-preview-signing-v1
-
-      - name: Create preview signing key when missing
+      - name: Restore stable preview signing key
+        env:
+          FUNDUS_ANDROID_KEYSTORE_BASE64: ${{ secrets.FUNDUS_ANDROID_KEYSTORE_BASE64 }}
         run: |
-          if [ ! -f "$HOME/.android/debug.keystore" ]; then
-            mkdir -p "$HOME/.android"
-            keytool -genkeypair -v \
-              -keystore "$HOME/.android/debug.keystore" \
-              -storepass android -alias androiddebugkey -keypass android \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=Fundus Preview,O=Fundus,C=DE"
-          fi
+          test -n "$FUNDUS_ANDROID_KEYSTORE_BASE64"
+          echo "$FUNDUS_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/fundus-preview.p12"
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2.23.0
@@ -61,6 +51,11 @@ jobs:
 
       - name: Build Android APK
         working-directory: app
+        env:
+          FUNDUS_ANDROID_STORE_FILE: ${{ runner.temp }}/fundus-preview.p12
+          FUNDUS_ANDROID_STORE_PASSWORD: ${{ secrets.FUNDUS_ANDROID_STORE_PASSWORD }}
+          FUNDUS_ANDROID_KEY_ALIAS: ${{ secrets.FUNDUS_ANDROID_KEY_ALIAS }}
+          FUNDUS_ANDROID_KEY_PASSWORD: ${{ secrets.FUNDUS_ANDROID_KEY_PASSWORD }}
         run: flutter build apk --release --build-number=${{ github.run_number }}
 
       - name: Upload preview

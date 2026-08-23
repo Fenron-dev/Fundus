@@ -30,11 +30,34 @@ android {
         versionName = flutter.versionName
     }
 
+    val previewStoreFile = System.getenv("FUNDUS_ANDROID_STORE_FILE")
+    val previewStorePassword = System.getenv("FUNDUS_ANDROID_STORE_PASSWORD")
+    val previewKeyAlias = System.getenv("FUNDUS_ANDROID_KEY_ALIAS")
+    val previewKeyPassword = System.getenv("FUNDUS_ANDROID_KEY_PASSWORD")
+    val hasPreviewSigning = listOf(
+        previewStoreFile,
+        previewStorePassword,
+        previewKeyAlias,
+        previewKeyPassword,
+    ).all { !it.isNullOrBlank() }
+
+    signingConfigs {
+        if (hasPreviewSigning) {
+            create("preview") {
+                storeFile = file(previewStoreFile!!)
+                storePassword = previewStorePassword
+                keyAlias = previewKeyAlias
+                keyPassword = previewKeyPassword
+                storeType = "PKCS12"
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(
+                if (hasPreviewSigning) "preview" else "debug",
+            )
         }
     }
 }
