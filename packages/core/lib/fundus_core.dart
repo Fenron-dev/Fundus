@@ -17,6 +17,7 @@ export 'src/model/playback_session.dart';
 export 'src/playback/library_playback.dart';
 export 'src/publication/publication_engine.dart';
 export 'src/publication/epub_package.dart';
+export 'src/publication/publication_source.dart';
 export 'src/publication/reflow_document.dart';
 export 'src/scan/audio_technical_metadata.dart';
 export 'src/scan/library_scanner.dart';

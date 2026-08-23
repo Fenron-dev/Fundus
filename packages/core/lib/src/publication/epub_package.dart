@@ -5,6 +5,8 @@ import 'package:archive/archive.dart';
 import 'package:epubx_kuebiko/epubx_kuebiko.dart' as epub;
 import 'package:path/path.dart' as p;
 
+import 'publication_source.dart';
+
 final class EpubPackageLimits {
   const EpubPackageLimits({
     this.maxArchiveBytes = 256 * 1024 * 1024,
@@ -73,13 +75,20 @@ final class EpubPackageAdapter {
         'Die EPUB-Datei ist nicht mehr am gespeicherten Ort vorhanden.',
       );
     }
-    final length = await file.length();
-    if (length > limits.maxArchiveBytes) {
+    return openSource(FilePublicationSource(path));
+  }
+
+  Future<EpubPublication> openSource(PublicationSource source) async {
+    try {
+      final bytes = await source.readAll(maxBytes: limits.maxArchiveBytes);
+      return openBytes(bytes, sourceName: source.name);
+    } on PublicationSourceTooLargeException {
       throw const EpubPackageException(
         'Die EPUB-Datei überschreitet die konfigurierte Größenbegrenzung.',
       );
+    } on PublicationSourceReadException catch (error) {
+      throw EpubPackageException(error.message);
     }
-    return openBytes(await file.readAsBytes(), sourceName: p.basename(path));
   }
 
   Future<EpubPublication> openBytes(

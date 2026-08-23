@@ -15,13 +15,40 @@ bool supportsInternalEpubReader(String path) =>
 Future<EpubPublication> _openEpubPackage(String path) =>
     const EpubPackageAdapter().openFile(path);
 
+Future<EpubPublication> _openEpubBytes(
+  ({Uint8List bytes, String sourceName}) input,
+) => const EpubPackageAdapter().openBytes(
+  input.bytes,
+  sourceName: input.sourceName,
+);
+
 /// Loads an EPUB on a worker isolate for detail views that need the real TOC.
 Future<EpubPublication> loadEpubPublication(String path) =>
     compute(_openEpubPackage, path);
 
+/// Loads EPUB bytes from the same source contract for local, offline and
+/// remote works. Only the transferable bytes enter the parser isolate.
+Future<EpubPublication> loadEpubPublicationSource(
+  PublicationSource source,
+) async {
+  try {
+    final bytes = await source.readAll(
+      maxBytes: const EpubPackageLimits().maxArchiveBytes,
+    );
+    return compute(_openEpubBytes, (bytes: bytes, sourceName: source.name));
+  } on PublicationSourceTooLargeException {
+    throw const EpubPackageException(
+      'Die EPUB-Datei überschreitet die konfigurierte Größenbegrenzung.',
+    );
+  } on PublicationSourceReadException catch (error) {
+    throw EpubPackageException(error.message);
+  }
+}
+
 Future<void> showEpubReader(
   BuildContext context, {
-  required String path,
+  String? path,
+  PublicationSource? source,
   MediaPosition? initialPosition,
   int? initialChapterIndex,
   String? fileId,
@@ -39,6 +66,11 @@ Future<void> showEpubReader(
   ReflowDeleteAnnotation? onDeleteHighlight,
   Future<void> Function()? onExportAnnotations,
 }) async {
+  if ((path == null) == (source == null)) {
+    throw ArgumentError('Genau eine EPUB-Quelle muss angegeben werden.');
+  }
+  final publicationSource =
+      source ?? FilePublicationSource(path!, kind: PublicationSourceKind.local);
   final navigator = Navigator.of(context, rootNavigator: true);
   var loadingVisible = true;
   final loadingRoute = showDialog<void>(
@@ -61,7 +93,7 @@ Future<void> showEpubReader(
   await Future<void>.delayed(Duration.zero);
   late final EpubPublication publication;
   try {
-    publication = await compute(_openEpubPackage, path);
+    publication = await loadEpubPublicationSource(publicationSource);
   } finally {
     if (loadingVisible && navigator.mounted && navigator.canPop()) {
       navigator.pop();

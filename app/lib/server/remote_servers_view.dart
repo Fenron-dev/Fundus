@@ -3835,7 +3835,13 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     try {
       await showEpubReader(
         context,
-        path: file.path,
+        source: FilePublicationSource(
+          file.path,
+          kind: offlineTrack == null
+              ? PublicationSourceKind.remote
+              : PublicationSourceKind.offline,
+          name: track.title,
+        ),
         fileId: track.id,
         relativePath: track.title,
         initialChapterIndex: initialChapterIndex,

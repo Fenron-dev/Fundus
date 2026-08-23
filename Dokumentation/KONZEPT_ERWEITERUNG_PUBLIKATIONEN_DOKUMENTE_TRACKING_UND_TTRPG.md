@@ -105,6 +105,18 @@ Der Reflow Reader besteht deshalb aus getrennten Schichten:
 6. Die gemeinsame Media Experience Shell verwaltet Profile, Konflikte,
    Vollbild, Gerätewechsel und lokale/Remote-/Offline-Parität.
 
+### Implementierungsstand der Quellenabstraktion
+
+Der erste vertikale Schnitt ist umgesetzt: `PublicationSource` beschreibt
+lokale Dateien, dauerhafte Offline-Dateien, Speicherbytes und Callback-basierte
+Remote-/Range-Quellen über denselben Vertrag. Bytebereiche sind halb-offen
+(`start` inklusive, `end` exklusive), werden vor dem Zugriff validiert und ein
+vollständiger Lesevorgang weist unvollständige Antworten sowie zu große Quellen
+vor dem Parser zurück. Der EPUB-Paketadapter und der Remote-/Offline-EPUB-Reader
+verwenden diesen Vertrag bereits. Als nächster Schritt werden Comicseiten und
+Fixed Documents auf stabile Seiten-/Range-Quellen sowie gemeinsame
+Detail-ViewModels umgestellt.
+
 Fundus speichert niemals nur eine virtuelle Seite. Die kanonische Position
 enthält mindestens Werk-/Datei-ID, Spine-/Kapitel-ID, EPUB-CFI oder stabilen
 Textanker, kurzen Textkontext und einen prozentualen Fallback. Kapitel- und

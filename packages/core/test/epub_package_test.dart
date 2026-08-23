@@ -28,6 +28,15 @@ void main() {
     },
   );
 
+  test('opens the same EPUB through the common publication source', () async {
+    final publication = await const EpubPackageAdapter().openSource(
+      MemoryPublicationSource(_epubFixture(), name: 'source.epub'),
+    );
+
+    expect(publication.title, 'Die Testnovel');
+    expect(publication.chapters, hasLength(2));
+  });
+
   test('rejects an EPUB entry that can escape the package root', () async {
     final archive = Archive()
       ..addFile(ArchiveFile.string('META-INF/container.xml', '<container/>'))
