@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -6,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:path/path.dart' as p;
 
+import '../diagnostics/fundus_diagnostics.dart';
 import 'zip_archive_browser.dart';
 
 const _comicImageExtensions = {
@@ -230,6 +232,27 @@ ComicReaderTapZone comicReaderTapZoneAt(
   if (normalized < edgeFraction) return ComicReaderTapZone.left;
   if (normalized > 1 - edgeFraction) return ComicReaderTapZone.right;
   return ComicReaderTapZone.center;
+}
+
+ComicReaderTapZone comicReaderTapZoneAtPoint(
+  Offset localPosition,
+  Size viewport, {
+  double edgeFraction = .3,
+  double verticalNavigationInset = .2,
+}) {
+  if (viewport.height <= 0) return ComicReaderTapZone.center;
+  final normalizedY = localPosition.dy / viewport.height;
+  // Keep the top and bottom bands exclusively for showing or hiding reader
+  // chrome. A tap near a toolbar must never be interpreted as page navigation.
+  if (normalizedY < verticalNavigationInset ||
+      normalizedY > 1 - verticalNavigationInset) {
+    return ComicReaderTapZone.center;
+  }
+  return comicReaderTapZoneAt(
+    localPosition.dx,
+    viewport.width,
+    edgeFraction: edgeFraction,
+  );
 }
 
 Future<ComicBookViewerResult?> showComicBookViewer(
@@ -475,9 +498,10 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
       setState(() => _controlsVisible = !_controlsVisible);
 
   void _handleTap(TapUpDetails details, int pageCount) {
-    var zone = comicReaderTapZoneAt(
-      details.localPosition.dx,
-      context.size?.width ?? MediaQuery.sizeOf(context).width,
+    final viewport = context.size ?? MediaQuery.sizeOf(context);
+    var zone = comicReaderTapZoneAtPoint(
+      details.localPosition,
+      viewport,
       edgeFraction: _profile.tapZoneWidth,
     );
     if (_profile.invertTapZones) {
@@ -487,6 +511,23 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
         ComicReaderTapZone.right => ComicReaderTapZone.left,
       };
     }
+    unawaited(
+      FundusDiagnostics.instance.record('comic_reader.tap', {
+        'chapter': p.basename(widget.archivePath),
+        'layout': _profile.layout.name,
+        'page': _currentPage,
+        'page_count': pageCount,
+        'scroll_offset': _currentScrollOffset,
+        'zone': zone.name,
+        'x': viewport.width <= 0
+            ? null
+            : details.localPosition.dx / viewport.width,
+        'y': viewport.height <= 0
+            ? null
+            : details.localPosition.dy / viewport.height,
+        'controls_visible_before': _controlsVisible,
+      }),
+    );
     switch (zone) {
       case ComicReaderTapZone.left:
         if (_canGoLeft(pageCount)) _goLeft(pageCount);
@@ -922,6 +963,15 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
   int _pageCount = 0;
 
   void _seekToPage(int page, List<List<int>> groups) {
+    unawaited(
+      FundusDiagnostics.instance.record('comic_reader.programmatic_seek', {
+        'chapter': p.basename(widget.archivePath),
+        'layout': _profile.layout.name,
+        'from_page': _currentPage,
+        'target_page': page,
+        'scroll_offset': _currentScrollOffset,
+      }),
+    );
     if (_continuous) {
       final target = _continuousPageKeys[page]?.currentContext;
       if (target != null) {
@@ -1634,6 +1684,8 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
   @override
   Widget build(BuildContext context) => Dialog.fullscreen(
     child: Scaffold(
+      extendBodyBehindAppBar: true,
+      extendBody: true,
       appBar: !_controlsVisible
           ? null
           : AppBar(
@@ -1976,123 +2028,126 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
               behavior: HitTestBehavior.translucent,
               onTapUp: (details) => _handleTap(details, pages.length),
               onDoubleTap: _toggleImmersive,
-              child: Column(
+              child: Stack(
                 children: [
-                  Expanded(
-                    child: Row(
-                      children: [
-                        if (_controlsVisible &&
-                            progressPlacement ==
-                                PublicationProgressPlacement.left)
-                          SizedBox(
-                            width: 4,
-                            child: RotatedBox(
-                              quarterTurns: 3,
-                              child: LinearProgressIndicator(
-                                value: progressValue,
-                              ),
-                            ),
-                          ),
-                        Expanded(
-                          child: ColoredBox(
-                            color: Colors.black,
-                            child: _buildReaderSurface(pages, groups),
-                          ),
-                        ),
-                        if (_controlsVisible &&
-                            progressPlacement ==
-                                PublicationProgressPlacement.right)
-                          SizedBox(
-                            width: 4,
-                            child: RotatedBox(
-                              quarterTurns: 3,
-                              child: LinearProgressIndicator(
-                                value: progressValue,
-                              ),
-                            ),
-                          ),
-                      ],
+                  Positioned.fill(
+                    child: ColoredBox(
+                      color: Colors.black,
+                      child: _buildReaderSurface(pages, groups),
                     ),
                   ),
+                  if (_controlsVisible &&
+                      progressPlacement == PublicationProgressPlacement.left)
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: 4,
+                      child: RotatedBox(
+                        quarterTurns: 3,
+                        child: LinearProgressIndicator(value: progressValue),
+                      ),
+                    ),
+                  if (_controlsVisible &&
+                      progressPlacement == PublicationProgressPlacement.right)
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: 4,
+                      child: RotatedBox(
+                        quarterTurns: 3,
+                        child: LinearProgressIndicator(value: progressValue),
+                      ),
+                    ),
                   if (_controlsVisible)
-                    SafeArea(
-                      top: false,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (progressPlacement ==
-                              PublicationProgressPlacement.bottom)
-                            LinearProgressIndicator(
-                              minHeight: 3,
-                              value: progressValue,
-                            ),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            child: Row(
-                              children: [
-                                IconButton(
-                                  onPressed: _canGoLeft(pages.length)
-                                      ? () => _goLeft(pages.length)
-                                      : null,
-                                  tooltip: _rightToLeft
-                                      ? 'Nächste Seite'
-                                      : 'Vorherige Seite',
-                                  icon: const Icon(Icons.chevron_left),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: Material(
+                        color: Theme.of(context).colorScheme.surface,
+                        child: SafeArea(
+                          top: false,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (progressPlacement ==
+                                  PublicationProgressPlacement.bottom)
+                                LinearProgressIndicator(
+                                  minHeight: 3,
+                                  value: progressValue,
                                 ),
-                                IconButton(
-                                  onPressed: () =>
-                                      _showPageOverview(pages, groups),
-                                  tooltip: 'Seitenübersicht',
-                                  icon: const Icon(Icons.grid_view),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 8,
                                 ),
-                                Expanded(
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      if (widget.chapterCount != null)
-                                        Text(
-                                          'Kapitel ${(widget.chapterIndex ?? 0) + 1} '
-                                          'von ${widget.chapterCount}',
-                                          style: Theme.of(
-                                            context,
-                                          ).textTheme.labelMedium,
-                                        ),
-                                      Text(
-                                        comicPageLabel(
-                                          groups,
-                                          _currentPage,
-                                          pages.length,
-                                        ),
-                                        textAlign: TextAlign.center,
+                                child: Row(
+                                  children: [
+                                    IconButton(
+                                      onPressed: _canGoLeft(pages.length)
+                                          ? () => _goLeft(pages.length)
+                                          : null,
+                                      tooltip: _rightToLeft
+                                          ? 'Nächste Seite'
+                                          : 'Vorherige Seite',
+                                      icon: const Icon(Icons.chevron_left),
+                                    ),
+                                    IconButton(
+                                      onPressed: () =>
+                                          _showPageOverview(pages, groups),
+                                      tooltip: 'Seitenübersicht',
+                                      icon: const Icon(Icons.grid_view),
+                                    ),
+                                    Expanded(
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          if (widget.chapterCount != null)
+                                            Text(
+                                              'Kapitel ${(widget.chapterIndex ?? 0) + 1} '
+                                              'von ${widget.chapterCount}',
+                                              style: Theme.of(
+                                                context,
+                                              ).textTheme.labelMedium,
+                                            ),
+                                          Text(
+                                            comicPageLabel(
+                                              groups,
+                                              _currentPage,
+                                              pages.length,
+                                            ),
+                                            textAlign: TextAlign.center,
+                                          ),
+                                          if (widget.chapterTitle
+                                              case final title?)
+                                            Text(
+                                              title,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: Theme.of(
+                                                context,
+                                              ).textTheme.labelSmall,
+                                            ),
+                                        ],
                                       ),
-                                      if (widget.chapterTitle case final title?)
-                                        Text(
-                                          title,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: Theme.of(
-                                            context,
-                                          ).textTheme.labelSmall,
-                                        ),
-                                    ],
-                                  ),
+                                    ),
+                                    IconButton(
+                                      onPressed: _canGoRight(pages.length)
+                                          ? () => _goRight(pages.length)
+                                          : null,
+                                      tooltip: _rightToLeft
+                                          ? 'Vorherige Seite'
+                                          : 'Nächste Seite',
+                                      icon: const Icon(Icons.chevron_right),
+                                    ),
+                                  ],
                                 ),
-                                IconButton(
-                                  onPressed: _canGoRight(pages.length)
-                                      ? () => _goRight(pages.length)
-                                      : null,
-                                  tooltip: _rightToLeft
-                                      ? 'Vorherige Seite'
-                                      : 'Nächste Seite',
-                                  icon: const Icon(Icons.chevron_right),
-                                ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
                     ),
                 ],

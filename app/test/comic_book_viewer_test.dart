@@ -103,6 +103,27 @@ void main() {
     );
   });
 
+  test('top and bottom taps never trigger page navigation', () {
+    const viewport = Size(400, 800);
+
+    expect(
+      comicReaderTapZoneAtPoint(const Offset(10, 20), viewport),
+      ComicReaderTapZone.center,
+    );
+    expect(
+      comicReaderTapZoneAtPoint(const Offset(390, 780), viewport),
+      ComicReaderTapZone.center,
+    );
+    expect(
+      comicReaderTapZoneAtPoint(const Offset(10, 400), viewport),
+      ComicReaderTapZone.left,
+    );
+    expect(
+      comicReaderTapZoneAtPoint(const Offset(390, 400), viewport),
+      ComicReaderTapZone.right,
+    );
+  });
+
   test('overall progress combines chapter and page positions', () {
     expect(comicOverallProgress(page: 4, pageCount: 10), .5);
     expect(
