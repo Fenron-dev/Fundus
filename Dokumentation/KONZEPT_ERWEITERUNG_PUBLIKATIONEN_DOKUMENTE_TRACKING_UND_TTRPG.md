@@ -113,9 +113,14 @@ Remote-/Range-Quellen über denselben Vertrag. Bytebereiche sind halb-offen
 (`start` inklusive, `end` exklusive), werden vor dem Zugriff validiert und ein
 vollständiger Lesevorgang weist unvollständige Antworten sowie zu große Quellen
 vor dem Parser zurück. Der EPUB-Paketadapter und der Remote-/Offline-EPUB-Reader
-verwenden diesen Vertrag bereits. Als nächster Schritt werden Comicseiten und
-Fixed Documents auf stabile Seiten-/Range-Quellen sowie gemeinsame
-Detail-ViewModels umgestellt.
+verwenden diesen Vertrag bereits. Zusätzlich erhält die Comic Engine ihre
+Seiten über `ComicPageSource`: Der Viewer kennt nur neutrale Seiten-IDs, Namen
+und Größen sowie eine Materialisierungsoperation, aber weder einen absoluten
+Dateipfad noch `ZipArchiveEntry`. Der vorhandene CBZ-Adapter setzt den Vertrag
+für lokale Bibliotheken, Offline-Downloads und den begrenzten Remote-Cache um
+und meldet die Herkunft separat für die Diagnose. Als nächster Schritt folgen
+ein serverseitiger Seitenmanifest-/Einzelseiten-Endpunkt, der passende
+HTTP-Adapter, Fixed Documents und gemeinsame Detail-ViewModels.
 
 Fundus speichert niemals nur eine virtuelle Seite. Die kanonische Position
 enthält mindestens Werk-/Datei-ID, Spine-/Kapitel-ID, EPUB-CFI oder stabilen

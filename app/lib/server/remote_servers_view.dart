@@ -9,6 +9,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../diagnostics/fundus_diagnostics.dart';
 import '../library/comic_book_viewer.dart';
+import '../library/comic_page_source.dart';
 import '../library/document_file_opener.dart';
 import '../library/document_preview.dart';
 import '../library/epub_reader.dart';
@@ -3418,7 +3419,13 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       if (!mounted) return;
       final result = await showComicBookViewer(
         context,
-        archivePath: file.path,
+        pageSource: ArchiveComicPageSource(
+          file.path,
+          kind: offlineTrack == null
+              ? PublicationSourceKind.remote
+              : PublicationSourceKind.offline,
+          name: track.title,
+        ),
         initialPage: initialPage,
         initialElementId: initialElementId,
         initialScrollOffset: initialScrollOffset,
@@ -4104,7 +4111,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   Future<void> _openDocumentPath(String path) async {
     try {
       if (path.toLowerCase().endsWith('.cbz')) {
-        await showComicBookViewer(context, archivePath: path);
+        await showComicBookViewer(
+          context,
+          pageSource: ArchiveComicPageSource(path),
+        );
       } else if (supportsInternalEpubReader(path)) {
         final profile = await PublicationReaderSettings.loadReflowProfile();
         if (!mounted) return;

@@ -8,30 +8,11 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:path/path.dart' as p;
 
 import '../diagnostics/fundus_diagnostics.dart';
+import 'comic_page_source.dart';
 import 'zip_archive_browser.dart';
 
-const _comicImageExtensions = {
-  '.jpg',
-  '.jpeg',
-  '.png',
-  '.webp',
-  '.gif',
-  '.bmp',
-};
-
-List<ZipArchiveEntry> comicBookPages(ZipArchiveSnapshot snapshot) {
-  final pages = snapshot.entries
-      .where(
-        (entry) =>
-            !entry.isDirectory &&
-            _comicImageExtensions.contains(
-              p.extension(entry.path).toLowerCase(),
-            ),
-      )
-      .toList(growable: false);
-  pages.sort((left, right) => _naturalCompare(left.path, right.path));
-  return pages;
-}
+List<ZipArchiveEntry> comicBookPages(ZipArchiveSnapshot snapshot) =>
+    comicPageEntries(snapshot);
 
 List<List<int>> comicPageGroups(
   int pageCount, {
@@ -257,7 +238,7 @@ ComicReaderTapZone comicReaderTapZoneAtPoint(
 
 Future<ComicBookViewerResult?> showComicBookViewer(
   BuildContext context, {
-  required String archivePath,
+  required ComicPageSource pageSource,
   int initialPage = 0,
   String? initialElementId,
   double? initialScrollOffset,
@@ -282,7 +263,7 @@ Future<ComicBookViewerResult?> showComicBookViewer(
   barrierDismissible: false,
   useSafeArea: false,
   builder: (context) => _ComicBookDialog(
-    archivePath: archivePath,
+    pageSource: pageSource,
     initialPage: initialPage,
     initialElementId: initialElementId,
     initialScrollOffset: initialScrollOffset,
@@ -342,7 +323,7 @@ final class ComicBookViewerResult {
 
 class _ComicBookDialog extends StatefulWidget {
   const _ComicBookDialog({
-    required this.archivePath,
+    required this.pageSource,
     required this.initialPage,
     required this.initialElementId,
     required this.initialScrollOffset,
@@ -362,7 +343,7 @@ class _ComicBookDialog extends StatefulWidget {
     required this.onDeleteBookmark,
   });
 
-  final String archivePath;
+  final ComicPageSource pageSource;
   final int initialPage;
   final String? initialElementId;
   final double? initialScrollOffset;
@@ -393,16 +374,15 @@ class _ComicBookDialog extends StatefulWidget {
 }
 
 class _ComicBookDialogState extends State<_ComicBookDialog> {
-  final _service = const ZipArchiveService();
   final Map<int, Future<String>> _extractedPages = {};
   final Map<int, String> _extractedPagePaths = {};
   final Map<int, Size> _pageSizes = {};
   final GlobalKey _continuousViewportKey = GlobalKey();
-  late final Future<List<ZipArchiveEntry>> _pagesFuture;
+  late final Future<List<ComicPage>> _pagesFuture;
   PageController? _controller;
   ScrollController? _continuousController;
   final Map<int, GlobalKey> _continuousPageKeys = {};
-  List<ZipArchiveEntry> _loadedPages = const [];
+  List<ComicPage> _loadedPages = const [];
   int _currentPage = 0;
   double? _currentScrollOffset;
   bool _reportedInitialPage = false;
@@ -422,8 +402,8 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     _pagesFuture = _loadPages();
   }
 
-  Future<List<ZipArchiveEntry>> _loadPages() async {
-    final pages = comicBookPages(await _service.inspect(widget.archivePath));
+  Future<List<ComicPage>> _loadPages() async {
+    final pages = await widget.pageSource.pages();
     if (pages.isEmpty || !_continuous) return pages;
     // Continuous layouts must know every page extent before the ListView is
     // shown. Replacing fixed-height loading placeholders with the real image
@@ -434,7 +414,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
   }
 
   Future<void> _preparePagesThrough(
-    List<ZipArchiveEntry> pages,
+    List<ComicPage> pages,
     int targetPage,
   ) async {
     final end = (targetPage + _profile.preloadCount).clamp(0, pages.length - 1);
@@ -443,12 +423,9 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
         if (!_extractedPagePaths.containsKey(index)) pages[index],
     ];
     if (targets.isEmpty) return;
-    final extracted = await _service.extractToTemporaryFiles(
-      widget.archivePath,
-      targets,
-    );
+    final extracted = await widget.pageSource.materialize(targets);
     for (var index = 0; index <= end; index++) {
-      final path = extracted[pages[index].path];
+      final path = extracted[pages[index].id];
       if (path == null) continue;
       _extractedPagePaths[index] = path;
       _extractedPages[index] = Future.value(path);
@@ -514,7 +491,8 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     }
     unawaited(
       FundusDiagnostics.instance.record('comic_reader.tap', {
-        'chapter': p.basename(widget.archivePath),
+        'chapter': widget.pageSource.name,
+        'source': widget.pageSource.kind.name,
         'layout': _profile.layout.name,
         'page': _currentPage,
         'page_count': pageCount,
@@ -788,7 +766,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     Navigator.pop(context, ComicBookViewerResult.selectChapter(selected));
   }
 
-  Future<void> _addPageBookmark(List<ZipArchiveEntry> pages) async {
+  Future<void> _addPageBookmark(List<ComicPage> pages) async {
     final callback = widget.onAddBookmark;
     if (callback == null || _currentPage >= pages.length) return;
     final controller = TextEditingController(text: 'Seite ${_currentPage + 1}');
@@ -829,7 +807,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
           total: pages.length.toDouble(),
           fileId: widget.chapterFileId,
           chapterId: widget.chapterTitle,
-          elementId: pages[_currentPage].path,
+          elementId: pages[_currentPage].id,
           scrollOffset: _currentScrollOffset,
           label:
               'Kapitel ${(widget.chapterIndex ?? 0) + 1} · '
@@ -855,7 +833,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
   }
 
   Future<void> _showPageBookmarks(
-    List<ZipArchiveEntry> pages,
+    List<ComicPage> pages,
     List<List<int>> groups,
   ) async {
     await showModalBottomSheet<void>(
@@ -966,7 +944,8 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
   void _seekToPage(int page, List<List<int>> groups) {
     unawaited(
       FundusDiagnostics.instance.record('comic_reader.programmatic_seek', {
-        'chapter': p.basename(widget.archivePath),
+        'chapter': widget.pageSource.name,
+        'source': widget.pageSource.kind.name,
         'layout': _profile.layout.name,
         'from_page': _currentPage,
         'target_page': page,
@@ -1001,11 +980,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     );
   }
 
-  void _selectPage(
-    int page,
-    List<ZipArchiveEntry> pages, {
-    double? scrollOffset,
-  }) {
+  void _selectPage(int page, List<ComicPage> pages, {double? scrollOffset}) {
     if (page < 0 || page >= pages.length) return;
     _currentScrollOffset = scrollOffset;
     if (page == _currentPage) return;
@@ -1029,13 +1004,13 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     widget.onPositionChanged?.call(
       page,
       pages.length,
-      pages[page].path,
+      pages[page].id,
       scrollOffset,
     );
     _preloadAround(page, pages);
   }
 
-  void _preloadAround(int page, List<ZipArchiveEntry> pages) {
+  void _preloadAround(int page, List<ComicPage> pages) {
     final start = (page - _profile.preloadCount).clamp(0, pages.length - 1);
     final end = (page + _profile.preloadCount).clamp(0, pages.length - 1);
     for (var index = start; index <= end; index++) {
@@ -1043,19 +1018,22 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     }
   }
 
-  Future<String> _pageFuture(int page, ZipArchiveEntry entry) =>
+  Future<String> _pageFuture(int page, ComicPage entry) =>
       _extractedPages.putIfAbsent(page, () async {
-        final path = await _service.extractToTemporaryFile(
-          widget.archivePath,
-          entry,
-        );
+        final extracted = await widget.pageSource.materialize([entry]);
+        final path = extracted[entry.id];
+        if (path == null) {
+          throw const ZipArchiveException(
+            'Die Comicseite konnte nicht materialisiert werden.',
+          );
+        }
         _extractedPagePaths[page] = path;
         _pageSizes[page] = await _readImageSize(path);
         return path;
       });
 
   Future<void> _showPageOverview(
-    List<ZipArchiveEntry> pages,
+    List<ComicPage> pages,
     List<List<int>> groups,
   ) async {
     final selectedPage = await showModalBottomSheet<int>(
@@ -1082,7 +1060,9 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
                           ),
                           Text(
                             widget.chapterTitle ??
-                                p.basenameWithoutExtension(widget.archivePath),
+                                p.basenameWithoutExtension(
+                                  widget.pageSource.name,
+                                ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -1189,7 +1169,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     _selectPage(selectedPage, pages);
   }
 
-  void _trackContinuousPosition(List<ZipArchiveEntry> pages) {
+  void _trackContinuousPosition(List<ComicPage> pages) {
     if (!mounted ||
         !_continuousTrackingReady ||
         !(_continuousController?.hasClients ?? false)) {
@@ -1228,28 +1208,27 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     }
   }
 
-  Widget _buildPagedReader(
-    List<ZipArchiveEntry> pages,
-    List<List<int>> groups,
-  ) => PageView.builder(
-    controller: _controller,
-    reverse: _rightToLeft,
-    itemCount: groups.length,
-    onPageChanged: (unit) => _selectPage(groups[unit].first, pages),
-    itemBuilder: (context, unit) {
-      final group = _rightToLeft
-          ? groups[unit].reversed.toList(growable: false)
-          : groups[unit];
-      if (group.length == 1) return _buildPage(pages, group.single);
-      return Row(
-        children: [
-          for (final page in group) Expanded(child: _buildPage(pages, page)),
-        ],
+  Widget _buildPagedReader(List<ComicPage> pages, List<List<int>> groups) =>
+      PageView.builder(
+        controller: _controller,
+        reverse: _rightToLeft,
+        itemCount: groups.length,
+        onPageChanged: (unit) => _selectPage(groups[unit].first, pages),
+        itemBuilder: (context, unit) {
+          final group = _rightToLeft
+              ? groups[unit].reversed.toList(growable: false)
+              : groups[unit];
+          if (group.length == 1) return _buildPage(pages, group.single);
+          return Row(
+            children: [
+              for (final page in group)
+                Expanded(child: _buildPage(pages, page)),
+            ],
+          );
+        },
       );
-    },
-  );
 
-  Widget _buildContinuousReader(List<ZipArchiveEntry> pages) => LayoutBuilder(
+  Widget _buildContinuousReader(List<ComicPage> pages) => LayoutBuilder(
     builder: (context, constraints) {
       final viewport = Size(constraints.maxWidth, constraints.maxHeight);
       _continuousController ??= ScrollController(
@@ -1399,7 +1378,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
   }
 
   Widget _buildPage(
-    List<ZipArchiveEntry> pages,
+    List<ComicPage> pages,
     int page, {
     bool continuous = false,
     bool continuousHorizontal = false,
@@ -1479,20 +1458,18 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     return InteractiveViewer(minScale: .5, maxScale: 6, child: pageContent);
   }
 
-  Widget _buildReaderSurface(
-    List<ZipArchiveEntry> pages,
-    List<List<int>> groups,
-  ) => LayoutBuilder(
-    builder: (context, constraints) => Center(
-      child: SizedBox(
-        width: constraints.maxWidth * _profile.readerWidth,
-        height: constraints.maxHeight,
-        child: _continuous
-            ? _buildContinuousReader(pages)
-            : _buildPagedReader(pages, groups),
-      ),
-    ),
-  );
+  Widget _buildReaderSurface(List<ComicPage> pages, List<List<int>> groups) =>
+      LayoutBuilder(
+        builder: (context, constraints) => Center(
+          child: SizedBox(
+            width: constraints.maxWidth * _profile.readerWidth,
+            height: constraints.maxHeight,
+            child: _continuous
+                ? _buildContinuousReader(pages)
+                : _buildPagedReader(pages, groups),
+          ),
+        ),
+      );
 
   Future<void> _showLayoutTuning() => showModalBottomSheet<void>(
     context: context,
@@ -1670,7 +1647,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
       widget.onPositionChanged?.call(
         _currentPage,
         _loadedPages.length,
-        _loadedPages[_currentPage].path,
+        _loadedPages[_currentPage].id,
         _currentScrollOffset,
       );
     }
@@ -1696,7 +1673,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
                 icon: const Icon(Icons.close),
               ),
               title: Text(
-                p.basenameWithoutExtension(widget.archivePath),
+                p.basenameWithoutExtension(widget.pageSource.name),
                 overflow: TextOverflow.ellipsis,
               ),
               actions: [
@@ -1919,7 +1896,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
                 ),
               ],
             ),
-      body: FutureBuilder<List<ZipArchiveEntry>>(
+      body: FutureBuilder<List<ComicPage>>(
         future: _pagesFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
@@ -1944,9 +1921,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
           _loadedPages = pages;
           final anchoredPage = widget.initialElementId == null
               ? -1
-              : pages.indexWhere(
-                  (page) => page.path == widget.initialElementId,
-                );
+              : pages.indexWhere((page) => page.id == widget.initialElementId);
           final initial =
               (anchoredPage >= 0 ? anchoredPage : widget.initialPage).clamp(
                 0,
@@ -1973,7 +1948,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
               widget.onPositionChanged?.call(
                 initial,
                 pages.length,
-                pages[initial].path,
+                pages[initial].id,
                 widget.initialScrollOffset,
               );
               _preloadAround(initial, pages);
@@ -2250,27 +2225,3 @@ class _TapZonePreview extends StatelessWidget {
     );
   }
 }
-
-int _naturalCompare(String left, String right) {
-  final leftParts = _naturalParts(left.toLowerCase());
-  final rightParts = _naturalParts(right.toLowerCase());
-  for (
-    var index = 0;
-    index < leftParts.length && index < rightParts.length;
-    index++
-  ) {
-    final leftPart = leftParts[index];
-    final rightPart = rightParts[index];
-    final leftNumber = int.tryParse(leftPart);
-    final rightNumber = int.tryParse(rightPart);
-    final comparison = leftNumber != null && rightNumber != null
-        ? leftNumber.compareTo(rightNumber)
-        : leftPart.compareTo(rightPart);
-    if (comparison != 0) return comparison;
-  }
-  return leftParts.length.compareTo(rightParts.length);
-}
-
-List<String> _naturalParts(String value) => RegExp(
-  r'\d+|\D+',
-).allMatches(value).map((match) => match.group(0)!).toList();

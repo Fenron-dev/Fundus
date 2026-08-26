@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 import 'diagnostics/fundus_diagnostics.dart';
 import 'library/android_storage_access.dart';
 import 'library/comic_book_viewer.dart';
+import 'library/comic_page_source.dart';
 import 'library/document_file_opener.dart';
 import 'library/document_preview.dart';
 import 'library/epub_reader.dart';
@@ -5128,7 +5129,7 @@ class _DetailPanelState extends State<_DetailPanel> {
       if (!mounted) return;
       await showComicBookViewer(
         context,
-        archivePath: path,
+        pageSource: ArchiveComicPageSource(path),
         initialProfile: profile,
         onProfileChanged: (updated) =>
             unawaited(PublicationReaderSettings.saveComicProfile(updated)),
@@ -5618,7 +5619,7 @@ class _DetailPanelState extends State<_DetailPanel> {
       final file = comics[chapterIndex];
       final result = await showComicBookViewer(
         context,
-        archivePath: file.absolutePath,
+        pageSource: ArchiveComicPageSource(file.absolutePath),
         initialPage: initialPage,
         initialElementId: initialElementId,
         initialScrollOffset: initialScrollOffset,
