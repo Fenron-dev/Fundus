@@ -17,6 +17,7 @@ import '../library/epub_reader.dart';
 import '../library/publication_reader_settings.dart';
 import '../library/reflow_text_reader.dart';
 import '../library/reader_progress_conflict.dart';
+import '../library/work_detail_view_model.dart';
 import '../library/zip_archive_browser.dart';
 import '../playback/playback_sleep_timer_button.dart';
 import '../playback/playback_conflict_settings.dart';
@@ -902,25 +903,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         );
 
   LibraryWorkSummary _offlineSummary(FundusOfflineWork work) =>
-      LibraryWorkSummary(
-        id: work.workId,
-        kind: work.kind,
-        title: work.title,
-        author: work.authors.firstOrNull ?? 'Unbekannt',
-        authors: work.authors,
-        fileCount: work.tracks.length,
-        addedAt: work.downloadedAt,
-        series: work.series,
-        seriesSequence: work.seriesSequence?.toDouble(),
-        language: work.language,
-        subtitle: work.subtitle,
-        description: work.description,
-        narrators: work.narrators,
-        publisher: work.publisher,
-        publishedYear: work.publishedYear,
-        tags: work.tags,
-        offline: true,
-      );
+      WorkDetailViewModel.fromOffline(work).summary;
 
   Widget _serverList() => ListView(
     padding: const EdgeInsets.all(16),
@@ -1490,30 +1473,14 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         server != null &&
         library != null &&
         _offlineKeys.contains(_offlineKey(server, library, work));
-    return LibraryWorkSummary(
-      id: work.id,
-      kind: work.kind,
-      title: work.title,
-      author: work.authors.firstOrNull ?? 'Unbekannt',
-      authors: work.authors,
-      fileCount: work.fileCount,
-      addedAt: work.addedAt ?? DateTime.fromMillisecondsSinceEpoch(0),
-      series: work.series,
-      seriesSequence: work.seriesSequence?.toDouble(),
-      language: work.language,
-      subtitle: work.subtitle,
-      description: work.description,
-      narrators: work.narrators,
-      publisher: work.publisher,
-      publishedYear: work.publishedYear,
-      progressPosition: work.progressPosition,
-      progressDuration: work.progressDuration,
-      progressTrackIndex: work.progressTrackIndex,
-      progressFinished: work.progressFinished,
-      tags: work.tags,
-      lastListenedAt: work.lastListenedAt,
-      offline: offline,
-    );
+    return WorkDetailViewModel.fromRemote(
+      work,
+      serverId: server?.id ?? 'remote',
+      libraryId: library?.id ?? 'remote',
+      serverName: server?.name,
+      libraryName: library?.name,
+      offlineAvailable: offline,
+    ).summary;
   }
 
   Future<void> _showRemoteFilters() async {

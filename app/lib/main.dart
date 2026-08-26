@@ -22,6 +22,7 @@ import 'library/reader_progress_conflict.dart';
 import 'library/recent_library_store.dart';
 import 'library/reflow_text_reader.dart';
 import 'library/security_scoped_bookmarks.dart';
+import 'library/work_detail_view_model.dart';
 import 'library/zip_archive_browser.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/track_jump_confirmation.dart';
@@ -88,41 +89,10 @@ String _offlineSummaryId(FundusOfflineWork work) =>
     'offline:${work.serverId}/${work.libraryId}/${work.workId}';
 
 LibraryWorkSummary _offlineLibrarySummary(FundusOfflineWork work) {
-  final progress = work.progress;
-  final progressTrackIndex = progress?.fileId == null
-      ? null
-      : work.tracks.indexWhere((track) => track.id == progress!.fileId);
-  return LibraryWorkSummary(
-    id: _offlineSummaryId(work),
-    kind: work.kind,
-    title: work.title,
-    author: work.authors.firstOrNull ?? 'Unbekannt',
-    authors: work.authors,
-    fileCount: work.tracks.length,
-    addedAt: work.downloadedAt,
-    series: work.series,
-    seriesSequence: work.seriesSequence?.toDouble(),
-    coverPath: work.coverPath,
-    language: work.language,
-    subtitle: work.subtitle,
-    description: work.description,
-    narrators: work.narrators,
-    publisher: work.publisher,
-    publishedYear: work.publishedYear,
-    progressPosition: progress?.position,
-    progressDuration: progress?.duration,
-    mediaProgress: progress?.mediaPosition,
-    progressTrackIndex: progressTrackIndex != null && progressTrackIndex >= 0
-        ? progressTrackIndex
-        : null,
-    progressFinished: progress?.finished ?? false,
-    lastListenedAt: progress?.updatedAt,
-    status: work.incomplete ? 'incomplete' : 'available',
-    tags: work.tags,
-    offline: true,
-    sourceServerName: work.sourceServerName ?? work.serverId,
-    sourceLibraryName: work.sourceLibraryName ?? work.libraryId,
-  );
+  return WorkDetailViewModel.fromOffline(
+    work,
+    summaryId: _offlineSummaryId(work),
+  ).summary;
 }
 
 Future<void> main() async {

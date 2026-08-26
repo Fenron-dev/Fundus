@@ -124,8 +124,12 @@ HTTP-Adapter; Remote-Comics werden damit inzwischen seitenweise gestreamt.
 Auch Fixed Documents verwenden nun eine neutrale lokale, Offline- oder
 Remote-Quelle. Weil der native PDF-Renderer derzeit einen Dateipfad benötigt,
 materialisiert der Adapter die Quelle über den begrenzten Dokumentcache, ohne
-dass der Viewer Transport oder Cachepolitik kennen muss. Als Nächstes folgen
-gemeinsame Detail-ViewModels und ein erweiterter Fixed-Document-Adapter.
+dass der Viewer Transport oder Cachepolitik kennen muss. Ein gemeinsames
+`WorkDetailViewModel` normalisiert außerdem lokale, Remote- und Offline-Werke
+inklusive Fortschritt, Verfügbarkeit und lesbaren Quellenbezeichnungen, bevor
+sie Karten oder Detailansichten erreichen. Als Nächstes folgen darauf
+aufbauende gemeinsame Detail-Widgets und ein erweiterter
+Fixed-Document-Adapter.
 
 Fundus speichert niemals nur eine virtuelle Seite. Die kanonische Position
 enthält mindestens Werk-/Datei-ID, Spine-/Kapitel-ID, EPUB-CFI oder stabilen
