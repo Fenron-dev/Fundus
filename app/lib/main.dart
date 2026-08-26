@@ -23,6 +23,7 @@ import 'library/recent_library_store.dart';
 import 'library/reflow_text_reader.dart';
 import 'library/security_scoped_bookmarks.dart';
 import 'library/work_detail_view_model.dart';
+import 'library/work_detail_facts.dart';
 import 'library/zip_archive_browser.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/track_jump_confirmation.dart';
@@ -4615,31 +4616,10 @@ class _DetailPanelState extends State<_DetailPanel> {
                   const SizedBox(height: 20),
                 ],
                 Text('Details', style: Theme.of(context).textTheme.titleMedium),
-                if ((work.authors.isEmpty ? [work.author] : work.authors)
-                    .isNotEmpty)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.person_outline),
-                    title: const Text('Autor'),
-                    subtitle: Text(
-                      (work.authors.isEmpty ? [work.author] : work.authors)
-                          .join(', '),
-                    ),
-                  ),
-                if (work.series case final series?)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.library_books_outlined),
-                    title: const Text('Serie'),
-                    subtitle: Text(series),
-                  ),
-                if (work.language case final language?)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.language),
-                    title: const Text('Sprache'),
-                    subtitle: Text(language),
-                  ),
+                WorkDetailFacts(
+                  detail: WorkDetailViewModel.fromLibrary(work),
+                  progress: progress?.position,
+                ),
                 if (_annotations.tags.isNotEmpty) ...[
                   const SizedBox(height: 10),
                   Wrap(

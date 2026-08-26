@@ -128,8 +128,9 @@ dass der Viewer Transport oder Cachepolitik kennen muss. Ein gemeinsames
 `WorkDetailViewModel` normalisiert außerdem lokale, Remote- und Offline-Werke
 inklusive Fortschritt, Verfügbarkeit und lesbaren Quellenbezeichnungen, bevor
 sie Karten oder Detailansichten erreichen. Als Nächstes folgen darauf
-aufbauende gemeinsame Detail-Widgets und ein erweiterter
-Fixed-Document-Adapter.
+aufbauendes `WorkDetailFacts`-Widget zeigt die Kerninformationen in lokalen,
+Offline- und Remote-Publikationsdetails identisch an. Weitere gemeinsame
+Detail-Widgets und ein erweiterter Fixed-Document-Adapter folgen schrittweise.
 
 Fundus speichert niemals nur eine virtuelle Seite. Die kanonische Position
 enthält mindestens Werk-/Datei-ID, Spine-/Kapitel-ID, EPUB-CFI oder stabilen

@@ -19,7 +19,9 @@ final class WorkDetailViewModel {
   factory WorkDetailViewModel.fromLibrary(LibraryWorkSummary work) =>
       WorkDetailViewModel(
         summary: work,
-        origin: WorkDetailOrigin.local,
+        origin: work.offline
+            ? WorkDetailOrigin.offline
+            : WorkDetailOrigin.local,
         hasRemoteCover: false,
       );
 

@@ -18,6 +18,7 @@ import '../library/publication_reader_settings.dart';
 import '../library/reflow_text_reader.dart';
 import '../library/reader_progress_conflict.dart';
 import '../library/work_detail_view_model.dart';
+import '../library/work_detail_facts.dart';
 import '../library/zip_archive_browser.dart';
 import '../playback/playback_sleep_timer_button.dart';
 import '../playback/playback_conflict_settings.dart';
@@ -1832,6 +1833,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         fullscreenDialog: true,
         builder: (pageContext) => _MobileRemotePublicationDetails(
           work: work,
+          detail: offlineWork == null
+              ? WorkDetailViewModel.fromRemote(
+                  work,
+                  serverId: server.id,
+                  libraryId: library.id,
+                  serverName: server.name,
+                  libraryName: library.name,
+                  offlineAvailable: isOffline,
+                )
+              : WorkDetailViewModel.fromOffline(offlineWork),
           tracks: tracks,
           relatedWorks: _works,
           progressPosition: progressPosition,
@@ -4619,6 +4630,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
 class _MobileRemotePublicationDetails extends StatefulWidget {
   const _MobileRemotePublicationDetails({
     required this.work,
+    required this.detail,
     required this.tracks,
     required this.relatedWorks,
     required this.progressPosition,
@@ -4632,6 +4644,7 @@ class _MobileRemotePublicationDetails extends StatefulWidget {
   });
 
   final FundusRemoteWork work;
+  final WorkDetailViewModel detail;
   final List<FundusRemoteTrack> tracks;
   final List<FundusRemoteWork> relatedWorks;
   final MediaPosition? progressPosition;
@@ -4681,7 +4694,7 @@ class _MobileRemotePublicationDetailsState
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      title: Text(widget.work.title, overflow: TextOverflow.ellipsis),
+      title: Text(widget.detail.summary.title, overflow: TextOverflow.ellipsis),
       actions: [
         IconButton(
           onPressed: _toggleFavorite,
@@ -4717,15 +4730,15 @@ class _MobileRemotePublicationDetailsState
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  widget.work.title,
+                  widget.detail.summary.title,
                   textAlign: TextAlign.center,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
-                if (widget.work.authors.isNotEmpty)
+                if (widget.detail.summary.authors.isNotEmpty)
                   Text(
-                    widget.work.authors.join(', '),
+                    widget.detail.summary.authors.join(', '),
                     textAlign: TextAlign.center,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -4804,27 +4817,10 @@ class _MobileRemotePublicationDetailsState
         ],
         Text('Details', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
-        if (widget.work.authors.isNotEmpty)
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.person_outline),
-            title: const Text('Autor'),
-            subtitle: Text(widget.work.authors.join(', ')),
-          ),
-        if (widget.work.series case final series?)
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.library_books_outlined),
-            title: const Text('Serie'),
-            subtitle: Text(series),
-          ),
-        if (widget.work.language case final language?)
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.language),
-            title: const Text('Sprache'),
-            subtitle: Text(language),
-          ),
+        WorkDetailFacts(
+          detail: widget.detail,
+          progress: widget.progressPosition,
+        ),
       ],
     ),
     1 => _trackList(_tracks),
