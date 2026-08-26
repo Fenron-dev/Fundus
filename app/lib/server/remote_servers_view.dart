@@ -19,6 +19,7 @@ import '../library/reflow_text_reader.dart';
 import '../library/reader_progress_conflict.dart';
 import '../library/work_detail_view_model.dart';
 import '../library/work_detail_facts.dart';
+import '../library/work_detail_header.dart';
 import '../library/zip_archive_browser.dart';
 import '../playback/playback_sleep_timer_button.dart';
 import '../playback/playback_conflict_settings.dart';
@@ -4697,13 +4698,6 @@ class _MobileRemotePublicationDetailsState
       title: Text(widget.detail.summary.title, overflow: TextOverflow.ellipsis),
       actions: [
         IconButton(
-          onPressed: _toggleFavorite,
-          tooltip: _isFavorite
-              ? 'Aus Favoriten entfernen'
-              : 'Als Favorit markieren',
-          icon: Icon(_isFavorite ? Icons.star : Icons.star_border),
-        ),
-        IconButton(
           onPressed: _showFilterAndSort,
           tooltip: 'Filtern und sortieren',
           icon: const Icon(Icons.tune),
@@ -4717,63 +4711,28 @@ class _MobileRemotePublicationDetailsState
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
             child: Column(
               children: [
-                GestureDetector(
-                  onTap: _showCover,
-                  child: SizedBox(
-                    width: 138,
-                    height: 190,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(14),
-                      child: widget.coverBuilder(),
-                    ),
+                WorkDetailHeader(
+                  detail: widget.detail,
+                  coverBuilder: (_) => widget.coverBuilder(),
+                  onCoverTap: _showCover,
+                  favorite: _isFavorite,
+                  onToggleFavorite: _toggleFavorite,
+                  primaryAction: WorkDetailHeaderAction(
+                    label: widget.progressPosition == null
+                        ? 'Lesen'
+                        : 'Fortsetzen',
+                    icon: Icons.menu_book_outlined,
+                    onPressed: () => Navigator.pop(context, 'open:resume'),
                   ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  widget.detail.summary.title,
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                if (widget.detail.summary.authors.isNotEmpty)
-                  Text(
-                    widget.detail.summary.authors.join(', '),
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  secondaryAction: WorkDetailHeaderAction(
+                    label: widget.isOffline
+                        ? 'Kapitel verwalten'
+                        : 'Zur Bibliothek',
+                    icon: widget.isOffline
+                        ? Icons.download_done
+                        : Icons.download_outlined,
+                    onPressed: () => Navigator.pop(context, 'download'),
                   ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: () => Navigator.pop(context, 'open:resume'),
-                        icon: const Icon(Icons.menu_book_outlined),
-                        label: Text(
-                          widget.progressPosition == null
-                              ? 'Lesen'
-                              : 'Fortsetzen',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: FilledButton.tonalIcon(
-                        onPressed: () => Navigator.pop(context, 'download'),
-                        icon: Icon(
-                          widget.isOffline
-                              ? Icons.download_done
-                              : Icons.download_outlined,
-                        ),
-                        label: Text(
-                          widget.isOffline
-                              ? 'Kapitel verwalten'
-                              : 'Zur Bibliothek',
-                        ),
-                      ),
-                    ),
-                  ],
                 ),
                 const SizedBox(height: 12),
                 SingleChildScrollView(

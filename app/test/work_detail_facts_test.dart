@@ -32,6 +32,7 @@ void main() {
             children: [
               WorkDetailFacts(
                 detail: detail,
+                directoryPath: '/Bibliothek/Webnovels/Novel',
                 progress: const MediaPosition(
                   kind: MediaPositionKind.page,
                   numericValue: 5,
@@ -48,6 +49,7 @@ void main() {
     expect(find.text('Remote · offline verfügbar'), findsOneWidget);
     expect(find.text('Seite 5 · 50 %'), findsOneWidget);
     expect(find.text('3 Datei(en)'), findsOneWidget);
+    expect(find.text('/Bibliothek/Webnovels/Novel'), findsOneWidget);
   });
 
   testWidgets('shared facts distinguish incomplete offline content', (

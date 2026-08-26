@@ -24,6 +24,7 @@ import 'library/reflow_text_reader.dart';
 import 'library/security_scoped_bookmarks.dart';
 import 'library/work_detail_view_model.dart';
 import 'library/work_detail_facts.dart';
+import 'library/work_detail_header.dart';
 import 'library/zip_archive_browser.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/track_jump_confirmation.dart';
@@ -4546,40 +4547,44 @@ class _DetailPanelState extends State<_DetailPanel> {
   ) {
     final readable = _readableDocumentFiles(files);
     final progress = widget.library?.loadProgress(work.id);
+    final detail = WorkDetailViewModel.fromLibrary(work);
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
           child: Column(
             children: [
-              _DocumentHero(work: work, directoryPath: directoryPath),
-              Align(
-                alignment: Alignment.centerRight,
-                child: IconButton(
-                  onPressed: widget.library == null || _saving
-                      ? null
-                      : _toggleFavorite,
-                  tooltip: _annotations.tags.contains(_favoriteTag)
-                      ? 'Aus Favoriten entfernen'
-                      : 'Als Favorit markieren',
-                  icon: Icon(
-                    _annotations.tags.contains(_favoriteTag)
-                        ? Icons.star
-                        : Icons.star_border,
+              WorkDetailHeader(
+                detail: detail,
+                coverBuilder: (_) => _WorkCover(work: work, iconSize: 58),
+                onCoverTap: () => showDialog<void>(
+                  context: context,
+                  builder: (dialogContext) => Dialog(
+                    clipBehavior: Clip.antiAlias,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        maxWidth: 520,
+                        maxHeight: 720,
+                      ),
+                      child: AspectRatio(
+                        aspectRatio: 2 / 3,
+                        child: _WorkCover(work: work, iconSize: 84),
+                      ),
+                    ),
                   ),
                 ),
+                favorite: _annotations.tags.contains(_favoriteTag),
+                onToggleFavorite: widget.library == null || _saving
+                    ? null
+                    : _toggleFavorite,
+                primaryAction: readable.isEmpty
+                    ? null
+                    : WorkDetailHeaderAction(
+                        label: progress == null ? 'Lesen' : 'Fortsetzen',
+                        icon: Icons.menu_book_outlined,
+                        onPressed: () => _openDocumentWork(work, files),
+                      ),
               ),
-              if (readable.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: () => _openDocumentWork(work, files),
-                    icon: const Icon(Icons.menu_book_outlined),
-                    label: Text(progress == null ? 'Lesen' : 'Fortsetzen'),
-                  ),
-                ),
-              ],
               const SizedBox(height: 12),
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
@@ -4617,8 +4622,9 @@ class _DetailPanelState extends State<_DetailPanel> {
                 ],
                 Text('Details', style: Theme.of(context).textTheme.titleMedium),
                 WorkDetailFacts(
-                  detail: WorkDetailViewModel.fromLibrary(work),
+                  detail: detail,
                   progress: progress?.position,
+                  directoryPath: directoryPath,
                 ),
                 if (_annotations.tags.isNotEmpty) ...[
                   const SizedBox(height: 10),

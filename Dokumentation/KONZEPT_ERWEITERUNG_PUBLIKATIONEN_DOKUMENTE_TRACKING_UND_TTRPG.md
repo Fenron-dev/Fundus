@@ -603,6 +603,14 @@ Die Detailseite für Manga, Webnovels und E-Books besteht aus:
 4. „Notizen“ mit den Unterbereichen „Notizen“ sowie „Lesezeichen & Highlights“,
 5. Filter und Sortierung gesammelt hinter dem Filter-Symbol.
 
+Der Kopfbereich ist eine gemeinsame UI-Komponente für lokale, entfernte und
+heruntergeladene Publikationen. Covergröße, Titel, Autoren, Medientyp,
+Dateianzahl, Favoritenaktion und die primäre Aktion „Lesen/Fortsetzen“ bleiben
+dadurch an derselben Stelle. Nur tatsächlich quellabhängige Aktionen werden
+ergänzt: Remote-Werke bieten „Zur Bibliothek“, Offline-Werke „Kapitel
+verwalten“. Der lokale Dateipfad bleibt im Info-Bereich sichtbar; entfernte
+Quellen zeigen stattdessen den verständlichen Server- und Bibliotheksnamen.
+
 Ein Tippen auf das Cover öffnet eine große, nicht destruktive Vorschau. Der
 Download-Dialog bleibt eine explizite Auswahl von Kapiteln beziehungsweise
 Dateien. Reader öffnen bildschirmfüllend; ein Tippen in die Mitte blendet die

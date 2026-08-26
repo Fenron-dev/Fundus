@@ -4,10 +4,16 @@ import 'package:fundus_core/fundus_core.dart';
 import 'work_detail_view_model.dart';
 
 class WorkDetailFacts extends StatelessWidget {
-  const WorkDetailFacts({super.key, required this.detail, this.progress});
+  const WorkDetailFacts({
+    super.key,
+    required this.detail,
+    this.progress,
+    this.directoryPath,
+  });
 
   final WorkDetailViewModel detail;
   final MediaPosition? progress;
+  final String? directoryPath;
 
   @override
   Widget build(BuildContext context) {
@@ -67,6 +73,13 @@ class WorkDetailFacts extends StatelessWidget {
             icon: Icons.dns_outlined,
             label: 'Quelle',
             value: source,
+          ),
+        if (directoryPath case final path? when path.trim().isNotEmpty)
+          _fact(
+            key: const ValueKey('work-detail-directory'),
+            icon: Icons.folder_outlined,
+            label: 'Dateipfad',
+            value: path,
           ),
         if (work.progressFinished ||
             position != null ||
