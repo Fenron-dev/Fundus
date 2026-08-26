@@ -119,8 +119,13 @@ und Größen sowie eine Materialisierungsoperation, aber weder einen absoluten
 Dateipfad noch `ZipArchiveEntry`. Der vorhandene CBZ-Adapter setzt den Vertrag
 für lokale Bibliotheken, Offline-Downloads und den begrenzten Remote-Cache um
 und meldet die Herkunft separat für die Diagnose. Als nächster Schritt folgen
-ein serverseitiger Seitenmanifest-/Einzelseiten-Endpunkt, der passende
-HTTP-Adapter, Fixed Documents und gemeinsame Detail-ViewModels.
+ein serverseitiger Seitenmanifest-/Einzelseiten-Endpunkt und der passende
+HTTP-Adapter; Remote-Comics werden damit inzwischen seitenweise gestreamt.
+Auch Fixed Documents verwenden nun eine neutrale lokale, Offline- oder
+Remote-Quelle. Weil der native PDF-Renderer derzeit einen Dateipfad benötigt,
+materialisiert der Adapter die Quelle über den begrenzten Dokumentcache, ohne
+dass der Viewer Transport oder Cachepolitik kennen muss. Als Nächstes folgen
+gemeinsame Detail-ViewModels und ein erweiterter Fixed-Document-Adapter.
 
 Fundus speichert niemals nur eine virtuelle Seite. Die kanonische Position
 enthält mindestens Werk-/Datei-ID, Spine-/Kapitel-ID, EPUB-CFI oder stabilen

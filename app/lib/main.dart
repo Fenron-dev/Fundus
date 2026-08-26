@@ -15,6 +15,7 @@ import 'library/comic_book_viewer.dart';
 import 'library/comic_page_source.dart';
 import 'library/document_file_opener.dart';
 import 'library/document_preview.dart';
+import 'library/fixed_document_source.dart';
 import 'library/epub_reader.dart';
 import 'library/publication_reader_settings.dart';
 import 'library/reader_progress_conflict.dart';
@@ -5167,7 +5168,7 @@ class _DetailPanelState extends State<_DetailPanel> {
     try {
       await showDocumentPreview(
         context,
-        path: path,
+        source: FileFixedDocumentSource(path),
         onOpenExternal: _openFileWithSystemApp,
       );
     } on DocumentPreviewException catch (error) {
@@ -5781,7 +5782,7 @@ class _DetailPanelState extends State<_DetailPanel> {
     try {
       await showDocumentPreview(
         context,
-        path: file.absolutePath,
+        source: FileFixedDocumentSource(file.absolutePath),
         initialPage: initialPage,
         onOpenExternal: _openFileWithSystemApp,
         onPageChanged: library == null || library.isReadOnly

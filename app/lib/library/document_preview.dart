@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
+import 'fixed_document_source.dart';
+
 final class NativePdfRenderer {
   const NativePdfRenderer();
 
@@ -81,38 +83,50 @@ bool supportsInternalDocumentPreview(String path) => const {
 
 Future<void> showDocumentPreview(
   BuildContext context, {
-  required String path,
+  required FixedDocumentSource source,
   required Future<void> Function(String path) onOpenExternal,
   int initialPage = 0,
   void Function(int page, int total)? onPageChanged,
 }) async {
-  if (!await File(path).exists()) {
+  String path;
+  try {
+    path = await source.materialize();
+  } on FixedDocumentSourceException catch (error) {
+    throw DocumentPreviewException(error.message);
+  } catch (_) {
     throw const DocumentPreviewException(
-      'Die Datei ist nicht mehr am gespeicherten Ort vorhanden.',
+      'Das Dokument konnte nicht bereitgestellt werden.',
     );
   }
-  if (!context.mounted) return;
-  await showDialog<void>(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) => _DocumentPreviewDialog(
-      path: path,
-      onOpenExternal: onOpenExternal,
-      initialPage: initialPage,
-      onPageChanged: onPageChanged,
-    ),
-  );
+  try {
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => _DocumentPreviewDialog(
+        path: path,
+        sourceName: source.name,
+        onOpenExternal: onOpenExternal,
+        initialPage: initialPage,
+        onPageChanged: onPageChanged,
+      ),
+    );
+  } finally {
+    await source.dispose();
+  }
 }
 
 class _DocumentPreviewDialog extends StatefulWidget {
   const _DocumentPreviewDialog({
     required this.path,
+    required this.sourceName,
     required this.onOpenExternal,
     required this.initialPage,
     required this.onPageChanged,
   });
 
   final String path;
+  final String sourceName;
   final Future<void> Function(String path) onOpenExternal;
   final int initialPage;
   final void Function(int page, int total)? onPageChanged;
@@ -129,7 +143,7 @@ class _DocumentPreviewDialogState extends State<_DocumentPreviewDialog> {
   int _currentPage = 0;
   bool _reportedInitialPage = false;
 
-  bool get _isPdf => p.extension(widget.path).toLowerCase() == '.pdf';
+  bool get _isPdf => p.extension(widget.sourceName).toLowerCase() == '.pdf';
 
   @override
   void initState() {
@@ -155,7 +169,7 @@ class _DocumentPreviewDialogState extends State<_DocumentPreviewDialog> {
             tooltip: 'Vorschau schließen',
             icon: const Icon(Icons.close),
           ),
-          title: Text(p.basename(widget.path), overflow: TextOverflow.ellipsis),
+          title: Text(widget.sourceName, overflow: TextOverflow.ellipsis),
           actions: [
             TextButton.icon(
               onPressed: () => widget.onOpenExternal(widget.path),

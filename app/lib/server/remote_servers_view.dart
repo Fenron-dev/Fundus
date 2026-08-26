@@ -12,6 +12,7 @@ import '../library/comic_book_viewer.dart';
 import '../library/comic_page_source.dart';
 import '../library/document_file_opener.dart';
 import '../library/document_preview.dart';
+import '../library/fixed_document_source.dart';
 import '../library/epub_reader.dart';
 import '../library/publication_reader_settings.dart';
 import '../library/reflow_text_reader.dart';
@@ -3677,29 +3678,29 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     final offlineTrack = offlineWork?.tracks
         .where((candidate) => candidate.id == track.id)
         .firstOrNull;
-    final File file;
-    try {
-      file = offlineTrack == null
-          ? await _cachedRemoteDocument(server, library, track)
-          : File(offlineTrack.path);
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('PDF konnte nicht geladen werden.')),
-      );
-      return;
-    }
-    if (!mounted) return;
+    final FixedDocumentSource source = offlineTrack == null
+        ? MaterializedFixedDocumentSource(
+            name: track.title,
+            kind: PublicationSourceKind.remote,
+            materialize: () async =>
+                (await _cachedRemoteDocument(server, library, track)).path,
+          )
+        : FileFixedDocumentSource(
+            offlineTrack.path,
+            name: track.title,
+            kind: PublicationSourceKind.offline,
+          );
     final initialPage =
         selectedPosition?.kind == MediaPositionKind.page &&
             selectedPosition?.fileId == track.id &&
             startFileId == null
         ? ((selectedPosition!.numericValue ?? 1).round() - 1).clamp(0, 1 << 30)
         : 0;
+    if (!mounted) return;
     try {
       await showDocumentPreview(
         context,
-        path: file.path,
+        source: source,
         initialPage: initialPage,
         onOpenExternal: (path) => const DocumentFileOpener().open(path),
         onPageChanged: (page, total) {
@@ -4161,7 +4162,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       } else if (supportsInternalDocumentPreview(path)) {
         await showDocumentPreview(
           context,
-          path: path,
+          source: FileFixedDocumentSource(path),
           onOpenExternal: (value) => const DocumentFileOpener().open(value),
         );
       } else {
