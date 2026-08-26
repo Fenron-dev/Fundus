@@ -20,14 +20,26 @@ abstract interface class ComicPageSource {
   Future<List<ComicPage>> pages();
 
   Future<Map<String, String>> materialize(List<ComicPage> pages);
+
+  Future<void> dispose();
 }
 
 final class ComicPage {
-  const ComicPage({required this.id, required this.name, required this.size});
+  const ComicPage({
+    required this.id,
+    required this.name,
+    required this.size,
+    this.mimeType,
+    this.width,
+    this.height,
+  });
 
   final String id;
   final String name;
   final int size;
+  final String? mimeType;
+  final int? width;
+  final int? height;
 }
 
 /// CBZ-backed source used for local libraries, durable offline downloads and
@@ -80,6 +92,9 @@ final class ArchiveComicPageSource implements ComicPageSource {
     }
     return service.extractToTemporaryFiles(archivePath, entries);
   }
+
+  @override
+  Future<void> dispose() async {}
 }
 
 List<ZipArchiveEntry> comicPageEntries(ZipArchiveSnapshot snapshot) {

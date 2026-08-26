@@ -293,6 +293,33 @@ final class FundusRemoteTrack {
   final AudioTechnicalMetadata? audioMetadata;
 }
 
+final class FundusRemoteComicPage {
+  const FundusRemoteComicPage({
+    required this.index,
+    required this.id,
+    required this.name,
+    required this.size,
+    required this.mimeType,
+    this.width,
+    this.height,
+  });
+
+  final int index;
+  final String id;
+  final String name;
+  final int size;
+  final String mimeType;
+  final int? width;
+  final int? height;
+}
+
+final class FundusRemoteComicManifest {
+  const FundusRemoteComicManifest({required this.fileId, required this.pages});
+
+  final String fileId;
+  final List<FundusRemoteComicPage> pages;
+}
+
 final class FundusRemoteChapter {
   const FundusRemoteChapter({
     required this.title,
@@ -1448,6 +1475,54 @@ final class FundusRemoteClient {
     fingerprint: server.certificateFingerprint,
     token: server.token,
     range: range,
+  );
+
+  Future<FundusRemoteComicManifest> comicPages(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String fileId,
+  }) async {
+    final value = await _json(
+      server,
+      '/v1/libraries/$libraryId/files/$fileId/comic/pages',
+    );
+    final items = value['pages'];
+    if (value['file_id'] is! String || items is! List) {
+      throw const HttpException('Ungültiges Comic-Seitenmanifest.');
+    }
+    return FundusRemoteComicManifest(
+      fileId: value['file_id'] as String,
+      pages: [
+        for (final item in items.whereType<Map>())
+          if (item['index'] is int &&
+              item['id'] is String &&
+              item['name'] is String &&
+              item['size'] is int &&
+              item['mime_type'] is String)
+            FundusRemoteComicPage(
+              index: item['index'] as int,
+              id: item['id'] as String,
+              name: item['name'] as String,
+              size: item['size'] as int,
+              mimeType: item['mime_type'] as String,
+              width: item['width'] is int ? item['width'] as int : null,
+              height: item['height'] is int ? item['height'] as int : null,
+            ),
+      ],
+    );
+  }
+
+  Future<Uint8List> comicPage(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String fileId,
+    required int pageIndex,
+  }) => _request(
+    server.baseUri.resolve(
+      '/v1/libraries/$libraryId/files/$fileId/comic/pages/$pageIndex',
+    ),
+    fingerprint: server.certificateFingerprint,
+    token: server.token,
   );
 
   Future<Map<String, dynamic>> _json(

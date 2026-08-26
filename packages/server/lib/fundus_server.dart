@@ -8,6 +8,7 @@ import 'package:shelf_router/shelf_router.dart';
 export 'src/pairing.dart';
 
 import 'src/pairing.dart';
+import 'src/comic_archive.dart';
 
 final class SharedFundusLibrary {
   SharedFundusLibrary({required this.name, required this.library})
@@ -109,6 +110,9 @@ final class FundusServerHandler {
   final FundusLibraryRegistry registry;
   final FundusPairingAuthority? pairingAuthority;
   final FundusServerRequestObserver? requestObserver;
+  final ComicArchiveService _comicArchives = const ComicArchiveService();
+  final Map<String, ({int size, int modified, ComicArchiveManifest manifest})>
+  _comicManifestCache = {};
 
   Handler get handler {
     final router = Router()
@@ -122,6 +126,11 @@ final class FundusServerHandler {
       ..get('/v1/libraries/<libraryId>/works/<workId>', _work)
       ..get('/v1/libraries/<libraryId>/works/<workId>/cover', _cover)
       ..get('/v1/libraries/<libraryId>/files/<fileId>', _file)
+      ..get('/v1/libraries/<libraryId>/files/<fileId>/comic/pages', _comicPages)
+      ..get(
+        '/v1/libraries/<libraryId>/files/<fileId>/comic/pages/<pageIndex>',
+        _comicPage,
+      )
       ..get('/v1/libraries/<libraryId>/files/<fileId>/content', _content)
       ..get('/v1/libraries/<libraryId>/playlists', _playlists)
       ..post('/v1/libraries/<libraryId>/playlists', _createPlaylist)
@@ -194,6 +203,7 @@ final class FundusServerHandler {
   }
 
   static String _resourceType(List<String> segments) {
+    if (segments.contains('comic')) return 'comic_pages';
     if (segments.contains('content')) return 'content';
     if (segments.contains('cover')) return 'cover';
     if (segments.contains('playlists')) return 'playlists';
@@ -268,6 +278,7 @@ final class FundusServerHandler {
       'cover',
       'chapters',
       'range_streaming',
+      'comic_pages',
       'progress',
       'progress_history',
       'playlists',
@@ -362,6 +373,105 @@ final class FundusServerHandler {
       File(located.track.absolutePath),
       resourceId: fileId,
     );
+  }
+
+  Future<Response> _comicPages(
+    Request request,
+    String libraryId,
+    String fileId,
+  ) async {
+    final located = _comicTrack(libraryId, fileId);
+    if (located == null) return _notFound('file_not_found');
+    try {
+      final manifest = await _comicManifest(File(located.track.absolutePath));
+      return _json({
+        'file_id': fileId,
+        'page_count': manifest.pages.length,
+        'pages': [
+          for (var index = 0; index < manifest.pages.length; index++)
+            {
+              'index': index,
+              'id': manifest.pages[index].id,
+              'name': manifest.pages[index].name,
+              'size': manifest.pages[index].size,
+              'mime_type': manifest.pages[index].mimeType,
+              if (manifest.pages[index].width != null)
+                'width': manifest.pages[index].width,
+              if (manifest.pages[index].height != null)
+                'height': manifest.pages[index].height,
+            },
+        ],
+      });
+    } on ComicArchiveException catch (error) {
+      return _badRequest(error.code);
+    }
+  }
+
+  Future<Response> _comicPage(
+    Request request,
+    String libraryId,
+    String fileId,
+    String pageIndex,
+  ) async {
+    final located = _comicTrack(libraryId, fileId);
+    if (located == null) return _notFound('file_not_found');
+    final index = int.tryParse(pageIndex);
+    if (index == null || index < 0) return _badRequest('invalid_page_index');
+    try {
+      final file = File(located.track.absolutePath);
+      final manifest = await _comicManifest(file);
+      if (index >= manifest.pages.length) return _notFound('page_not_found');
+      final page = manifest.pages[index];
+      final stat = await file.stat();
+      final etag =
+          '"comic-$fileId-$index-${stat.size}-${stat.modified.millisecondsSinceEpoch}"';
+      final headers = <String, String>{
+        'content-type': page.mimeType,
+        'cache-control': 'private, max-age=3600',
+        'etag': etag,
+      };
+      if (request.headers['if-none-match'] == etag) {
+        return Response.notModified(headers: headers);
+      }
+      final bytes = await _comicArchives.readPage(file.path, page);
+      return Response.ok(bytes, headers: headers);
+    } on ComicArchiveException catch (error) {
+      return _badRequest(error.code);
+    }
+  }
+
+  ({LibraryWorkSummary work, LibraryPlaybackTrack track})? _comicTrack(
+    String libraryId,
+    String fileId,
+  ) {
+    final entry = registry.lookup(libraryId);
+    final located = entry?.findTrack(fileId);
+    if (located == null ||
+        !located.track.absolutePath.toLowerCase().endsWith('.cbz')) {
+      return null;
+    }
+    return located;
+  }
+
+  Future<ComicArchiveManifest> _comicManifest(File file) async {
+    if (!await file.exists()) {
+      throw const ComicArchiveException('comic_file_missing');
+    }
+    final stat = await file.stat();
+    final cached = _comicManifestCache[file.path];
+    final modified = stat.modified.millisecondsSinceEpoch;
+    if (cached != null &&
+        cached.size == stat.size &&
+        cached.modified == modified) {
+      return cached.manifest;
+    }
+    final manifest = await _comicArchives.inspect(file.path);
+    _comicManifestCache[file.path] = (
+      size: stat.size,
+      modified: modified,
+      manifest: manifest,
+    );
+    return manifest;
   }
 
   Response _playlists(Request request, String libraryId) {

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:archive/archive.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus_server/fundus_server.dart';
 import 'package:shelf/shelf.dart';
@@ -161,6 +162,7 @@ void main() {
     expect(body['library_format_version'], 1);
     expect(body['capabilities'], contains('multiple_libraries'));
     expect(body['capabilities'], contains('range_streaming'));
+    expect(body['capabilities'], contains('comic_pages'));
     expect(body['capabilities'], contains('chapters'));
     expect(body['capabilities'], contains('playlists'));
     expect(body['capabilities'], contains('playlist_revisions'));
@@ -251,6 +253,45 @@ void main() {
       255,
       217,
     ]);
+  });
+
+  test('serves a naturally sorted comic manifest and individual pages', () async {
+    final comicLibrary = await _comicLibrary(
+      Directory('${temporary.path}/Comics'),
+    );
+    final comicRegistry = FundusLibraryRegistry()
+      ..register(comicLibrary, name: 'Comics');
+    final comicServer = FundusServerHandler(
+      token: 'secret',
+      serverId: 'comic-server',
+      registry: comicRegistry,
+    );
+    addTearDown(comicRegistry.close);
+    final comicWork = comicLibrary.listWorks().single;
+    final comicTrack = comicLibrary.playbackTracks(comicWork.id).single;
+    final base =
+        '/v1/libraries/${comicLibrary.manifest.libraryId}/files/${comicTrack.fileId}/comic/pages';
+
+    final manifestResponse = await _get(comicServer, base);
+    final source = await manifestResponse.readAsString();
+    final manifest = jsonDecode(source) as Map<String, dynamic>;
+    final pages = manifest['pages']! as List;
+    expect(manifestResponse.statusCode, 200);
+    expect(manifest['page_count'], 2);
+    expect((pages.first as Map)['id'], 'pages/2.png');
+    expect((pages.last as Map)['id'], 'pages/10.png');
+    expect((pages.first as Map)['width'], 1);
+    expect((pages.first as Map)['height'], 1);
+    expect(source, isNot(contains(temporary.path)));
+
+    final pageResponse = await _get(comicServer, '$base/0');
+    final bytes = await pageResponse.read().expand((chunk) => chunk).toList();
+    expect(pageResponse.statusCode, 200);
+    expect(pageResponse.headers['content-type'], 'image/png');
+    expect(pageResponse.headers['etag'], isNotEmpty);
+    expect(bytes, _tinyPng);
+
+    expect((await _get(comicServer, '$base/20')).statusCode, 404);
   });
 
   test('progress update is idempotent by operation ID', () async {
@@ -590,6 +631,24 @@ Future<FundusLibrary> _library(
   await library.index().drain<void>();
   return library;
 }
+
+Future<FundusLibrary> _comicLibrary(Directory root) async {
+  final work = Directory('${root.path}/Manga/Serie');
+  await work.create(recursive: true);
+  final archive = Archive()
+    ..addFile(ArchiveFile.bytes('pages/10.png', _tinyPng))
+    ..addFile(ArchiveFile.bytes('pages/2.png', _tinyPng));
+  await File(
+    '${work.path}/Kapitel 1.cbz',
+  ).writeAsBytes(ZipEncoder().encode(archive));
+  final library = await FundusLibrary.create(root);
+  await library.index().drain<void>();
+  return library;
+}
+
+final _tinyPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+);
 
 Future<Response> _get(FundusServerHandler server, String path) async =>
     await server.handler(

@@ -9,8 +9,10 @@ environment:
 resolution: workspace
 
 dependencies:
+  archive: ^4.0.9
   crypto: ^3.0.7
   fundus_core: any
+  path: ^1.9.1
   shelf: ^1.4.2
   shelf_router: ^1.1.2
 

@@ -22,6 +22,17 @@ curl -H 'Authorization: Bearer ein-lokales-test-token' \
 ```
 
 Implementiert sind aktuell Capabilities, Bibliotheks- und Werklisten,
-Werkdetails, Cover, Datei-Metadaten, Streaming mit `Range`/`206`/`ETag` sowie
-idempotente Fortschrittsoperationen. Pairing und LAN-Discovery folgen; bis
-dahin muss das Token explizit übergeben werden.
+Werkdetails, Cover, Datei-Metadaten, Streaming mit `Range`/`206`/`ETag`,
+idempotente Fortschrittsoperationen sowie authentifizierte Comic-Manifeste und
+Einzelseiten. Remote-Reader müssen dadurch kein vollständiges CBZ laden:
+
+```text
+GET /v1/libraries/{libraryId}/files/{fileId}/comic/pages
+GET /v1/libraries/{libraryId}/files/{fileId}/comic/pages/{pageIndex}
+```
+
+Das Manifest enthält stabile Archivpfade als Seiten-IDs und – soweit das
+Bildformat sie bereitstellt – Breite und Höhe für eine sprungfreie
+Webtoon-Geometrie. Lokale Pfade werden auch über diese Endpunkte nicht
+übertragen. Alle Routen außer Health und Pairing-Claim verlangen ein gültiges,
+widerrufbares Geräte-Token.

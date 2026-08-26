@@ -23,6 +23,7 @@ import '../playback/track_jump_confirmation.dart';
 import 'annotation_sync_settings.dart';
 import 'fundus_remote_client.dart';
 import 'fundus_remote_document_cache.dart';
+import 'http_comic_page_source.dart';
 import 'fundus_peer_server_controller.dart';
 import 'fundus_remote_player_controller.dart';
 import 'fundus_offline_store.dart';
@@ -3402,30 +3403,43 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       final offlineTrack = offlineWork?.tracks
           .where((candidate) => candidate.id == track.id)
           .firstOrNull;
-      final File file;
-      try {
-        file = offlineTrack == null
-            ? await _cachedRemoteDocument(server, library, track)
-            : File(offlineTrack.path);
-      } catch (_) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Manga-Kapitel konnte nicht geladen werden.'),
-          ),
-        );
-        return;
-      }
-      if (!mounted) return;
+      final ComicPageSource pageSource = offlineTrack != null
+          ? ArchiveComicPageSource(
+              offlineTrack.path,
+              kind: PublicationSourceKind.offline,
+              name: track.title,
+            )
+          : HttpComicPageSource(
+              name: track.title,
+              loadManifest: () async {
+                final loaded = await _runWithReconnect(
+                  server,
+                  (active) => _client.comicPages(
+                    active,
+                    libraryId: library.id,
+                    fileId: track.id,
+                  ),
+                );
+                server = loaded.server;
+                return loaded.value;
+              },
+              loadPage: (pageIndex) async {
+                final loaded = await _runWithReconnect(
+                  server,
+                  (active) => _client.comicPage(
+                    active,
+                    libraryId: library.id,
+                    fileId: track.id,
+                    pageIndex: pageIndex,
+                  ),
+                );
+                server = loaded.server;
+                return loaded.value;
+              },
+            );
       final result = await showComicBookViewer(
         context,
-        pageSource: ArchiveComicPageSource(
-          file.path,
-          kind: offlineTrack == null
-              ? PublicationSourceKind.remote
-              : PublicationSourceKind.offline,
-          name: track.title,
-        ),
+        pageSource: pageSource,
         initialPage: initialPage,
         initialElementId: initialElementId,
         initialScrollOffset: initialScrollOffset,

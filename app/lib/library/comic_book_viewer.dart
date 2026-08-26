@@ -258,31 +258,37 @@ Future<ComicBookViewerResult?> showComicBookViewer(
   Future<WorkAnnotations> Function(MediaPosition position, String? label)?
   onAddBookmark,
   Future<WorkAnnotations> Function(String bookmarkId)? onDeleteBookmark,
-}) => showDialog<ComicBookViewerResult>(
-  context: context,
-  barrierDismissible: false,
-  useSafeArea: false,
-  builder: (context) => _ComicBookDialog(
-    pageSource: pageSource,
-    initialPage: initialPage,
-    initialElementId: initialElementId,
-    initialScrollOffset: initialScrollOffset,
-    initialProfile: initialProfile,
-    hasPreviousChapter: hasPreviousChapter,
-    hasNextChapter: hasNextChapter,
-    chapterTitle: chapterTitle,
-    chapterIndex: chapterIndex,
-    chapterCount: chapterCount,
-    chapterTitles: chapterTitles,
-    chapterFileId: chapterFileId,
-    initialBookmarks: initialBookmarks,
-    onPageChanged: onPageChanged,
-    onPositionChanged: onPositionChanged,
-    onProfileChanged: onProfileChanged,
-    onAddBookmark: onAddBookmark,
-    onDeleteBookmark: onDeleteBookmark,
-  ),
-);
+}) async {
+  try {
+    return await showDialog<ComicBookViewerResult>(
+      context: context,
+      barrierDismissible: false,
+      useSafeArea: false,
+      builder: (context) => _ComicBookDialog(
+        pageSource: pageSource,
+        initialPage: initialPage,
+        initialElementId: initialElementId,
+        initialScrollOffset: initialScrollOffset,
+        initialProfile: initialProfile,
+        hasPreviousChapter: hasPreviousChapter,
+        hasNextChapter: hasNextChapter,
+        chapterTitle: chapterTitle,
+        chapterIndex: chapterIndex,
+        chapterCount: chapterCount,
+        chapterTitles: chapterTitles,
+        chapterFileId: chapterFileId,
+        initialBookmarks: initialBookmarks,
+        onPageChanged: onPageChanged,
+        onPositionChanged: onPositionChanged,
+        onProfileChanged: onProfileChanged,
+        onAddBookmark: onAddBookmark,
+        onDeleteBookmark: onDeleteBookmark,
+      ),
+    );
+  } finally {
+    await pageSource.dispose();
+  }
+}
 
 enum ComicBookViewerAction {
   previousChapter,
@@ -405,6 +411,22 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
   Future<List<ComicPage>> _loadPages() async {
     final pages = await widget.pageSource.pages();
     if (pages.isEmpty || !_continuous) return pages;
+    for (var index = 0; index < pages.length; index++) {
+      final page = pages[index];
+      if (page.width != null &&
+          page.width! > 0 &&
+          page.height != null &&
+          page.height! > 0) {
+        _pageSizes[index] = Size(
+          page.width!.toDouble(),
+          page.height!.toDouble(),
+        );
+      }
+    }
+    if (_pageSizes.length == pages.length) {
+      await _preparePagesAround(pages, widget.initialPage);
+      return pages;
+    }
     // Continuous layouts must know every page extent before the ListView is
     // shown. Replacing fixed-height loading placeholders with the real image
     // heights changes the scroll extent above the viewport and made Webtoons
@@ -418,13 +440,33 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     int targetPage,
   ) async {
     final end = (targetPage + _profile.preloadCount).clamp(0, pages.length - 1);
+    await _preparePageRange(pages, 0, end);
+  }
+
+  Future<void> _preparePagesAround(
+    List<ComicPage> pages,
+    int targetPage,
+  ) async {
+    final start = (targetPage - _profile.preloadCount).clamp(
+      0,
+      pages.length - 1,
+    );
+    final end = (targetPage + _profile.preloadCount).clamp(0, pages.length - 1);
+    await _preparePageRange(pages, start, end);
+  }
+
+  Future<void> _preparePageRange(
+    List<ComicPage> pages,
+    int start,
+    int end,
+  ) async {
     final targets = [
-      for (var index = 0; index <= end; index++)
+      for (var index = start; index <= end; index++)
         if (!_extractedPagePaths.containsKey(index)) pages[index],
     ];
     if (targets.isEmpty) return;
     final extracted = await widget.pageSource.materialize(targets);
-    for (var index = 0; index <= end; index++) {
+    for (var index = start; index <= end; index++) {
       final path = extracted[pages[index].id];
       if (path == null) continue;
       _extractedPagePaths[index] = path;
