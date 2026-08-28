@@ -21,6 +21,7 @@ import '../library/work_detail_view_model.dart';
 import '../library/work_detail_facts.dart';
 import '../library/work_detail_header.dart';
 import '../library/work_detail_sections.dart';
+import '../library/work_content_list.dart';
 import '../library/zip_archive_browser.dart';
 import '../playback/playback_sleep_timer_button.dart';
 import '../playback/playback_conflict_settings.dart';
@@ -88,27 +89,6 @@ List<({FundusRemoteTrack track, int originalIndex})> _orderedRemoteTracks(
       );
   }
   return result;
-}
-
-enum DocumentChapterReadState { unread, current, read }
-
-DocumentChapterReadState documentChapterReadState({
-  required int chapterIndex,
-  required int currentChapterIndex,
-  required bool workFinished,
-  MediaPosition? currentPosition,
-}) {
-  if (workFinished ||
-      (currentChapterIndex >= 0 && chapterIndex < currentChapterIndex)) {
-    return DocumentChapterReadState.read;
-  }
-  if (chapterIndex != currentChapterIndex) {
-    return DocumentChapterReadState.unread;
-  }
-  if ((currentPosition?.fraction ?? 0) >= .98) {
-    return DocumentChapterReadState.read;
-  }
-  return DocumentChapterReadState.current;
 }
 
 Future<void> showFundusRemoteServers(
@@ -4798,19 +4778,22 @@ class _MobileRemotePublicationDetailsState
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
     children: [
       for (final entry in entries)
-        ListTile(
-          leading: documentChapterLeading(
-            context,
-            entry.originalIndex + 1,
-            documentChapterReadState(
+        WorkContentListTile(
+          item: WorkContentItemViewModel(
+            id: entry.track.id,
+            title: entry.track.title,
+            number: entry.originalIndex + 1,
+            readState: documentChapterReadState(
               chapterIndex: entry.originalIndex,
               currentChapterIndex: widget.progressIndex,
               workFinished: widget.work.progressFinished,
               currentPosition: widget.progressPosition,
             ),
+            availability: widget.isOffline
+                ? WorkContentAvailability.offline
+                : WorkContentAvailability.remote,
+            subtitle: _remoteTechnicalSubtitle(entry.track),
           ),
-          title: Text(entry.track.title),
-          trailing: const Icon(Icons.chevron_right),
           onTap: () => Navigator.pop(context, 'open:${entry.originalIndex}'),
         ),
     ],
@@ -4848,19 +4831,35 @@ class _MobileRemotePublicationDetailsState
         if (publication == null) {
           return const Center(child: CircularProgressIndicator());
         }
+        final currentChapterIndex = publication.chapters.indexWhere(
+          (chapter) =>
+              chapter.id == widget.progressPosition?.chapterId ||
+              chapter.title == widget.progressPosition?.chapterId,
+        );
         return ListView.builder(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           itemCount: publication.chapters.length,
           itemBuilder: (context, index) {
             final chapter = publication.chapters[index];
-            return ListTile(
+            return WorkContentListTile(
+              item: WorkContentItemViewModel(
+                id: chapter.id,
+                title: chapter.title,
+                number: index + 1,
+                readState: documentChapterReadState(
+                  chapterIndex: index,
+                  currentChapterIndex: currentChapterIndex,
+                  workFinished: widget.work.progressFinished,
+                  currentPosition: widget.progressPosition,
+                ),
+                availability: widget.isOffline
+                    ? WorkContentAvailability.offline
+                    : WorkContentAvailability.remote,
+              ),
               contentPadding: EdgeInsets.only(
                 left: 8.0 + chapter.depth * 16,
                 right: 8,
               ),
-              leading: CircleAvatar(child: Text('${index + 1}')),
-              title: Text(chapter.title),
-              trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.pop(context, 'epub_chapter:$index'),
             );
           },
@@ -5401,45 +5400,6 @@ Widget? _remoteTechnicalSubtitle(FundusRemoteTrack track) {
     '${parts.join(' · ')}\n${Platform.isAndroid ? 'Android' : 'Desktop'}: $label',
   );
 }
-
-Widget documentChapterLeading(
-  BuildContext context,
-  int number,
-  DocumentChapterReadState state,
-) => SizedBox(
-  width: 32,
-  child: switch (state) {
-    DocumentChapterReadState.read => Icon(
-      Icons.check_circle,
-      color: Theme.of(context).colorScheme.primary,
-      semanticLabel: 'Gelesen',
-    ),
-    DocumentChapterReadState.current => Icon(
-      Icons.adjust,
-      color: Theme.of(context).colorScheme.tertiary,
-      semanticLabel: 'Angefangen',
-    ),
-    DocumentChapterReadState.unread => Text(
-      '$number',
-      textAlign: TextAlign.center,
-    ),
-  },
-);
-
-TextStyle? documentChapterTitleStyle(
-  BuildContext context,
-  DocumentChapterReadState state,
-) => switch (state) {
-  DocumentChapterReadState.read => Theme.of(
-    context,
-  ).textTheme.bodyLarge?.copyWith(color: Theme.of(context).colorScheme.outline),
-  DocumentChapterReadState.current => Theme.of(
-    context,
-  ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
-  DocumentChapterReadState.unread => Theme.of(
-    context,
-  ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold),
-};
 
 class _PairingScanner extends StatefulWidget {
   const _PairingScanner();

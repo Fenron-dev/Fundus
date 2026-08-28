@@ -26,6 +26,7 @@ import 'library/work_detail_view_model.dart';
 import 'library/work_detail_facts.dart';
 import 'library/work_detail_header.dart';
 import 'library/work_detail_sections.dart';
+import 'library/work_content_list.dart';
 import 'library/zip_archive_browser.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/track_jump_confirmation.dart';
@@ -3936,11 +3937,13 @@ class _DocumentFilesPanel extends StatefulWidget {
   const _DocumentFilesPanel({
     required this.files,
     required this.onOpen,
+    required this.availability,
     this.progress,
   });
 
   final List<LibraryPlaybackTrack> files;
   final ValueChanged<LibraryPlaybackTrack> onOpen;
+  final WorkContentAvailability availability;
   final LibraryPlaybackProgress? progress;
 
   @override
@@ -4009,19 +4012,15 @@ class _DocumentFilesPanelState extends State<_DocumentFilesPanel> {
       ),
       children: [
         for (final file in _files)
-          ListTile(
-            dense: true,
-            leading: documentChapterLeading(
-              context,
-              widget.files.indexOf(file) + 1,
-              _readState(file),
+          WorkContentListTile(
+            item: WorkContentItemViewModel(
+              id: file.fileId,
+              title: file.title,
+              number: widget.files.indexOf(file) + 1,
+              readState: _readState(file),
+              availability: widget.availability,
+              subtitle: Text(file.relativePath),
             ),
-            title: Text(
-              file.title,
-              style: documentChapterTitleStyle(context, _readState(file)),
-            ),
-            subtitle: Text(file.relativePath),
-            trailing: const Icon(Icons.open_in_new),
             onTap: () => widget.onOpen(file),
           ),
       ],
@@ -4389,6 +4388,11 @@ class _DetailPanelState extends State<_DetailPanel> {
             _DocumentFilesPanel(
               files: workFiles,
               progress: widget.library?.loadProgress(selectedWork.id),
+              availability: !selectedWork.available
+                  ? WorkContentAvailability.missing
+                  : selectedWork.offline
+                  ? WorkContentAvailability.offline
+                  : WorkContentAvailability.local,
               onOpen: _openDocument,
             ),
           ],
@@ -4634,6 +4638,11 @@ class _DetailPanelState extends State<_DetailPanel> {
                   : _DocumentFilesPanel(
                       files: files,
                       progress: progress,
+                      availability: !work.available
+                          ? WorkContentAvailability.missing
+                          : work.offline
+                          ? WorkContentAvailability.offline
+                          : WorkContentAvailability.local,
                       onOpen: _openDocument,
                     ),
             WorkDetailSection.chapters => _publicationChapters(
@@ -4785,6 +4794,11 @@ class _DetailPanelState extends State<_DetailPanel> {
           : _DocumentFilesPanel(
               files: chapters,
               progress: progress,
+              availability: !work.available
+                  ? WorkContentAvailability.missing
+                  : work.offline
+                  ? WorkContentAvailability.offline
+                  : WorkContentAvailability.local,
               onOpen: _openDocument,
             );
     }
@@ -4806,19 +4820,37 @@ class _DetailPanelState extends State<_DetailPanel> {
         if (publication == null) {
           return const Center(child: CircularProgressIndicator());
         }
+        final currentChapterIndex = publication.chapters.indexWhere(
+          (chapter) =>
+              chapter.id == progress?.position.chapterId ||
+              chapter.title == progress?.position.chapterId,
+        );
         return ListView.builder(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           itemCount: publication.chapters.length,
           itemBuilder: (context, index) {
             final chapter = publication.chapters[index];
-            return ListTile(
+            return WorkContentListTile(
+              item: WorkContentItemViewModel(
+                id: chapter.id,
+                title: chapter.title,
+                number: index + 1,
+                readState: documentChapterReadState(
+                  chapterIndex: index,
+                  currentChapterIndex: currentChapterIndex,
+                  workFinished: progress?.finished ?? false,
+                  currentPosition: progress?.position,
+                ),
+                availability: !work.available
+                    ? WorkContentAvailability.missing
+                    : work.offline
+                    ? WorkContentAvailability.offline
+                    : WorkContentAvailability.local,
+              ),
               contentPadding: EdgeInsets.only(
                 left: 8.0 + chapter.depth * 16,
                 right: 8,
               ),
-              leading: CircleAvatar(child: Text('${index + 1}')),
-              title: Text(chapter.title),
-              trailing: const Icon(Icons.chevron_right),
               onTap: () => unawaited(
                 _openEpubWork(
                   work,

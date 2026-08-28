@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/library/reader_progress_conflict.dart';
+import 'package:fundus/library/work_content_list.dart';
 import 'package:fundus/server/remote_servers_view.dart';
 import 'package:fundus_core/fundus_core.dart';
 

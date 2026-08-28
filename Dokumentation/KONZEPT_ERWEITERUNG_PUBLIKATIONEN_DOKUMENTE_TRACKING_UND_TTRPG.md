@@ -618,6 +618,16 @@ definiert. Lokale und entfernte Ansichten liefern ausschließlich die Inhalte
 und Aktionen ihrer Quelle, sodass neue Bereiche und Bezeichnungen nicht mehr
 zwischen den Bedienwelten auseinanderlaufen können.
 
+Datei- und Kapitellisten verwenden ebenfalls ein gemeinsames Ansichtsmodell.
+Jeder Eintrag transportiert seine stabile ID, Nummer, Bezeichnung, den
+Lesestatus „ungelesen“, „angefangen“ oder „gelesen“ sowie seine Verfügbarkeit
+„lokal“, „remote“, „offline“ oder „fehlend“. Dadurch sind Nummerierung,
+Typografie und Symbole auf Desktop und Mobile sowie für lokale, entfernte und
+heruntergeladene Publikationen identisch. EPUB-Kapitel leiten ihren Lesestatus
+aus der semantischen Kapitel-ID des synchronisierten Lesestands ab; ein
+separates Symbol zeigt, ob der Inhalt auf dem Gerät liegt oder aus dem Netzwerk
+bezogen wird.
+
 Ein Tippen auf das Cover öffnet eine große, nicht destruktive Vorschau. Der
 Download-Dialog bleibt eine explizite Auswahl von Kapiteln beziehungsweise
 Dateien. Reader öffnen bildschirmfüllend; ein Tippen in die Mitte blendet die
