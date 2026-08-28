@@ -20,6 +20,7 @@ import '../library/reader_progress_conflict.dart';
 import '../library/work_detail_view_model.dart';
 import '../library/work_detail_facts.dart';
 import '../library/work_detail_header.dart';
+import '../library/work_detail_sections.dart';
 import '../library/zip_archive_browser.dart';
 import '../playback/playback_sleep_timer_button.dart';
 import '../playback/playback_conflict_settings.dart';
@@ -4665,8 +4666,8 @@ class _MobileRemotePublicationDetails extends StatefulWidget {
 class _MobileRemotePublicationDetailsState
     extends State<_MobileRemotePublicationDetails> {
   final _noteController = TextEditingController();
-  var _tab = 0;
-  var _notesTab = 0;
+  var _tab = WorkDetailSection.info;
+  var _notesTab = WorkAnnotationSection.notes;
   var _sort = _DocumentTrackSort.oldestFirst;
   String _filter = '';
   late WorkAnnotations _annotations;
@@ -4735,21 +4736,9 @@ class _MobileRemotePublicationDetailsState
                   ),
                 ),
                 const SizedBox(height: 12),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: SegmentedButton<int>(
-                    showSelectedIcon: false,
-                    segments: const [
-                      ButtonSegment(value: 0, label: Text('Info')),
-                      ButtonSegment(value: 1, label: Text('Dateien')),
-                      ButtonSegment(value: 2, label: Text('Kapitel')),
-                      ButtonSegment(value: 3, label: Text('Notizen')),
-                      ButtonSegment(value: 4, label: Text('Ähnlich')),
-                    ],
-                    selected: {_tab},
-                    onSelectionChanged: (value) =>
-                        setState(() => _tab = value.single),
-                  ),
+                WorkDetailSectionSelector(
+                  selected: _tab,
+                  onChanged: (value) => setState(() => _tab = value),
                 ),
               ],
             ),
@@ -4762,7 +4751,7 @@ class _MobileRemotePublicationDetailsState
   );
 
   Widget _tabBody() => switch (_tab) {
-    0 => ListView(
+    WorkDetailSection.info => ListView(
       padding: const EdgeInsets.all(18),
       children: [
         if (widget.work.description case final description?) ...[
@@ -4782,27 +4771,25 @@ class _MobileRemotePublicationDetailsState
         ),
       ],
     ),
-    1 => _trackList(_tracks),
-    2 => _chapterList(),
-    3 => Column(
+    WorkDetailSection.files => _trackList(_tracks),
+    WorkDetailSection.chapters => _chapterList(),
+    WorkDetailSection.notes => Column(
       children: [
         Padding(
           padding: const EdgeInsets.all(12),
-          child: SegmentedButton<int>(
-            showSelectedIcon: false,
-            segments: const [
-              ButtonSegment(value: 0, label: Text('Notizen')),
-              ButtonSegment(value: 1, label: Text('Lesezeichen & Highlights')),
-            ],
-            selected: {_notesTab},
-            onSelectionChanged: (value) =>
-                setState(() => _notesTab = value.single),
+          child: WorkAnnotationSectionSelector(
+            selected: _notesTab,
+            onChanged: (value) => setState(() => _notesTab = value),
           ),
         ),
-        Expanded(child: _notesTab == 0 ? _notesList() : _annotationList()),
+        Expanded(
+          child: _notesTab == WorkAnnotationSection.notes
+              ? _notesList()
+              : _annotationList(),
+        ),
       ],
     ),
-    _ => _similarList(),
+    WorkDetailSection.similar => _similarList(),
   };
 
   Widget _trackList(

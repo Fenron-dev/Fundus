@@ -611,6 +611,13 @@ ergänzt: Remote-Werke bieten „Zur Bibliothek“, Offline-Werke „Kapitel
 verwalten“. Der lokale Dateipfad bleibt im Info-Bereich sichtbar; entfernte
 Quellen zeigen stattdessen den verständlichen Server- und Bibliotheksnamen.
 
+Auch die Bereichsnavigation ist eine gemeinsame, typisierte Komponente. Die
+Reihenfolge „Info“, „Dateien“, „Kapitel“, „Notizen“, „Ähnlich“ sowie die
+Unterteilung „Notizen“ und „Lesezeichen & Highlights“ wird nur einmal
+definiert. Lokale und entfernte Ansichten liefern ausschließlich die Inhalte
+und Aktionen ihrer Quelle, sodass neue Bereiche und Bezeichnungen nicht mehr
+zwischen den Bedienwelten auseinanderlaufen können.
+
 Ein Tippen auf das Cover öffnet eine große, nicht destruktive Vorschau. Der
 Download-Dialog bleibt eine explizite Auswahl von Kapiteln beziehungsweise
 Dateien. Reader öffnen bildschirmfüllend; ein Tippen in die Mitte blendet die

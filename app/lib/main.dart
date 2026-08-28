@@ -25,6 +25,7 @@ import 'library/security_scoped_bookmarks.dart';
 import 'library/work_detail_view_model.dart';
 import 'library/work_detail_facts.dart';
 import 'library/work_detail_header.dart';
+import 'library/work_detail_sections.dart';
 import 'library/zip_archive_browser.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/track_jump_confirmation.dart';
@@ -4186,8 +4187,8 @@ class _DetailPanelState extends State<_DetailPanel> {
   bool _workIsPlaying = false;
   bool _workIsQueued = false;
   LibraryWorkSummary? _editedWork;
-  int _mobileDetailTab = 0;
-  int _mobileNotesTab = 0;
+  WorkDetailSection _mobileDetailTab = WorkDetailSection.info;
+  WorkAnnotationSection _mobileNotesTab = WorkAnnotationSection.notes;
   final Map<String, Future<EpubPublication>> _epubPublicationRequests = {};
 
   @override
@@ -4586,21 +4587,9 @@ class _DetailPanelState extends State<_DetailPanel> {
                       ),
               ),
               const SizedBox(height: 12),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: SegmentedButton<int>(
-                  showSelectedIcon: false,
-                  segments: const [
-                    ButtonSegment(value: 0, label: Text('Info')),
-                    ButtonSegment(value: 1, label: Text('Dateien')),
-                    ButtonSegment(value: 2, label: Text('Kapitel')),
-                    ButtonSegment(value: 3, label: Text('Notizen')),
-                    ButtonSegment(value: 4, label: Text('Ähnlich')),
-                  ],
-                  selected: {_mobileDetailTab},
-                  onSelectionChanged: (value) =>
-                      setState(() => _mobileDetailTab = value.single),
-                ),
+              WorkDetailSectionSelector(
+                selected: _mobileDetailTab,
+                onChanged: (value) => setState(() => _mobileDetailTab = value),
               ),
             ],
           ),
@@ -4608,7 +4597,7 @@ class _DetailPanelState extends State<_DetailPanel> {
         const Divider(height: 1),
         Expanded(
           child: switch (_mobileDetailTab) {
-            0 => ListView(
+            WorkDetailSection.info => ListView(
               padding: const EdgeInsets.all(18),
               children: [
                 if (work.description case final description?) ...[
@@ -4639,7 +4628,7 @@ class _DetailPanelState extends State<_DetailPanel> {
                 ],
               ],
             ),
-            1 =>
+            WorkDetailSection.files =>
               files.isEmpty
                   ? const Center(child: Text('Keine Dateien gefunden.'))
                   : _DocumentFilesPanel(
@@ -4647,27 +4636,23 @@ class _DetailPanelState extends State<_DetailPanel> {
                       progress: progress,
                       onOpen: _openDocument,
                     ),
-            2 => _publicationChapters(work, readable, progress),
-            3 => Column(
+            WorkDetailSection.chapters => _publicationChapters(
+              work,
+              readable,
+              progress,
+            ),
+            WorkDetailSection.notes => Column(
               children: [
                 Padding(
                   padding: const EdgeInsets.all(12),
-                  child: SegmentedButton<int>(
-                    showSelectedIcon: false,
-                    segments: const [
-                      ButtonSegment(value: 0, label: Text('Notizen')),
-                      ButtonSegment(
-                        value: 1,
-                        label: Text('Lesezeichen & Highlights'),
-                      ),
-                    ],
-                    selected: {_mobileNotesTab},
-                    onSelectionChanged: (value) =>
-                        setState(() => _mobileNotesTab = value.single),
+                  child: WorkAnnotationSectionSelector(
+                    selected: _mobileNotesTab,
+                    onChanged: (value) =>
+                        setState(() => _mobileNotesTab = value),
                   ),
                 ),
                 Expanded(
-                  child: _mobileNotesTab == 0
+                  child: _mobileNotesTab == WorkAnnotationSection.notes
                       ? ListView(
                           padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
                           children: [
@@ -4755,7 +4740,7 @@ class _DetailPanelState extends State<_DetailPanel> {
                 ),
               ],
             ),
-            _ => _similarWorks(work),
+            WorkDetailSection.similar => _similarWorks(work),
           },
         ),
       ],
