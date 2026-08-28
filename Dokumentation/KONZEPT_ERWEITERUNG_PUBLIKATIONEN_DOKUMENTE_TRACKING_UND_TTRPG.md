@@ -628,6 +628,14 @@ aus der semantischen Kapitel-ID des synchronisierten Lesestands ab; ein
 separates Symbol zeigt, ob der Inhalt auf dem Gerät liegt oder aus dem Netzwerk
 bezogen wird.
 
+Notizen, Lesezeichen und Highlights folgen derselben Regel. Gemeinsame
+Listenkomponenten zeigen Erstellungszeit, semantisches Kapitel und genaue
+Medienposition in einem stabilen, lesbaren Format. Lesezeichen und Highlights
+bleiben über ihre IDs als Sprungziele adressierbar; nur die jeweilige Quelle
+entscheidet anschließend, ob der interne Reader eine lokale Datei, den
+Offline-Cache oder einen Remote-Stream öffnet. Leerzustände und
+Markdown-Darstellung sind damit in allen drei Bedienwelten identisch.
+
 Ein Tippen auf das Cover öffnet eine große, nicht destruktive Vorschau. Der
 Download-Dialog bleibt eine explizite Auswahl von Kapiteln beziehungsweise
 Dateien. Reader öffnen bildschirmfüllend; ein Tippen in die Mitte blendet die

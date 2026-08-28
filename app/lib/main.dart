@@ -27,6 +27,7 @@ import 'library/work_detail_facts.dart';
 import 'library/work_detail_header.dart';
 import 'library/work_detail_sections.dart';
 import 'library/work_content_list.dart';
+import 'library/work_annotation_list.dart';
 import 'library/zip_archive_browser.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/track_jump_confirmation.dart';
@@ -4662,89 +4663,47 @@ class _DetailPanelState extends State<_DetailPanel> {
                 ),
                 Expanded(
                   child: _mobileNotesTab == WorkAnnotationSection.notes
-                      ? ListView(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-                          children: [
-                            for (final note in _annotations.notes)
-                              Card(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(12),
-                                  child: SelectableText(note.markdown),
+                      ? WorkNotesList(
+                          notes: _annotations.notes,
+                          composer: Column(
+                            children: [
+                              TextField(
+                                controller: _noteController,
+                                minLines: 3,
+                                maxLines: 8,
+                                decoration: const InputDecoration(
+                                  hintText: 'Notiz schreiben …',
+                                  border: OutlineInputBorder(),
                                 ),
                               ),
-                            TextField(
-                              controller: _noteController,
-                              minLines: 3,
-                              maxLines: 8,
-                              decoration: const InputDecoration(
-                                hintText: 'Notiz schreiben …',
-                                border: OutlineInputBorder(),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            FilledButton.icon(
-                              onPressed: widget.library == null || _saving
-                                  ? null
-                                  : _saveNote,
-                              icon: const Icon(Icons.save_outlined),
-                              label: const Text('Notiz speichern'),
-                            ),
-                          ],
-                        )
-                      : ListView(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          children: [
-                            if (_annotations.bookmarks.isEmpty &&
-                                _annotations.highlights.isEmpty)
-                              const Padding(
-                                padding: EdgeInsets.all(24),
-                                child: Text(
-                                  'Noch keine Lesezeichen oder Highlights vorhanden.',
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
-                            for (final bookmark in _annotations.bookmarks)
-                              ListTile(
-                                leading: const Icon(Icons.bookmark_outline),
-                                title: Text(
-                                  bookmark.label ?? bookmark.displayPosition,
-                                ),
-                                subtitle: Text(
-                                  bookmark.mediaPosition.chapterId ??
-                                      'Textstelle',
-                                ),
-                                trailing: const Icon(Icons.chevron_right),
-                                onTap: () => unawaited(
-                                  _openPublicationAnnotation(
-                                    work,
-                                    readable,
-                                    bookmark.mediaPosition,
-                                  ),
-                                ),
-                              ),
-                            for (final highlight in _annotations.highlights)
-                              ListTile(
-                                leading: const Icon(
-                                  Icons.border_color_outlined,
-                                ),
-                                title: Text(
-                                  highlight.quote,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                subtitle: highlight.note == null
+                              const SizedBox(height: 8),
+                              FilledButton.icon(
+                                onPressed: widget.library == null || _saving
                                     ? null
-                                    : Text(highlight.note!),
-                                trailing: const Icon(Icons.chevron_right),
-                                onTap: () => unawaited(
-                                  _openPublicationAnnotation(
-                                    work,
-                                    readable,
-                                    highlight.mediaPosition,
-                                  ),
-                                ),
+                                    : _saveNote,
+                                icon: const Icon(Icons.save_outlined),
+                                label: const Text('Notiz speichern'),
                               ),
-                          ],
+                            ],
+                          ),
+                        )
+                      : WorkAnnotationList(
+                          bookmarks: _annotations.bookmarks,
+                          highlights: _annotations.highlights,
+                          onOpenBookmark: (bookmark) => unawaited(
+                            _openPublicationAnnotation(
+                              work,
+                              readable,
+                              bookmark.mediaPosition,
+                            ),
+                          ),
+                          onOpenHighlight: (highlight) => unawaited(
+                            _openPublicationAnnotation(
+                              work,
+                              readable,
+                              highlight.mediaPosition,
+                            ),
+                          ),
                         ),
                 ),
               ],

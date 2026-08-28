@@ -22,6 +22,7 @@ import '../library/work_detail_facts.dart';
 import '../library/work_detail_header.dart';
 import '../library/work_detail_sections.dart';
 import '../library/work_content_list.dart';
+import '../library/work_annotation_list.dart';
 import '../library/zip_archive_browser.dart';
 import '../playback/playback_sleep_timer_button.dart';
 import '../playback/playback_conflict_settings.dart';
@@ -4869,77 +4870,39 @@ class _MobileRemotePublicationDetailsState
   }
 
   Widget _annotationList() {
-    final bookmarks = _annotations.bookmarks;
-    final highlights = _annotations.highlights;
-    if (bookmarks.isEmpty && highlights.isEmpty) {
-      return const Center(child: Text('Noch keine Annotationen vorhanden.'));
-    }
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      children: [
-        for (final item in bookmarks)
-          ListTile(
-            leading: const Icon(Icons.bookmark_outline),
-            title: Text(item.label ?? item.displayPosition),
-            subtitle: Text(item.mediaPosition.chapterId ?? 'Textstelle'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.pop(context, 'annotation:${item.id}'),
-          ),
-        for (final item in highlights)
-          ListTile(
-            leading: const Icon(Icons.border_color_outlined),
-            title: Text(
-              item.quote,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            subtitle: item.note == null ? null : Text(item.note!),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.pop(context, 'annotation:${item.id}'),
-          ),
-      ],
+    return WorkAnnotationList(
+      bookmarks: _annotations.bookmarks,
+      highlights: _annotations.highlights,
+      onOpenBookmark: (item) => Navigator.pop(context, 'annotation:${item.id}'),
+      onOpenHighlight: (item) =>
+          Navigator.pop(context, 'annotation:${item.id}'),
     );
   }
 
   bool get _isFavorite =>
       {...widget.work.tags, ..._annotations.tags}.contains('Favorit');
 
-  Widget _notesList() => ListView(
-    padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-    children: [
-      for (final note in _annotations.notes)
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  note.createdAt.toLocal().toString().substring(0, 16),
-                  style: Theme.of(context).textTheme.labelSmall,
-                ),
-                const SizedBox(height: 6),
-                SelectableText(note.markdown),
-              ],
-            ),
+  Widget _notesList() => WorkNotesList(
+    notes: _annotations.notes,
+    composer: Column(
+      children: [
+        TextField(
+          controller: _noteController,
+          minLines: 3,
+          maxLines: 8,
+          decoration: const InputDecoration(
+            hintText: 'Notiz in Markdown schreiben …',
+            border: OutlineInputBorder(),
           ),
         ),
-      TextField(
-        controller: _noteController,
-        minLines: 3,
-        maxLines: 8,
-        decoration: const InputDecoration(
-          hintText: 'Notiz in Markdown schreiben …',
-          border: OutlineInputBorder(),
+        const SizedBox(height: 8),
+        FilledButton.icon(
+          onPressed: _saveNote,
+          icon: const Icon(Icons.save_outlined),
+          label: const Text('Notiz speichern'),
         ),
-      ),
-      const SizedBox(height: 8),
-      FilledButton.icon(
-        onPressed: _saveNote,
-        icon: const Icon(Icons.save_outlined),
-        label: const Text('Notiz speichern'),
-      ),
-    ],
+      ],
+    ),
   );
 
   Widget _similarList() {
