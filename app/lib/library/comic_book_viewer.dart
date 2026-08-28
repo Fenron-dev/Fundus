@@ -9,10 +9,65 @@ import 'package:path/path.dart' as p;
 
 import '../diagnostics/fundus_diagnostics.dart';
 import 'comic_page_source.dart';
+import 'work_annotation_list.dart';
 import 'zip_archive_browser.dart';
 
 List<ZipArchiveEntry> comicBookPages(ZipArchiveSnapshot snapshot) =>
     comicPageEntries(snapshot);
+
+class _ZoomableComicPage extends StatefulWidget {
+  const _ZoomableComicPage({
+    super.key,
+    required this.child,
+    required this.minScale,
+  });
+
+  final Widget child;
+  final double minScale;
+
+  @override
+  State<_ZoomableComicPage> createState() => _ZoomableComicPageState();
+}
+
+class _ZoomableComicPageState extends State<_ZoomableComicPage> {
+  final TransformationController _controller = TransformationController();
+  bool _zoomed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_syncZoomState);
+  }
+
+  void _syncZoomState() {
+    final zoomed = _controller.value.getMaxScaleOnAxis() > 1.01;
+    if (zoomed != _zoomed && mounted) setState(() => _zoomed = zoomed);
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_syncZoomState);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    behavior: HitTestBehavior.translucent,
+    onDoubleTap: () => _controller.value = Matrix4.identity(),
+    child: InteractiveViewer(
+      transformationController: _controller,
+      minScale: widget.minScale,
+      maxScale: 6,
+      // A normal one-finger gesture must keep scrolling a Webtoon. Panning is
+      // only claimed after a pinch actually enlarged this page.
+      panEnabled: _zoomed,
+      scaleEnabled: true,
+      clipBehavior: Clip.none,
+      child: widget.child,
+    ),
+  );
+}
 
 List<List<int>> comicPageGroups(
   int pageCount, {
@@ -251,6 +306,7 @@ Future<ComicBookViewerResult?> showComicBookViewer(
   List<String> chapterTitles = const [],
   String? chapterFileId,
   List<LibraryBookmark> initialBookmarks = const [],
+  List<LibraryNote> initialNotes = const [],
   void Function(int page, int total)? onPageChanged,
   void Function(int page, int total, String elementId, double? scrollOffset)?
   onPositionChanged,
@@ -258,6 +314,7 @@ Future<ComicBookViewerResult?> showComicBookViewer(
   Future<WorkAnnotations> Function(MediaPosition position, String? label)?
   onAddBookmark,
   Future<WorkAnnotations> Function(String bookmarkId)? onDeleteBookmark,
+  Future<WorkAnnotations> Function(String markdown)? onSaveNote,
 }) async {
   try {
     return await showDialog<ComicBookViewerResult>(
@@ -278,11 +335,13 @@ Future<ComicBookViewerResult?> showComicBookViewer(
         chapterTitles: chapterTitles,
         chapterFileId: chapterFileId,
         initialBookmarks: initialBookmarks,
+        initialNotes: initialNotes,
         onPageChanged: onPageChanged,
         onPositionChanged: onPositionChanged,
         onProfileChanged: onProfileChanged,
         onAddBookmark: onAddBookmark,
         onDeleteBookmark: onDeleteBookmark,
+        onSaveNote: onSaveNote,
       ),
     );
   } finally {
@@ -342,11 +401,13 @@ class _ComicBookDialog extends StatefulWidget {
     required this.chapterTitles,
     required this.chapterFileId,
     required this.initialBookmarks,
+    required this.initialNotes,
     required this.onPageChanged,
     required this.onPositionChanged,
     required this.onProfileChanged,
     required this.onAddBookmark,
     required this.onDeleteBookmark,
+    required this.onSaveNote,
   });
 
   final ComicPageSource pageSource;
@@ -362,6 +423,7 @@ class _ComicBookDialog extends StatefulWidget {
   final List<String> chapterTitles;
   final String? chapterFileId;
   final List<LibraryBookmark> initialBookmarks;
+  final List<LibraryNote> initialNotes;
   final void Function(int page, int total)? onPageChanged;
   final void Function(
     int page,
@@ -374,6 +436,7 @@ class _ComicBookDialog extends StatefulWidget {
   final Future<WorkAnnotations> Function(MediaPosition position, String? label)?
   onAddBookmark;
   final Future<WorkAnnotations> Function(String bookmarkId)? onDeleteBookmark;
+  final Future<WorkAnnotations> Function(String markdown)? onSaveNote;
 
   @override
   State<_ComicBookDialog> createState() => _ComicBookDialogState();
@@ -398,12 +461,14 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
   bool _continuousTrackingReady = false;
   late PublicationReaderProfile _profile;
   late List<LibraryBookmark> _bookmarks;
+  late List<LibraryNote> _notes;
 
   @override
   void initState() {
     super.initState();
     _profile = widget.initialProfile;
     _bookmarks = List.of(widget.initialBookmarks);
+    _notes = List.of(widget.initialNotes);
     _currentScrollOffset = widget.initialScrollOffset;
     _pagesFuture = _loadPages();
   }
@@ -981,6 +1046,109 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     );
   }
 
+  Future<void> _showNotes() async {
+    final controller = TextEditingController();
+    var saving = false;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: FractionallySizedBox(
+            heightFactor: .75,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Notizen',
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                      ),
+                      Text('Seite ${_currentPage + 1}'),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: WorkNotesList(
+                    notes: _notes,
+                    composer: widget.onSaveNote == null
+                        ? null
+                        : Column(
+                            children: [
+                              TextField(
+                                controller: controller,
+                                minLines: 3,
+                                maxLines: 7,
+                                decoration: const InputDecoration(
+                                  hintText: 'Notiz in Markdown schreiben …',
+                                  border: OutlineInputBorder(),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: double.infinity,
+                                child: FilledButton.icon(
+                                  onPressed: saving
+                                      ? null
+                                      : () async {
+                                          final markdown = controller.text
+                                              .trim();
+                                          if (markdown.isEmpty) return;
+                                          setSheetState(() => saving = true);
+                                          try {
+                                            final updated = await widget
+                                                .onSaveNote!(markdown);
+                                            if (!sheetContext.mounted) return;
+                                            controller.clear();
+                                            setState(
+                                              () => _notes = List.of(
+                                                updated.notes,
+                                              ),
+                                            );
+                                            setSheetState(() => saving = false);
+                                          } catch (_) {
+                                            if (!sheetContext.mounted) return;
+                                            setSheetState(() => saving = false);
+                                            ScaffoldMessenger.of(
+                                              sheetContext,
+                                            ).showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                  'Die Notiz konnte nicht gespeichert werden.',
+                                                ),
+                                              ),
+                                            );
+                                          }
+                                        },
+                                  icon: saving
+                                      ? const SizedBox.square(
+                                          dimension: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(Icons.save_outlined),
+                                  label: const Text('Notiz speichern'),
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    controller.dispose();
+  }
+
   int _pageCount = 0;
 
   void _seekToPage(int page, List<List<int>> groups) {
@@ -1496,8 +1664,11 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
             )
           : Center(child: image),
     );
-    if (continuous) return pageContent;
-    return InteractiveViewer(minScale: .5, maxScale: 6, child: pageContent);
+    return _ZoomableComicPage(
+      key: ValueKey('comic-page-zoom-$page'),
+      minScale: continuous ? 1 : .5,
+      child: pageContent,
+    );
   }
 
   Widget _buildReaderSurface(List<ComicPage> pages, List<List<int>> groups) =>
@@ -1745,6 +1916,16 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
                           ),
                     tooltip: 'Seitenlesezeichen anzeigen',
                     icon: const Icon(Icons.bookmarks_outlined),
+                  ),
+                if (widget.onSaveNote != null || _notes.isNotEmpty)
+                  IconButton(
+                    onPressed: _showNotes,
+                    tooltip: 'Notizen',
+                    icon: Badge(
+                      isLabelVisible: _notes.isNotEmpty,
+                      label: Text('${_notes.length}'),
+                      child: const Icon(Icons.note_alt_outlined),
+                    ),
                   ),
                 if (widget.chapterTitles.length > 1)
                   IconButton(

@@ -682,3 +682,31 @@ Visuelle Referenzen:
 - `Mobile_app_dashboard_UI_mockup_202608221622.jpeg`
 - `Mobile_app_ebook_library_mockup_202608221603.jpeg`
 - `Mobile_app_UI_mockup_2K_202608221559.jpeg`
+
+## 19. Bildannotation, Zoom und reaktionsfähige Sidecars
+
+Bildbasierte Reader wie Manga, Comics und später Foto- und Videobetrachter
+verwenden ein gemeinsames Gestenprinzip: Pinch-to-Zoom vergrößert temporär bis
+ins Detail, Verschieben bewegt den vergrößerten Inhalt und ein Doppeltipp setzt
+die Transformation auf die für das Werk konfigurierte Breiten-, Höhen- oder
+Originaldarstellung zurück. Der temporäre Zoom verändert weder das portable
+Reader-Profil noch den gespeicherten Lesestand. In kontinuierlichen und
+Webtoon-Ansichten bleibt der normale Ein-Finger-Scroll die primäre Navigation.
+
+Manga und Comics unterstützen Seitenlesezeichen und Markdown-Notizen direkt im
+Reader. Die Annotation trägt stabile Werk-, Datei-, Kapitel- und Seitenbezüge.
+Damit sind lokale, heruntergeladene und remote gelesene Werke gleichwertig und
+können dieselben Annotationen synchronisieren. Textmarkierungen bleiben auf
+Textmedien beschränkt; für Bildmedien können später rechteckige Bildausschnitte
+als eigener Annotationstyp ergänzt werden.
+
+Bei einem Netzwerk-Vault aktualisiert Fundus die lokale Datenbank und die
+sichtbare Oberfläche sofort. Der portable Sidecar wird anschließend
+asynchron nachgeführt. Währenddessen bleibt die restliche Detailansicht
+bedienbar; nur die gerade laufende Speicheraktion wird gegen Doppelübermittlung
+gesperrt. Ein fehlgeschlagener Sidecar-Schreibvorgang wird sichtbar gemeldet
+und darf eine lokal eingegebene Notiz nicht unbemerkt verwerfen.
+
+Desktop-Karten öffnen beim ersten Klick weiterhin die Auswahl beziehungsweise
+Seitenleiste. Ein schneller zweiter Klick auf dasselbe Werk öffnet die große
+Detailansicht im mittleren Bereich und klappt die rechte Seitenleiste ein.

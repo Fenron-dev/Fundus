@@ -1270,6 +1270,8 @@ class _LibraryShellState extends State<LibraryShell> {
   double _detailPaneWidth = 368;
   String? _playlistTypeFilter;
   List<LibrarySavedView> _savedViews = const [];
+  String? _lastTappedWorkId;
+  DateTime? _lastWorkTapAt;
 
   @override
   void initState() {
@@ -2237,7 +2239,7 @@ class _LibraryShellState extends State<LibraryShell> {
                       work: work,
                       player: widget.player,
                       selected: !detailAsDialog && index == _selectedIndex,
-                      onTap: () => _selectWork(work, index, detailAsDialog),
+                      onTap: () => _handleWorkTap(work, index, detailAsDialog),
                     );
                   },
                 )
@@ -2690,6 +2692,22 @@ class _LibraryShellState extends State<LibraryShell> {
     _openWorkDetails(work);
   }
 
+  void _handleWorkTap(LibraryWorkSummary work, int index, bool detailAsDialog) {
+    final now = DateTime.now();
+    final isDoubleTap =
+        MediaQuery.sizeOf(context).width >= 760 &&
+        _lastTappedWorkId == work.id &&
+        _lastWorkTapAt != null &&
+        now.difference(_lastWorkTapAt!) < const Duration(milliseconds: 450);
+    _lastTappedWorkId = work.id;
+    _lastWorkTapAt = now;
+    if (isDoubleTap) {
+      _openInlineWorkDetails(work, index);
+      return;
+    }
+    _selectWork(work, index, detailAsDialog);
+  }
+
   void _openWorkDetails(LibraryWorkSummary work) {
     if (MediaQuery.sizeOf(context).width >= 760) {
       setState(() => _inlineDetailWork = work);
@@ -2715,6 +2733,14 @@ class _LibraryShellState extends State<LibraryShell> {
         ),
       ),
     );
+  }
+
+  void _openInlineWorkDetails(LibraryWorkSummary work, int index) {
+    setState(() {
+      _selectedIndex = index;
+      _detailPaneVisible = false;
+      _inlineDetailWork = work;
+    });
   }
 
   Widget _inlineDetail(LibraryWorkSummary work) => Column(
@@ -4182,6 +4208,7 @@ class _DetailPanelState extends State<_DetailPanel> {
   final _noteController = TextEditingController();
   WorkAnnotations _annotations = const WorkAnnotations();
   bool _saving = false;
+  bool _noteSaving = false;
   bool _bookmarkAvailable = false;
   bool _workIsCurrent = false;
   bool _workIsPlaying = false;
@@ -4421,6 +4448,37 @@ class _DetailPanelState extends State<_DetailPanel> {
           ),
         ],
         const SizedBox(height: 20),
+        if (selectedWork.kind != 'audiobook' &&
+            workFiles != null &&
+            _readableDocumentFiles(workFiles).isNotEmpty) ...[
+          Text(
+            'Lesezeichen & Markierungen',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 6),
+          WorkAnnotationList(
+            bookmarks: _annotations.bookmarks,
+            highlights: _annotations.highlights,
+            padding: EdgeInsets.zero,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            onOpenBookmark: (bookmark) => unawaited(
+              _openPublicationAnnotation(
+                selectedWork,
+                _readableDocumentFiles(workFiles),
+                bookmark.mediaPosition,
+              ),
+            ),
+            onOpenHighlight: (highlight) => unawaited(
+              _openPublicationAnnotation(
+                selectedWork,
+                _readableDocumentFiles(workFiles),
+                highlight.mediaPosition,
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
         Row(
           children: [
             Text('Tags', style: Theme.of(context).textTheme.titleSmall),
@@ -4451,26 +4509,30 @@ class _DetailPanelState extends State<_DetailPanel> {
             ],
           ),
         const SizedBox(height: 20),
-        Row(
-          children: [
-            Text('Lesezeichen', style: Theme.of(context).textTheme.titleSmall),
-            const Spacer(),
-            IconButton(
-              onPressed: canBookmark && !_saving ? _addBookmark : null,
-              tooltip: canBookmark
-                  ? 'Aktuelle Position merken'
-                  : 'Hörbuch starten, um die Position zu merken',
-              icon: const Icon(Icons.bookmark_add_outlined, size: 20),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        if (_annotations.bookmarks.isEmpty)
+        if (selectedWork.kind == 'audiobook')
+          Row(
+            children: [
+              Text(
+                'Lesezeichen',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const Spacer(),
+              IconButton(
+                onPressed: canBookmark && !_saving ? _addBookmark : null,
+                tooltip: canBookmark
+                    ? 'Aktuelle Position merken'
+                    : 'Hörbuch starten, um die Position zu merken',
+                icon: const Icon(Icons.bookmark_add_outlined, size: 20),
+              ),
+            ],
+          ),
+        if (selectedWork.kind == 'audiobook') const SizedBox(height: 6),
+        if (selectedWork.kind == 'audiobook' && _annotations.bookmarks.isEmpty)
           Text(
             'Noch keine Lesezeichen vorhanden.',
             style: Theme.of(context).textTheme.bodySmall,
           )
-        else
+        else if (selectedWork.kind == 'audiobook')
           for (final bookmark in _annotations.bookmarks)
             ListTile(
               dense: true,
@@ -4520,7 +4582,7 @@ class _DetailPanelState extends State<_DetailPanel> {
         TextField(
           key: const ValueKey('note-input'),
           controller: _noteController,
-          enabled: widget.library != null && !_saving,
+          enabled: widget.library != null && !_noteSaving,
           minLines: 3,
           maxLines: 8,
           decoration: const InputDecoration(
@@ -4532,8 +4594,8 @@ class _DetailPanelState extends State<_DetailPanel> {
         Align(
           alignment: Alignment.centerRight,
           child: FilledButton.tonalIcon(
-            onPressed: widget.library == null || _saving ? null : _saveNote,
-            icon: _saving
+            onPressed: widget.library == null || _noteSaving ? null : _saveNote,
+            icon: _noteSaving
                 ? const SizedBox.square(
                     dimension: 16,
                     child: CircularProgressIndicator(strokeWidth: 2),
@@ -4678,10 +4740,17 @@ class _DetailPanelState extends State<_DetailPanel> {
                               ),
                               const SizedBox(height: 8),
                               FilledButton.icon(
-                                onPressed: widget.library == null || _saving
+                                onPressed: widget.library == null || _noteSaving
                                     ? null
                                     : _saveNote,
-                                icon: const Icon(Icons.save_outlined),
+                                icon: _noteSaving
+                                    ? const SizedBox.square(
+                                        dimension: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.save_outlined),
                                 label: const Text('Notiz speichern'),
                               ),
                             ],
@@ -5533,9 +5602,9 @@ class _DetailPanelState extends State<_DetailPanel> {
         storedPosition?.fileId == comics[chapterIndex].fileId
         ? storedPosition?.scrollOffset
         : null;
-    var publicationBookmarks = library == null || work == null
-        ? <LibraryBookmark>[]
-        : library.loadAnnotations(work.id).bookmarks;
+    var publicationAnnotations = library == null || work == null
+        ? const WorkAnnotations()
+        : library.loadAnnotations(work.id);
     final portableProfile = work == null || library == null
         ? null
         : await library.loadPortableReaderProfile(
@@ -5564,7 +5633,8 @@ class _DetailPanelState extends State<_DetailPanel> {
         chapterCount: comics.length,
         chapterTitles: comics.map((chapter) => chapter.title).toList(),
         chapterFileId: file.fileId,
-        initialBookmarks: publicationBookmarks,
+        initialBookmarks: publicationAnnotations.bookmarks,
+        initialNotes: publicationAnnotations.notes,
         onAddBookmark: library == null || work == null || library.isReadOnly
             ? null
             : (position, label) async {
@@ -5574,7 +5644,7 @@ class _DetailPanelState extends State<_DetailPanel> {
                   position: position,
                   label: label,
                 );
-                publicationBookmarks = annotations.bookmarks;
+                publicationAnnotations = annotations;
                 return annotations;
               },
         onDeleteBookmark: library == null || work == null || library.isReadOnly
@@ -5584,7 +5654,17 @@ class _DetailPanelState extends State<_DetailPanel> {
                   work.id,
                   bookmarkId,
                 );
-                publicationBookmarks = annotations.bookmarks;
+                publicationAnnotations = annotations;
+                return annotations;
+              },
+        onSaveNote: library == null || work == null || library.isReadOnly
+            ? null
+            : (markdown) async {
+                final annotations = await library.saveWorkNote(
+                  work.id,
+                  markdown,
+                );
+                publicationAnnotations = annotations;
                 return annotations;
               },
         onPositionChanged: library == null || work == null || library.isReadOnly
@@ -5977,12 +6057,33 @@ class _DetailPanelState extends State<_DetailPanel> {
     if (library == null || work == null) return;
     final markdown = _noteController.text.trim();
     if (markdown.isEmpty) return;
-    _noteController.clear();
-    final saved = await _runSave(
-      () => library.saveWorkNote(work.id, markdown),
-      successMessage: 'Notiz gespeichert.',
-    );
-    if (!saved && mounted) _noteController.text = markdown;
+    setState(() {
+      _noteSaving = true;
+      _noteController.clear();
+    });
+    try {
+      final pending = library.saveWorkNote(work.id, markdown);
+      // The local database is updated before the portable sidecar is written.
+      // Reflect that state immediately; a slow network vault must not freeze
+      // the complete detail panel while its Markdown sidecar catches up.
+      if (mounted) {
+        setState(() => _annotations = library.loadAnnotations(work.id));
+      }
+      final annotations = await pending;
+      if (!mounted) return;
+      setState(() => _annotations = annotations);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Notiz gespeichert.')));
+    } catch (error) {
+      if (!mounted) return;
+      _noteController.text = markdown;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Speichern fehlgeschlagen: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _noteSaving = false);
+    }
   }
 
   Future<void> _addBookmark() async {

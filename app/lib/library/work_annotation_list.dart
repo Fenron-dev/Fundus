@@ -74,6 +74,8 @@ class WorkAnnotationList extends StatelessWidget {
     this.onOpenBookmark,
     this.onOpenHighlight,
     this.padding = const EdgeInsets.symmetric(horizontal: 12),
+    this.shrinkWrap = false,
+    this.physics,
   });
 
   final List<LibraryBookmark> bookmarks;
@@ -81,6 +83,8 @@ class WorkAnnotationList extends StatelessWidget {
   final ValueChanged<LibraryBookmark>? onOpenBookmark;
   final ValueChanged<LibraryHighlight>? onOpenHighlight;
   final EdgeInsetsGeometry padding;
+  final bool shrinkWrap;
+  final ScrollPhysics? physics;
 
   @override
   Widget build(BuildContext context) {
@@ -98,6 +102,8 @@ class WorkAnnotationList extends StatelessWidget {
     return ListView(
       key: const ValueKey('work-annotation-list'),
       padding: padding,
+      shrinkWrap: shrinkWrap,
+      physics: physics,
       children: [
         for (final bookmark in bookmarks)
           ListTile(

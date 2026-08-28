@@ -3337,6 +3337,32 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         ? await PublicationReaderSettings.loadComicProfile(workId: work.id)
         : PublicationReaderProfile.fromJson(portableProfile);
     var profileDirty = false;
+    var comicAnnotations = await _offlineStore.loadAnnotations(
+      serverId: server.id,
+      libraryId: library.id,
+      workId: work.id,
+    );
+    final syncAnnotations = await AnnotationSyncSettings.enabled();
+    if (!skipServerLookup && syncAnnotations) {
+      try {
+        final loaded = await _runWithReconnect(
+          server,
+          (active) => _client.annotations(active, library.id, work.id),
+        );
+        server = loaded.server;
+        comicAnnotations = _mergeAnnotations(
+          work,
+          comicAnnotations,
+          loaded.value,
+        );
+        await _offlineStore.cacheAnnotations(
+          serverId: server.id,
+          libraryId: library.id,
+          workId: work.id,
+          annotations: comicAnnotations,
+        );
+      } catch (_) {}
+    }
     if (selectedDeviceProgress && localPosition != null) {
       await _saveRemoteReaderProgress(
         server,
@@ -3413,6 +3439,88 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         chapterCount: comics.length,
         chapterTitles: comics.map((chapter) => chapter.title).toList(),
         chapterFileId: track.id,
+        initialBookmarks: comicAnnotations.bookmarks,
+        initialNotes: comicAnnotations.notes,
+        onAddBookmark: (position, label) async {
+          final local = await _offlineStore.addMediaBookmark(
+            serverId: server.id,
+            libraryId: library.id,
+            workId: work.id,
+            fileId: track.id,
+            position: position,
+            label: label,
+          );
+          comicAnnotations = local;
+          if (!skipServerLookup && syncAnnotations) {
+            try {
+              final remote = await _client.saveBookmark(
+                server,
+                libraryId: library.id,
+                workId: work.id,
+                fileId: track.id,
+                position: position,
+                label: label,
+              );
+              comicAnnotations = _mergeAnnotations(work, local, remote);
+              await _offlineStore.cacheAnnotations(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                annotations: comicAnnotations,
+              );
+            } catch (_) {}
+          }
+          return comicAnnotations;
+        },
+        onDeleteBookmark: (bookmarkId) async {
+          final local = await _offlineStore.deleteAnnotation(
+            serverId: server.id,
+            libraryId: library.id,
+            workId: work.id,
+            annotationId: bookmarkId,
+          );
+          comicAnnotations = local;
+          if (!skipServerLookup && syncAnnotations) {
+            try {
+              final remote = await _client.deleteAnnotation(
+                server,
+                libraryId: library.id,
+                workId: work.id,
+                annotationId: bookmarkId,
+                highlight: false,
+              );
+              comicAnnotations = _mergeAnnotations(work, local, remote);
+            } catch (_) {}
+          }
+          return comicAnnotations;
+        },
+        onSaveNote: (markdown) async {
+          final local = await _offlineStore.saveWorkNote(
+            serverId: server.id,
+            libraryId: library.id,
+            workId: work.id,
+            markdown: markdown,
+          );
+          comicAnnotations = local;
+          if (!skipServerLookup && syncAnnotations) {
+            try {
+              final remote = await _client.saveNote(
+                server,
+                libraryId: library.id,
+                workId: work.id,
+                markdown: markdown,
+              );
+              comicAnnotations = _mergeAnnotations(work, local, remote);
+              await _offlineStore.cacheAnnotations(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                annotations: comicAnnotations,
+              );
+            } catch (_) {}
+          }
+          return comicAnnotations;
+        },
         onProfileChanged: (updated) {
           profile = updated;
           profileDirty = true;
@@ -4652,6 +4760,7 @@ class _MobileRemotePublicationDetailsState
   var _sort = _DocumentTrackSort.oldestFirst;
   String _filter = '';
   late WorkAnnotations _annotations;
+  bool _noteSaving = false;
   Future<EpubPublication>? _epubPublication;
 
   @override
@@ -4897,8 +5006,13 @@ class _MobileRemotePublicationDetailsState
         ),
         const SizedBox(height: 8),
         FilledButton.icon(
-          onPressed: _saveNote,
-          icon: const Icon(Icons.save_outlined),
+          onPressed: _noteSaving ? null : _saveNote,
+          icon: _noteSaving
+              ? const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.save_outlined),
           label: const Text('Notiz speichern'),
         ),
       ],
@@ -4947,12 +5061,40 @@ class _MobileRemotePublicationDetailsState
   Future<void> _saveNote() async {
     final markdown = _noteController.text.trim();
     if (markdown.isEmpty) return;
-    final updated = await widget.onSaveNote(markdown);
-    if (!mounted) return;
     setState(() {
-      _annotations = updated;
+      _noteSaving = true;
+      _annotations = WorkAnnotations(
+        tags: _annotations.tags,
+        note: markdown,
+        notes: [
+          ..._annotations.notes,
+          LibraryNote(
+            id: 'pending-${DateTime.now().microsecondsSinceEpoch}',
+            markdown: markdown,
+            createdAt: DateTime.now(),
+          ),
+        ],
+        bookmarks: _annotations.bookmarks,
+        highlights: _annotations.highlights,
+      );
       _noteController.clear();
     });
+    try {
+      final updated = await widget.onSaveNote(markdown);
+      if (!mounted) return;
+      setState(() => _annotations = updated);
+    } catch (error) {
+      if (!mounted) return;
+      _noteController.text = markdown;
+      setState(() => _annotations = widget.annotations);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Notiz konnte nicht gespeichert werden: $error'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _noteSaving = false);
+    }
   }
 
   Future<void> _toggleFavorite() async {
