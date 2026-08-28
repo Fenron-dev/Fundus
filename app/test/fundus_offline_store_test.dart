@@ -4,9 +4,80 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/server/fundus_offline_store.dart';
+import 'package:fundus/server/fundus_remote_client.dart';
 import 'package:fundus_core/fundus_core.dart';
 
 void main() {
+  test(
+    'server acknowledgement replaces only an explicitly discarded pending position',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'fundus-offline-progress-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final store = FundusOfflineStore(root: root);
+      const local = MediaPosition(
+        kind: MediaPositionKind.imageIndex,
+        numericValue: 4,
+        fileId: 'chapter-1',
+      );
+      const remote = MediaPosition(
+        kind: MediaPositionKind.imageIndex,
+        numericValue: 12,
+        fileId: 'chapter-1',
+      );
+      await store.saveMediaProgress(
+        serverId: 'server',
+        libraryId: 'library',
+        workId: 'manga',
+        fileId: 'chapter-1',
+        position: local,
+        finished: false,
+      );
+      const serverProgress = FundusRemoteProgress(
+        fileId: 'chapter-1',
+        position: Duration.zero,
+        mediaPosition: remote,
+        finished: false,
+        revision: 7,
+        deviceId: 'tablet',
+        deviceName: 'Tablet',
+      );
+
+      await store.cacheProgress(
+        serverId: 'server',
+        libraryId: 'library',
+        workId: 'manga',
+        progress: serverProgress,
+      );
+      expect(
+        (await store.loadProgress(
+          serverId: 'server',
+          libraryId: 'library',
+          workId: 'manga',
+        ))?.mediaPosition?.numericValue,
+        4,
+      );
+
+      await store.cacheProgress(
+        serverId: 'server',
+        libraryId: 'library',
+        workId: 'manga',
+        progress: serverProgress,
+        replacePending: true,
+      );
+      final accepted = await store.loadProgress(
+        serverId: 'server',
+        libraryId: 'library',
+        workId: 'manga',
+      );
+      expect(accepted?.mediaPosition?.numericValue, 12);
+      expect(accepted?.pendingSync, isFalse);
+      expect(accepted?.revision, 7);
+      expect(accepted?.deviceName, 'Tablet');
+    },
+  );
+
   test(
     'remote EPUB annotations remain available in the offline store',
     () async {

@@ -42,6 +42,31 @@ void main() {
     },
   );
 
+  test(
+    'a synchronized device cache never overrides a newer server position',
+    () {
+      expect(
+        shouldResolveReaderProgressConflict(
+          localPendingSync: false,
+          devicePosition: position(fileId: 'chapter-1', page: 4),
+          serverPosition: position(fileId: 'chapter-1', page: 12),
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test('an unsynchronized offline change remains a real conflict', () {
+    expect(
+      shouldResolveReaderProgressConflict(
+        localPendingSync: true,
+        devicePosition: position(fileId: 'chapter-1', page: 4),
+        serverPosition: position(fileId: 'chapter-1', page: 12),
+      ),
+      isTrue,
+    );
+  });
+
   testWidgets('reader conflict lets the user select the server position', (
     tester,
   ) async {

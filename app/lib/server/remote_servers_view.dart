@@ -3266,15 +3266,17 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     final localPosition = localProgress?.mediaPosition;
     final serverPosition = serverProgress?.mediaPosition;
     final deviceId = await _store.deviceId();
-    if (localPosition != null &&
-        serverPosition != null &&
-        readerPositionsDiffer(localPosition, serverPosition)) {
+    if (shouldResolveReaderProgressConflict(
+      localPendingSync: localProgress?.pendingSync ?? false,
+      devicePosition: localPosition,
+      serverPosition: serverPosition,
+    )) {
       final localDeviceName = await _store.deviceName();
       if (!mounted) return;
       final choice = await resolveReaderProgressConflict(
         context,
-        devicePosition: localPosition,
-        serverPosition: serverPosition,
+        devicePosition: localPosition!,
+        serverPosition: serverPosition!,
         deviceName: localDeviceName,
         serverDeviceName: serverProgress?.deviceName ?? server.name,
       );
@@ -3374,15 +3376,13 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         finished: localProgress?.finished ?? false,
       );
     } else if (serverPosition != null) {
-      final cached = await _offlineStore.saveMediaProgress(
+      await _offlineStore.cacheProgress(
         serverId: server.id,
         libraryId: library.id,
         workId: work.id,
-        fileId: comics[chapterIndex].id,
-        position: serverPosition,
-        finished: serverProgress?.finished ?? false,
+        progress: serverProgress!,
+        replacePending: true,
       );
-      await _offlineStore.markProgressSynced(cached);
     }
     if (!mounted) return;
 
@@ -3695,15 +3695,17 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         serverProgress?.finished ?? localProgress?.finished ?? false;
     var selectedDeviceProgress = false;
     if (startFileId == null &&
-        localPosition != null &&
-        serverPosition != null &&
-        readerPositionsDiffer(localPosition, serverPosition)) {
+        shouldResolveReaderProgressConflict(
+          localPendingSync: localProgress?.pendingSync ?? false,
+          devicePosition: localPosition,
+          serverPosition: serverPosition,
+        )) {
       final localDeviceName = await _store.deviceName();
       if (!mounted) return;
       final choice = await resolveReaderProgressConflict(
         context,
-        devicePosition: localPosition,
-        serverPosition: serverPosition,
+        devicePosition: localPosition!,
+        serverPosition: serverPosition!,
         deviceName: localDeviceName,
         serverDeviceName: serverProgress?.deviceName ?? server.name,
       );
@@ -3733,15 +3735,13 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         finished: selectedFinished,
       );
     } else if (serverPosition != null) {
-      final cached = await _offlineStore.saveMediaProgress(
+      await _offlineStore.cacheProgress(
         serverId: server.id,
         libraryId: library.id,
         workId: work.id,
-        fileId: track.id,
-        position: serverPosition,
-        finished: serverProgress?.finished ?? false,
+        progress: serverProgress!,
+        replacePending: true,
       );
-      await _offlineStore.markProgressSynced(cached);
     }
 
     final offlineTrack = offlineWork?.tracks
@@ -3840,23 +3840,40 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     final localPosition = localProgress?.mediaPosition;
     final serverPosition = serverProgress?.mediaPosition;
     var selectedPosition = startPosition ?? serverPosition ?? localPosition;
+    var selectedDeviceProgress = false;
     if (startPosition == null &&
         startFileId == null &&
-        localPosition != null &&
-        serverPosition != null &&
-        readerPositionsDiffer(localPosition, serverPosition)) {
+        shouldResolveReaderProgressConflict(
+          localPendingSync: localProgress?.pendingSync ?? false,
+          devicePosition: localPosition,
+          serverPosition: serverPosition,
+        )) {
       final deviceName = await _store.deviceName();
       if (!mounted) return;
       final choice = await resolveReaderProgressConflict(
         context,
-        devicePosition: localPosition,
-        serverPosition: serverPosition,
+        devicePosition: localPosition!,
+        serverPosition: serverPosition!,
         deviceName: deviceName,
         serverDeviceName: serverProgress?.deviceName ?? server.name,
       );
       selectedPosition = choice == ReaderProgressConflictChoice.keepDevice
           ? localPosition
           : serverPosition;
+      selectedDeviceProgress =
+          choice == ReaderProgressConflictChoice.keepDevice;
+    }
+    if (startPosition == null &&
+        startFileId == null &&
+        serverProgress != null &&
+        !selectedDeviceProgress) {
+      await _offlineStore.cacheProgress(
+        serverId: server.id,
+        libraryId: library.id,
+        workId: work.id,
+        progress: serverProgress,
+        replacePending: true,
+      );
     }
     final targetFileId = startFileId ?? selectedPosition?.fileId;
     var fileIndex = epubs.indexWhere((track) => track.id == targetFileId);
@@ -3922,6 +3939,17 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         : ReflowReaderProfile.fromJson(portableProfile);
     var profileDirty = false;
     final deviceId = await _store.deviceId();
+    if (selectedDeviceProgress && selectedPosition != null) {
+      await _saveRemoteReaderProgress(
+        server,
+        library,
+        work,
+        track,
+        selectedPosition,
+        deviceId: deviceId,
+        finished: localProgress?.finished ?? false,
+      );
+    }
     if (!mounted) return;
     try {
       await showEpubReader(

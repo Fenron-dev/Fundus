@@ -363,7 +363,9 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       ];
       _syncSystemMediaSession();
       var progress = serverProgress ?? localProgress;
-      if (localProgress != null && serverProgress != null) {
+      if (localProgress != null &&
+          localProgress.pendingSync &&
+          serverProgress != null) {
         final localIndex = localProgress.fileId == null
             ? -1
             : tracks.indexWhere((track) => track.id == localProgress!.fileId);
@@ -447,6 +449,17 @@ final class FundusRemotePlayerController extends ChangeNotifier {
             progress = serverProgress;
           }
         }
+      }
+      if (offlineWork != null &&
+          serverProgress != null &&
+          identical(progress, serverProgress)) {
+        await _offlineStore.cacheProgress(
+          serverId: server.id,
+          libraryId: library.id,
+          workId: work.id,
+          progress: serverProgress!,
+          replacePending: true,
+        );
       }
       _progressRevision = max(
         localProgress?.revision ?? 0,

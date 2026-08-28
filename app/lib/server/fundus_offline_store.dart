@@ -1135,7 +1135,14 @@ final class FundusOfflineStore {
         mediaPosition: value['position'] is Map
             ? _mediaPosition(value['position'] as Map)
             : null,
+        deviceId: value['device_id'] is String
+            ? value['device_id'] as String
+            : null,
+        deviceName: value['device_name'] is String
+            ? value['device_name'] as String
+            : null,
         updatedAt: DateTime.tryParse('${value['updated_at'] ?? ''}'),
+        pendingSync: value['pending_sync'] == true,
       );
     } on FileSystemException {
       return null;
@@ -1149,6 +1156,7 @@ final class FundusOfflineStore {
     required String libraryId,
     required String workId,
     required FundusRemoteProgress progress,
+    bool replacePending = false,
   }) async {
     final fallback = await _fallbackContaining(serverId, libraryId, workId);
     if (fallback != null) {
@@ -1157,6 +1165,7 @@ final class FundusOfflineStore {
         libraryId: libraryId,
         workId: workId,
         progress: progress,
+        replacePending: replacePending,
       );
       return;
     }
@@ -1166,7 +1175,11 @@ final class FundusOfflineStore {
     if (await destination.exists()) {
       try {
         final current = jsonDecode(await destination.readAsString());
-        if (current is Map && current['pending_sync'] == true) return;
+        if (!replacePending &&
+            current is Map &&
+            current['pending_sync'] == true) {
+          return;
+        }
       } on FormatException {
         // Eine defekte Cache-Datei wird unten atomar ersetzt.
       }
@@ -1180,7 +1193,11 @@ final class FundusOfflineStore {
           'position': progress.mediaPosition!.toJson(),
         'finished': progress.finished,
         'revision': progress.revision,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
+        'updated_at': (progress.updatedAt ?? DateTime.now().toUtc())
+            .toUtc()
+            .toIso8601String(),
+        if (progress.deviceId != null) 'device_id': progress.deviceId,
+        if (progress.deviceName != null) 'device_name': progress.deviceName,
         'pending_sync': false,
       }),
       flush: true,

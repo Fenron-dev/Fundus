@@ -347,6 +347,7 @@ final class FundusRemoteProgress {
     this.deviceId,
     this.deviceName,
     this.updatedAt,
+    this.pendingSync = false,
   });
 
   final String? fileId;
@@ -358,6 +359,9 @@ final class FundusRemoteProgress {
   final String? deviceId;
   final String? deviceName;
   final DateTime? updatedAt;
+
+  /// True only for a local change that the server has not acknowledged yet.
+  final bool pendingSync;
 }
 
 final class FundusRemoteProgressRevision {

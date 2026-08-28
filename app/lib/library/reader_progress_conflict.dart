@@ -18,6 +18,18 @@ bool readerPositionsDiffer(MediaPosition device, MediaPosition server) {
       (deviceOffset - serverOffset).abs() > .05;
 }
 
+/// A synchronized offline position is only a local mirror of the server. It
+/// becomes a real conflict after this device changed it while offline.
+bool shouldResolveReaderProgressConflict({
+  required bool localPendingSync,
+  required MediaPosition? devicePosition,
+  required MediaPosition? serverPosition,
+}) =>
+    localPendingSync &&
+    devicePosition != null &&
+    serverPosition != null &&
+    readerPositionsDiffer(devicePosition, serverPosition);
+
 Future<ReaderProgressConflictChoice> resolveReaderProgressConflict(
   BuildContext context, {
   required MediaPosition devicePosition,
