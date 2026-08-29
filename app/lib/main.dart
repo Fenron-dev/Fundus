@@ -141,7 +141,9 @@ class _FundusAppState extends State<FundusApp> {
   List<RecentLibraryEntry> _recentLibraries = const [];
   List<_RemoteLibraryChoice> _remoteLibraries = const [];
   List<FundusOfflineWork> _offlineWorks = const [];
+  Set<String> _reachableServerIds = const {};
   bool _loadingRemoteLibraries = false;
+  Timer? _remoteHeartbeat;
   late final AppLifecycleListener _lifecycleListener;
 
   @override
@@ -155,6 +157,10 @@ class _FundusAppState extends State<FundusApp> {
       unawaited(_peerServer.initialize());
       unawaited(_loadRemoteLibraries());
     }
+    _remoteHeartbeat = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => unawaited(_loadRemoteLibraries()),
+    );
     _lifecycleListener = AppLifecycleListener(
       onResume: () => unawaited(_loadRemoteLibraries()),
       onInactive: () => unawaited(_player?.persist()),
@@ -178,6 +184,7 @@ class _FundusAppState extends State<FundusApp> {
   @override
   void dispose() {
     _lifecycleListener.dispose();
+    _remoteHeartbeat?.cancel();
     _player?.dispose();
     _library?.close();
     _peerServer.dispose();
@@ -207,6 +214,7 @@ class _FundusAppState extends State<FundusApp> {
               onOpenOffline: _openOfflineMedia,
               onToggleTheme: _toggleTheme,
               peerServer: _peerServer,
+              connectedServerCount: _reachableServerIds.length,
               onOpenServerSettings: _openServerSettings,
             )
           : LibraryShell(
@@ -230,6 +238,7 @@ class _FundusAppState extends State<FundusApp> {
               themeMode: _themeMode,
               onThemeModeChanged: (mode) => setState(() => _themeMode = mode),
               peerServer: _peerServer,
+              connectedServerCount: _reachableServerIds.length,
               offlineStore: _offlineStore,
               offlineWorks: _offlineWorks,
               onOpenDownloads: _openOfflineMedia,
@@ -495,6 +504,7 @@ class _FundusAppState extends State<FundusApp> {
       offline = await _resolveOfflineSourceLabels(offline, servers, references);
       if (!mounted) return;
       setState(() {
+        _reachableServerIds = Set.unmodifiable(reachable);
         _offlineWorks = offline;
         _remoteLibraries = _remoteChoices(
           servers,
@@ -910,6 +920,8 @@ class _FundusAppState extends State<FundusApp> {
       _indexEvent = null;
       _error = null;
     });
+    await _loadRecentLibraries();
+    await _loadRemoteLibraries();
   }
 
   ThemeData _theme(Brightness brightness) {
@@ -937,6 +949,46 @@ class _FundusAppState extends State<FundusApp> {
   }
 }
 
+class _NetworkPresenceButton extends StatelessWidget {
+  const _NetworkPresenceButton({
+    required this.peerServer,
+    required this.connectedServerCount,
+    required this.onPressed,
+  });
+
+  final FundusPeerServerController peerServer;
+  final int connectedServerCount;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: peerServer,
+    builder: (context, _) {
+      final clientCount = peerServer.connectedDevices.length;
+      final total = connectedServerCount + clientCount;
+      final parts = <String>[
+        if (connectedServerCount > 0) '$connectedServerCount Server verbunden',
+        if (clientCount > 0) '$clientCount Endgerät(e) verbunden',
+      ];
+      return IconButton(
+        onPressed: onPressed,
+        tooltip: parts.isEmpty
+            ? 'Keine aktive Netzwerkverbindung'
+            : parts.join(' · '),
+        icon: Badge(
+          isLabelVisible: total > 0,
+          label: Text('$total'),
+          backgroundColor: Colors.green,
+          child: Icon(
+            total > 0 ? Icons.lan : Icons.lan_outlined,
+            color: total > 0 ? Colors.green : null,
+          ),
+        ),
+      );
+    },
+  );
+}
+
 class _LibraryWelcome extends StatelessWidget {
   const _LibraryWelcome({
     required this.busy,
@@ -951,6 +1003,7 @@ class _LibraryWelcome extends StatelessWidget {
     required this.onOpenOffline,
     required this.onToggleTheme,
     required this.peerServer,
+    required this.connectedServerCount,
     required this.onOpenServerSettings,
   });
 
@@ -966,6 +1019,7 @@ class _LibraryWelcome extends StatelessWidget {
   final VoidCallback onOpenOffline;
   final VoidCallback onToggleTheme;
   final FundusPeerServerController peerServer;
+  final int connectedServerCount;
   final VoidCallback onOpenServerSettings;
 
   @override
@@ -974,10 +1028,10 @@ class _LibraryWelcome extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Fundus'),
         actions: [
-          IconButton(
+          _NetworkPresenceButton(
+            peerServer: peerServer,
+            connectedServerCount: connectedServerCount,
             onPressed: onOpenServerSettings,
-            tooltip: 'Server & Freigaben',
-            icon: const Icon(Icons.lan_outlined),
           ),
           IconButton(
             onPressed: onToggleTheme,
@@ -1221,6 +1275,7 @@ class LibraryShell extends StatefulWidget {
     this.onMetadataChanged,
     this.onExportDiagnostics,
     this.peerServer,
+    this.connectedServerCount = 0,
     this.offlineStore,
     this.offlineWorks = const [],
     this.onOpenDownloads,
@@ -1243,6 +1298,7 @@ class LibraryShell extends StatefulWidget {
   final WorkMetadataChangedCallback? onMetadataChanged;
   final VoidCallback? onExportDiagnostics;
   final FundusPeerServerController? peerServer;
+  final int connectedServerCount;
   final FundusOfflineStore? offlineStore;
   final List<FundusOfflineWork> offlineWorks;
   final VoidCallback? onOpenDownloads;
@@ -1395,6 +1451,8 @@ class _LibraryShellState extends State<LibraryShell> {
               onOpenSettings: widget.peerServer == null
                   ? null
                   : () => _openServerSettings(context),
+              peerServer: widget.peerServer,
+              connectedServerCount: widget.connectedServerCount,
               detailPaneVisible: _detailPaneVisible,
               onToggleDetails: () => setState(() {
                 _detailPaneVisible = !_detailPaneVisible;
@@ -1504,6 +1562,8 @@ class _LibraryShellState extends State<LibraryShell> {
               onOpenSettings: widget.peerServer == null
                   ? null
                   : () => _openServerSettings(context),
+              peerServer: widget.peerServer,
+              connectedServerCount: widget.connectedServerCount,
             ),
             Expanded(
               child: Row(
@@ -1602,6 +1662,12 @@ class _LibraryShellState extends State<LibraryShell> {
               : _browserTitle,
         ),
         actions: [
+          if (!_playerExpanded && widget.peerServer != null)
+            _NetworkPresenceButton(
+              peerServer: widget.peerServer!,
+              connectedServerCount: widget.connectedServerCount,
+              onPressed: () => _openServerSettings(context),
+            ),
           if (_playerExpanded)
             IconButton(
               onPressed: () => setState(() => _playerExpanded = false),
@@ -3066,6 +3132,8 @@ class _TopBar extends StatelessWidget {
     this.detailPaneVisible,
     this.onToggleDetails,
     this.onOpenSettings,
+    this.peerServer,
+    this.connectedServerCount = 0,
   });
 
   final VoidCallback onToggleTheme;
@@ -3079,6 +3147,8 @@ class _TopBar extends StatelessWidget {
   final bool? detailPaneVisible;
   final VoidCallback? onToggleDetails;
   final VoidCallback? onOpenSettings;
+  final FundusPeerServerController? peerServer;
+  final int connectedServerCount;
 
   @override
   Widget build(BuildContext context) {
@@ -3125,11 +3195,11 @@ class _TopBar extends StatelessWidget {
                 tooltip: 'Diagnoseprotokoll exportieren',
                 icon: const Icon(Icons.bug_report_outlined),
               ),
-            if (onOpenSettings != null)
-              IconButton(
-                onPressed: onOpenSettings,
-                tooltip: 'Server & Freigaben',
-                icon: const Icon(Icons.lan_outlined),
+            if (onOpenSettings != null && peerServer != null)
+              _NetworkPresenceButton(
+                peerServer: peerServer!,
+                connectedServerCount: connectedServerCount,
+                onPressed: onOpenSettings!,
               ),
             if (onToggleDetails != null)
               IconButton(
@@ -4821,6 +4891,7 @@ class _DetailPanelState extends State<_DetailPanel> {
           ReaderProgressRevisionView(
             revision: revision.revision,
             position: revision.position,
+            deviceId: revision.deviceId,
             deviceName:
                 widget.player?.displayNameForDevice(revision.deviceId) ??
                 (revision.deviceId == 'desktop-local'

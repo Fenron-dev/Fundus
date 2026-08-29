@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -179,12 +180,37 @@ final class FundusPairingAuthority {
   }
 
   bool authorize(String? bearerToken) {
-    if (bearerToken == null || bearerToken.isEmpty) return false;
+    return authorizeDevice(bearerToken) != null;
+  }
+
+  /// Returns the paired device for a valid token and records recent activity.
+  String? authorizeDevice(String? bearerToken) {
+    if (bearerToken == null || bearerToken.isEmpty) return null;
     final digest = tokenDigest(bearerToken);
     for (final device in _devices.values) {
-      if (_constantTimeEquals(digest, device.tokenHash)) return true;
+      if (!_constantTimeEquals(digest, device.tokenHash)) continue;
+      _markSeen(device);
+      return device.id;
     }
-    return false;
+    return null;
+  }
+
+  void _markSeen(FundusPairedDevice device) {
+    final now = DateTime.now().toUtc();
+    final previous = device.lastSeenAt;
+    if (previous != null &&
+        now.difference(previous) < const Duration(seconds: 10)) {
+      return;
+    }
+    _devices[device.id] = FundusPairedDevice(
+      id: device.id,
+      name: device.name,
+      tokenHash: device.tokenHash,
+      pairedAt: device.pairedAt,
+      lastSeenAt: now,
+    );
+    final callback = onChanged;
+    if (callback != null) unawaited(callback(devices));
   }
 
   Future<void> revoke(String deviceId) async {

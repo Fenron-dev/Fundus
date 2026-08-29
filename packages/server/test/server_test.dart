@@ -153,6 +153,29 @@ void main() {
     expect(authority.activeSession, isNull);
   });
 
+  test('authorization records recent paired-device activity', () async {
+    final old = DateTime.utc(2026, 1, 1);
+    List<FundusPairedDevice>? persisted;
+    final authority = FundusPairingAuthority(
+      devices: [
+        FundusPairedDevice(
+          id: 'tablet-1',
+          name: 'Samsung Tablet',
+          tokenHash: FundusPairingAuthority.tokenDigest('device-token'),
+          pairedAt: old,
+          lastSeenAt: old,
+        ),
+      ],
+      onChanged: (devices) async => persisted = devices,
+    );
+
+    expect(authority.authorizeDevice('device-token'), 'tablet-1');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(authority.devices.single.lastSeenAt!.isAfter(old), isTrue);
+    expect(persisted?.single.id, 'tablet-1');
+  });
+
   test('capabilities expose format versions and server features', () async {
     final response = await _get(server, '/v1/capabilities');
     final body = await _json(response);

@@ -267,7 +267,7 @@ void main() {
     await tester.pumpWidget(const FundusApp());
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Server & Freigaben').first);
+    await tester.tap(find.byIcon(Icons.lan_outlined).first);
     await tester.pumpAndSettle();
 
     expect(find.text('Einstellungen'), findsOneWidget);

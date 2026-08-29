@@ -69,6 +69,7 @@ final class FundusPeerServerController extends ChangeNotifier {
   List<Uri> _networkUris = const [];
   Uri? _pairingUri;
   String _deviceName = 'Fundus-Gerät';
+  Timer? _presenceTimer;
 
   String get serverId => _serverId ?? 'fundus-wird-vorbereitet';
   String get deviceName => _deviceName;
@@ -86,6 +87,16 @@ final class FundusPeerServerController extends ChangeNotifier {
   FundusPairingSession? get pairingSession => _pairingAuthority?.activeSession;
   List<FundusPairedDevice> get pairedDevices =>
       _pairingAuthority?.devices ?? const [];
+  List<FundusPairedDevice> get connectedDevices {
+    if (!isRunning) return const [];
+    final cutoff = DateTime.now().toUtc().subtract(const Duration(seconds: 45));
+    return pairedDevices
+        .where(
+          (device) =>
+              device.lastSeenAt != null && device.lastSeenAt!.isAfter(cutoff),
+        )
+        .toList(growable: false);
+  }
 
   String displayNameForDevice(String deviceId) {
     if (deviceId == serverId || deviceId == 'desktop-local') return deviceName;
@@ -315,6 +326,10 @@ final class FundusPeerServerController extends ChangeNotifier {
       _pairingUri = _networkUris.firstOrNull;
       _libraries = statuses;
       _state = PeerServerState.running;
+      _presenceTimer ??= Timer.periodic(
+        const Duration(seconds: 5),
+        (_) => notifyListeners(),
+      );
       if (_lanEnabled) {
         try {
           await _advertiser.start(
@@ -362,6 +377,8 @@ final class FundusPeerServerController extends ChangeNotifier {
     await _advertiser.stop();
     await _server?.close(force: true);
     _server = null;
+    _presenceTimer?.cancel();
+    _presenceTimer = null;
     _networkUris = const [];
     _pairingUri = null;
     _pairingAuthority?.cancel();
@@ -389,6 +406,8 @@ final class FundusPeerServerController extends ChangeNotifier {
   void dispose() {
     final server = _server;
     _server = null;
+    _presenceTimer?.cancel();
+    _presenceTimer = null;
     unawaited(_advertiser.stop());
     if (server != null) unawaited(server.close(force: true));
     _registry.close();

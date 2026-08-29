@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:fundus_server/fundus_server.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../playback/playback_conflict_settings.dart';
@@ -604,17 +605,24 @@ class _ServerSettings extends StatelessWidget {
             if (controller.pairedDevices.isNotEmpty) ...[
               const Divider(height: 32),
               Text(
-                'Berechtigte Geräte',
+                'Berechtigte Geräte · ${controller.connectedDevices.length} verbunden',
                 style: Theme.of(context).textTheme.titleSmall,
               ),
               for (final device in controller.pairedDevices)
                 ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.devices_other),
-                  title: Text(device.name),
-                  subtitle: Text(
-                    'Verbunden am ${MaterialLocalizations.of(context).formatShortDate(device.pairedAt.toLocal())}',
+                  leading: Icon(
+                    Icons.circle,
+                    size: 12,
+                    color:
+                        controller.connectedDevices.any(
+                          (connected) => connected.id == device.id,
+                        )
+                        ? Colors.green
+                        : Theme.of(context).colorScheme.outline,
                   ),
+                  title: Text(device.name),
+                  subtitle: Text(_devicePresenceLabel(context, device)),
                   trailing: Wrap(
                     children: [
                       IconButton(
@@ -639,6 +647,19 @@ class _ServerSettings extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _devicePresenceLabel(BuildContext context, FundusPairedDevice device) {
+    if (controller.connectedDevices.any((current) => current.id == device.id)) {
+      return 'Jetzt verbunden';
+    }
+    final seen = device.lastSeenAt?.toLocal();
+    if (seen == null) {
+      return 'Gekoppelt am ${MaterialLocalizations.of(context).formatShortDate(device.pairedAt.toLocal())}';
+    }
+    return 'Zuletzt gesehen am '
+        '${MaterialLocalizations.of(context).formatShortDate(seen)}, '
+        '${TimeOfDay.fromDateTime(seen).format(context)} Uhr';
   }
 
   Widget _libraryTile(BuildContext context, PeerSharedLibraryStatus library) =>

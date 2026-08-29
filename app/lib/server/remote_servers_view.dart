@@ -146,6 +146,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   final _peerDiscovery = FundusPeerDiscovery();
   List<FundusRemoteServer> _servers = const [];
   FundusRemoteServer? _selectedServer;
+  FundusRemoteServer? _heartbeatServer;
   List<FundusRemoteLibrary> _libraries = const [];
   FundusRemoteLibrary? _selectedLibrary;
   String? _offlineLibraryFilter;
@@ -172,6 +173,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   final Map<String, Future<FundusRemoteServer>> _reconnects = {};
   Future<void> _readerProgressQueue = Future<void>.value();
   late final AppLifecycleListener _lifecycleListener;
+  Timer? _connectionHeartbeat;
+  bool _serverOnline = false;
 
   @override
   void initState() {
@@ -182,12 +185,17 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       onHide: () => unawaited(_remotePlayer?.persist()),
       onPause: () => unawaited(_remotePlayer?.persist()),
     );
+    _connectionHeartbeat = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => unawaited(_refreshServerConnection()),
+    );
     _load();
   }
 
   @override
   void dispose() {
     _lifecycleListener.dispose();
+    _connectionHeartbeat?.cancel();
     _searchController.dispose();
     _remotePlayer?.dispose();
     super.dispose();
@@ -419,12 +427,14 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       setState(() {
         _selectedServer = result.server;
         _libraries = libraries;
+        _serverOnline = true;
         _busy = false;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _error = 'Server nicht erreichbar oder Berechtigung widerrufen.';
+        _serverOnline = false;
         if (server.id == widget.initialServerId &&
             widget.initialLibraryId != null) {
           _selectedServer = null;
@@ -592,6 +602,18 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     appBar: AppBar(
       title: const Text('Fundus-Server'),
       actions: [
+        Tooltip(
+          message: _serverOnline
+              ? 'Mit Server verbunden'
+              : 'Keine aktive Serververbindung',
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Icon(
+              _serverOnline ? Icons.cloud_done : Icons.cloud_off_outlined,
+              color: _serverOnline ? Colors.green : null,
+            ),
+          ),
+        ),
         IconButton(
           onPressed: () =>
               Navigator.of(context).popUntil((route) => route.isFirst),
@@ -3077,14 +3099,43 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     Future<T> Function(FundusRemoteServer server) operation,
   ) async {
     try {
-      return (server: server, value: await operation(server));
+      final value = await operation(server);
+      _setServerOnline(true);
+      return (server: server, value: value);
     } on FundusRemoteRequestException catch (error) {
       // Relocation can only help transport/server failures, never a valid 4xx
       // response such as a permanently missing cover.
-      if (error.statusCode >= 400 && error.statusCode < 500) rethrow;
+      if (error.statusCode >= 400 && error.statusCode < 500) {
+        _setServerOnline(
+          error.statusCode != HttpStatus.unauthorized &&
+              error.statusCode != HttpStatus.forbidden,
+        );
+        rethrow;
+      }
       return _retryAfterRelocation(server, operation, error);
     } catch (firstError) {
       return _retryAfterRelocation(server, operation, firstError);
+    }
+  }
+
+  void _setServerOnline(bool value) {
+    if (!mounted || _serverOnline == value) return;
+    setState(() => _serverOnline = value);
+  }
+
+  Future<void> _refreshServerConnection() async {
+    final selected = _selectedServer ?? _heartbeatServer;
+    if (selected == null || _busy) return;
+    try {
+      final result = await _runWithReconnect(
+        selected,
+        (active) => _client.libraries(active),
+      );
+      if (mounted && result.server.baseUri != selected.baseUri) {
+        setState(() => _selectedServer = result.server);
+      }
+    } catch (_) {
+      _setServerOnline(false);
     }
   }
 
@@ -3103,6 +3154,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     await _replaceServer(relocated);
     try {
       final value = await operation(relocated);
+      _setServerOnline(true);
       unawaited(
         FundusDiagnostics.instance.record('remote.reconnect_completed', {
           'server_id': server.id,
@@ -3111,6 +3163,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       );
       return (server: relocated, value: value);
     } catch (retryError) {
+      _setServerOnline(false);
       unawaited(
         FundusDiagnostics.instance.record('remote.reconnect_failed', {
           'server_id': server.id,
@@ -3736,6 +3789,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             ReaderProgressRevisionView(
               revision: revision.revision,
               position: revision.mediaPosition,
+              deviceId: revision.deviceId,
               deviceName: revision.deviceName,
               createdAt: revision.createdAt,
               fileTitle:
@@ -4444,8 +4498,25 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   Future<void> _showOfflineWork(FundusOfflineWork offline) async {
     final isDocument = _isDocumentKind(offline.kind);
     if (isDocument) {
+      final storedServer = _servers
+          .where((item) => item.id == offline.serverId)
+          .firstOrNull;
+      FundusRemoteServer? onlineServer;
+      if (storedServer != null) {
+        try {
+          final result = await _runWithReconnect(
+            storedServer,
+            (active) => _client.libraries(active),
+          );
+          onlineServer = result.server;
+          _heartbeatServer = onlineServer;
+        } catch (_) {
+          // Die heruntergeladene Kopie bleibt vollständig offline lesbar.
+        }
+      }
       final server =
-          _servers.where((item) => item.id == offline.serverId).firstOrNull ??
+          onlineServer ??
+          storedServer ??
           FundusRemoteServer(
             id: offline.serverId,
             name: offline.sourceServerName ?? 'Offline',
@@ -4474,7 +4545,12 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         publishedYear: offline.publishedYear,
         fileCount: offline.tracks.length,
       );
-      await _showWork(server, library, work, forceOffline: true);
+      await _showWork(
+        server,
+        library,
+        work,
+        forceOffline: onlineServer == null,
+      );
       return;
     }
     final progress = await _offlineStore.loadProgress(

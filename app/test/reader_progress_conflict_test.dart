@@ -42,19 +42,16 @@ void main() {
     },
   );
 
-  test(
-    'a synchronized device cache never overrides a newer server position',
-    () {
-      expect(
-        shouldResolveReaderProgressConflict(
-          localPendingSync: false,
-          devicePosition: position(fileId: 'chapter-1', page: 4),
-          serverPosition: position(fileId: 'chapter-1', page: 12),
-        ),
-        isFalse,
-      );
-    },
-  );
+  test('a synchronized device cache still offers a newer server position', () {
+    expect(
+      shouldResolveReaderProgressConflict(
+        localPendingSync: false,
+        devicePosition: position(fileId: 'chapter-1', page: 4),
+        serverPosition: position(fileId: 'chapter-1', page: 12),
+      ),
+      isTrue,
+    );
+  });
 
   test('an unsynchronized offline change remains a real conflict', () {
     expect(
@@ -121,6 +118,7 @@ void main() {
                     scrollOffset: .4,
                     label: 'Kapitel 2 · Seite 11',
                   ),
+                  deviceId: 'tablet-1',
                   deviceName: 'Samsung Tablet',
                   createdAt: DateTime(2026, 8, 29, 9, 42),
                   fileTitle: 'Kapitel 0002.cbz',
@@ -149,6 +147,53 @@ void main() {
     await tester.pumpAndSettle();
     expect(restored?.revision, 8);
     expect(find.text('Gerätestände'), findsNothing);
+  });
+
+  testWidgets('reader history hides duplicate positions from one device', (
+    tester,
+  ) async {
+    const position = MediaPosition(
+      kind: MediaPositionKind.imageIndex,
+      numericValue: 11,
+      total: 15,
+      fileId: 'chapter-2',
+      scrollOffset: .4,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => FilledButton(
+            onPressed: () => showReaderProgressHistory(
+              context,
+              loadHistory: () async => [
+                ReaderProgressRevisionView(
+                  revision: 9,
+                  position: position,
+                  deviceId: 'tablet-1',
+                  deviceName: 'Samsung Tablet',
+                  createdAt: DateTime(2026, 8, 29, 9, 43),
+                  fileTitle: 'Kapitel 0002.cbz',
+                ),
+                ReaderProgressRevisionView(
+                  revision: 8,
+                  position: position,
+                  deviceId: 'tablet-1',
+                  deviceName: 'Samsung Tablet',
+                  createdAt: DateTime(2026, 8, 29, 9, 42),
+                  fileTitle: 'Kapitel 0002.cbz',
+                ),
+              ],
+              restoreRevision: (_) async {},
+            ),
+            child: const Text('Verlauf öffnen'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Verlauf öffnen'));
+    await tester.pumpAndSettle();
+    expect(find.text('Dorthin springen'), findsOneWidget);
   });
 
   test('chapter read state follows the synchronized reader position', () {

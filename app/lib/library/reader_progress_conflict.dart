@@ -9,6 +9,7 @@ final class ReaderProgressRevisionView {
   const ReaderProgressRevisionView({
     required this.revision,
     required this.position,
+    required this.deviceId,
     required this.deviceName,
     required this.createdAt,
     required this.fileTitle,
@@ -16,6 +17,7 @@ final class ReaderProgressRevisionView {
 
   final int revision;
   final MediaPosition position;
+  final String deviceId;
   final String deviceName;
   final DateTime createdAt;
   final String fileTitle;
@@ -39,17 +41,36 @@ bool readerPositionsDiffer(MediaPosition device, MediaPosition server) {
       (deviceOffset - serverOffset).abs() > .05;
 }
 
-/// A synchronized offline position is only a local mirror of the server. It
-/// becomes a real conflict after this device changed it while offline.
+/// Any visible difference is offered to the user. A synchronized cache can be
+/// older than a position written by another device while this client slept.
 bool shouldResolveReaderProgressConflict({
   required bool localPendingSync,
   required MediaPosition? devicePosition,
   required MediaPosition? serverPosition,
 }) =>
-    localPendingSync &&
     devicePosition != null &&
     serverPosition != null &&
     readerPositionsDiffer(devicePosition, serverPosition);
+
+List<ReaderProgressRevisionView> distinctReaderProgressRevisions(
+  Iterable<ReaderProgressRevisionView> revisions,
+) {
+  final seen = <String>{};
+  final result = <ReaderProgressRevisionView>[];
+  for (final revision in revisions) {
+    final position = revision.position;
+    final key = [
+      revision.deviceId,
+      position.kind.name,
+      position.fileId ?? '',
+      position.numericValue?.round().toString() ?? '',
+      position.elementId ?? '',
+      position.scrollOffset?.toStringAsFixed(2) ?? '',
+    ].join('\u0000');
+    if (seen.add(key)) result.add(revision);
+  }
+  return result;
+}
 
 Future<ReaderProgressConflictChoice> resolveReaderProgressConflict(
   BuildContext context, {
@@ -171,7 +192,9 @@ class _ReaderProgressHistoryDialogState
           if (snapshot.hasError) {
             return const Text('Die Gerätestände konnten nicht geladen werden.');
           }
-          final revisions = snapshot.data ?? const [];
+          final revisions = distinctReaderProgressRevisions(
+            snapshot.data ?? const [],
+          );
           if (revisions.isEmpty) {
             return const Text('Noch keine früheren Lesestände vorhanden.');
           }
