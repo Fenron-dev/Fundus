@@ -444,6 +444,9 @@ final class FundusPlayerController extends ChangeNotifier {
     return deviceNameForId?.call(value) ?? 'Anderes Gerät';
   }
 
+  /// Returns the user-facing name stored for a synchronized device.
+  String displayNameForDevice(String value) => _resolveDeviceName(value);
+
   Future<void> next() async {
     if (_currentIndex >= _tracks.length - 1) return;
     await persist();

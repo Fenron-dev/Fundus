@@ -4337,6 +4337,20 @@ class _DetailPanelState extends State<_DetailPanel> {
         else
           _DocumentHero(work: selectedWork, directoryPath: directoryPath),
         const SizedBox(height: 10),
+        if (selectedWork.kind != 'audiobook' &&
+            widget.library != null &&
+            widget.library!.listProgressRevisions(selectedWork.id).isNotEmpty)
+          Align(
+            alignment: Alignment.centerRight,
+            child: OutlinedButton.icon(
+              onPressed: () => _showLocalReaderProgressHistory(
+                selectedWork,
+                workFiles ?? const [],
+              ),
+              icon: const Icon(Icons.history),
+              label: const Text('Gerätestände'),
+            ),
+          ),
         if (selectedWork.kind == 'audiobook')
           Align(
             alignment: Alignment.centerRight,
@@ -4652,6 +4666,16 @@ class _DetailPanelState extends State<_DetailPanel> {
                         icon: Icons.menu_book_outlined,
                         onPressed: () => _openDocumentWork(work, files),
                       ),
+                secondaryAction:
+                    widget.library?.listProgressRevisions(work.id).isEmpty ??
+                        true
+                    ? null
+                    : WorkDetailHeaderAction(
+                        label: 'Gerätestände',
+                        icon: Icons.history,
+                        onPressed: () =>
+                            _showLocalReaderProgressHistory(work, files),
+                      ),
               ),
               const SizedBox(height: 12),
               WorkDetailSectionSelector(
@@ -4782,6 +4806,45 @@ class _DetailPanelState extends State<_DetailPanel> {
         ),
       ],
     );
+  }
+
+  Future<void> _showLocalReaderProgressHistory(
+    LibraryWorkSummary work,
+    List<LibraryPlaybackTrack> files,
+  ) async {
+    final library = widget.library;
+    if (library == null) return;
+    final restored = await showReaderProgressHistory(
+      context,
+      loadHistory: () async => [
+        for (final revision in library.listProgressRevisions(work.id))
+          ReaderProgressRevisionView(
+            revision: revision.revision,
+            position: revision.position,
+            deviceName:
+                widget.player?.displayNameForDevice(revision.deviceId) ??
+                (revision.deviceId == 'desktop-local'
+                    ? 'Dieses Gerät'
+                    : 'Anderes Gerät'),
+            createdAt: revision.createdAt,
+            fileTitle:
+                files
+                    .where((file) => file.fileId == revision.fileId)
+                    .firstOrNull
+                    ?.title ??
+                'Gespeicherte Datei',
+          ),
+      ],
+      restoreRevision: (revision) async {
+        library.restoreProgressRevision(
+          workId: work.id,
+          revision: revision.revision,
+        );
+      },
+    );
+    if (restored == null || !mounted) return;
+    setState(() {});
+    await _openDocumentWork(work, files);
   }
 
   List<LibraryPlaybackTrack> _chapterDocumentFiles(

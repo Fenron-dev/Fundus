@@ -100,6 +100,57 @@ void main() {
     expect(choice, ReaderProgressConflictChoice.useServer);
   });
 
+  testWidgets('reader history exposes device time position and jump action', (
+    tester,
+  ) async {
+    ReaderProgressRevisionView? restored;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => FilledButton(
+            onPressed: () => showReaderProgressHistory(
+              context,
+              loadHistory: () async => [
+                ReaderProgressRevisionView(
+                  revision: 8,
+                  position: const MediaPosition(
+                    kind: MediaPositionKind.imageIndex,
+                    numericValue: 11,
+                    total: 15,
+                    fileId: 'chapter-2',
+                    scrollOffset: .4,
+                    label: 'Kapitel 2 · Seite 11',
+                  ),
+                  deviceName: 'Samsung Tablet',
+                  createdAt: DateTime(2026, 8, 29, 9, 42),
+                  fileTitle: 'Kapitel 0002.cbz',
+                ),
+              ],
+              restoreRevision: (revision) async => restored = revision,
+            ),
+            child: const Text('Verlauf öffnen'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Verlauf öffnen'));
+    await tester.pumpAndSettle();
+    expect(find.text('Gerätestände'), findsOneWidget);
+    expect(
+      find.text('Kapitel 2 · Seite 11 · 40 % innerhalb der Seite'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Samsung Tablet · Kapitel 0002.cbz · 29.08.2026, 09:42 Uhr'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Dorthin springen'));
+    await tester.pumpAndSettle();
+    expect(restored?.revision, 8);
+    expect(find.text('Gerätestände'), findsNothing);
+  });
+
   test('chapter read state follows the synchronized reader position', () {
     const current = MediaPosition(
       kind: MediaPositionKind.imageIndex,

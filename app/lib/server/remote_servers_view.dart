@@ -1792,6 +1792,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     required int progressIndex,
     required WorkAnnotations annotations,
     required bool isOffline,
+    required bool progressHistoryAvailable,
     required FundusOfflineWork? offlineWork,
     required Future<WorkAnnotations> Function(String markdown) onSaveNote,
     required Future<WorkAnnotations> Function(Set<String> tags) onSaveTags,
@@ -1832,6 +1833,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           progressIndex: progressIndex,
           annotations: annotations,
           isOffline: isOffline,
+          progressHistoryAvailable: progressHistoryAvailable,
           epubPublicationLoader: epubPublicationLoader,
           onSaveNote: onSaveNote,
           onSaveTags: onSaveTags,
@@ -2012,6 +2014,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         progressIndex: documentProgressIndex,
         annotations: readerAnnotations,
         isOffline: isOffline,
+        progressHistoryAvailable: !forceOffline,
         offlineWork: offlineWork,
         onSaveNote: (markdown) async {
           if (!syncAnnotations) {
@@ -2241,6 +2244,18 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                           ),
                       ],
                     ),
+                    if (!forceOffline) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () =>
+                              Navigator.pop(context, 'progress_history'),
+                          icon: const Icon(Icons.history),
+                          label: const Text('Gerätestände'),
+                        ),
+                      ),
+                    ],
                   ],
                   if (work.description case final description?) ...[
                     const SizedBox(height: 20),
@@ -2375,6 +2390,51 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           });
         }
       } catch (_) {}
+      return;
+    }
+    if (action == 'progress_history') {
+      final restoredPosition = await _showRemoteReaderProgressHistory(
+        server,
+        library,
+        work,
+        detailTracks,
+      );
+      if (restoredPosition == null || !mounted) return;
+      final restoredTrack = detailTracks
+          .where((track) => track.id == restoredPosition.fileId)
+          .firstOrNull;
+      final title = restoredTrack?.title.toLowerCase() ?? '';
+      if (title.endsWith('.cbz')) {
+        await _openRemoteComicWork(
+          server,
+          library,
+          work,
+          detailTracks,
+          offlineWork: offlineWork,
+          startFileId: restoredPosition.fileId,
+        );
+      } else if (title.endsWith('.pdf')) {
+        await _openRemotePdfWork(
+          server,
+          library,
+          work,
+          detailTracks,
+          offlineWork: offlineWork,
+          startFileId: restoredPosition.fileId,
+        );
+      } else if (title.endsWith('.epub')) {
+        await _openRemoteEpubWork(
+          server,
+          library,
+          work,
+          detailTracks,
+          offlineWork: offlineWork,
+          startFileId: restoredPosition.fileId,
+          startPosition: restoredPosition,
+        );
+      } else {
+        await _showWork(server, library, work);
+      }
       return;
     }
     if (action == 'download') {
@@ -3655,6 +3715,66 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     }
   }
 
+  Future<MediaPosition?> _showRemoteReaderProgressHistory(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work,
+    List<FundusRemoteTrack> tracks,
+  ) async {
+    final deviceId = await _store.deviceId();
+    if (!mounted) return null;
+    final restored = await showReaderProgressHistory(
+      context,
+      loadHistory: () async {
+        final loaded = await _runWithReconnect(
+          server,
+          (active) => _client.progressRevisions(active, library.id, work.id),
+        );
+        server = loaded.server;
+        return [
+          for (final revision in loaded.value)
+            ReaderProgressRevisionView(
+              revision: revision.revision,
+              position: revision.mediaPosition,
+              deviceName: revision.deviceName,
+              createdAt: revision.createdAt,
+              fileTitle:
+                  tracks
+                      .where((track) => track.id == revision.fileId)
+                      .firstOrNull
+                      ?.title ??
+                  'Gespeicherte Datei',
+            ),
+        ];
+      },
+      restoreRevision: (revision) async {
+        final operationId =
+            'reader-restore-${revision.revision}-'
+            '${DateTime.now().microsecondsSinceEpoch}';
+        final restored = await _runWithReconnect(
+          server,
+          (active) => _client.restoreProgressRevision(
+            active,
+            libraryId: library.id,
+            workId: work.id,
+            revision: revision.revision,
+            deviceId: deviceId,
+            operationId: operationId,
+          ),
+        );
+        server = restored.server;
+        await _offlineStore.cacheProgress(
+          serverId: server.id,
+          libraryId: library.id,
+          workId: work.id,
+          progress: restored.value,
+          replacePending: true,
+        );
+      },
+    );
+    return restored?.position;
+  }
+
   Future<void> _openRemotePdfWork(
     FundusRemoteServer server,
     FundusRemoteLibrary library,
@@ -4756,6 +4876,7 @@ class _MobileRemotePublicationDetails extends StatefulWidget {
     required this.progressIndex,
     required this.annotations,
     required this.isOffline,
+    required this.progressHistoryAvailable,
     required this.epubPublicationLoader,
     required this.onSaveNote,
     required this.onSaveTags,
@@ -4770,6 +4891,7 @@ class _MobileRemotePublicationDetails extends StatefulWidget {
   final int progressIndex;
   final WorkAnnotations annotations;
   final bool isOffline;
+  final bool progressHistoryAvailable;
   final Future<EpubPublication> Function()? epubPublicationLoader;
   final Future<WorkAnnotations> Function(String markdown) onSaveNote;
   final Future<WorkAnnotations> Function(Set<String> tags) onSaveTags;
@@ -4816,6 +4938,12 @@ class _MobileRemotePublicationDetailsState
     appBar: AppBar(
       title: Text(widget.detail.summary.title, overflow: TextOverflow.ellipsis),
       actions: [
+        if (widget.progressHistoryAvailable)
+          IconButton(
+            onPressed: () => Navigator.pop(context, 'progress_history'),
+            tooltip: 'Gerätestände',
+            icon: const Icon(Icons.history),
+          ),
         IconButton(
           onPressed: _showFilterAndSort,
           tooltip: 'Filtern und sortieren',

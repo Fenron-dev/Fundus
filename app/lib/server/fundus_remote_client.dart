@@ -373,6 +373,7 @@ final class FundusRemoteProgressRevision {
     required this.createdAt,
     required this.deviceId,
     required this.deviceName,
+    required this.mediaPosition,
     this.duration,
   });
 
@@ -384,6 +385,7 @@ final class FundusRemoteProgressRevision {
   final DateTime createdAt;
   final String deviceId;
   final String deviceName;
+  final MediaPosition mediaPosition;
 }
 
 final class FundusRemoteWorkDetail {
@@ -1311,6 +1313,10 @@ final class FundusRemoteClient {
       throw const HttpException('Ungültige Fortschrittsrevision.');
     }
     final position = value['position'] as Map;
+    final mediaPosition = _mediaPosition(position);
+    if (mediaPosition == null) {
+      throw const HttpException('Ungültige Fortschrittsposition.');
+    }
     final seconds = position['numeric_value'];
     final total = position['total'];
     return FundusRemoteProgress(
@@ -1321,6 +1327,7 @@ final class FundusRemoteClient {
       duration: total is num
           ? Duration(milliseconds: (total * 1000).round())
           : null,
+      mediaPosition: mediaPosition,
       finished: value['finished'] == true,
       revision: value['revision'] is int ? value['revision'] as int : 0,
       deviceId: value['device_id'] is String
@@ -1345,6 +1352,8 @@ final class FundusRemoteClient {
     final createdAt = DateTime.tryParse('${value['created_at'] ?? ''}');
     if (createdAt == null) return null;
     final position = value['position'] as Map;
+    final mediaPosition = _mediaPosition(position);
+    if (mediaPosition == null) return null;
     final seconds = position['numeric_value'];
     final total = position['total'];
     return FundusRemoteProgressRevision(
@@ -1355,6 +1364,7 @@ final class FundusRemoteClient {
       duration: total is num
           ? Duration(milliseconds: (total * 1000).round())
           : null,
+      mediaPosition: mediaPosition,
       finished: value['finished'] == true,
       revision: value['revision'] as int,
       createdAt: createdAt,

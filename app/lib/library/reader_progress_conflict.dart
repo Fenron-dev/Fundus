@@ -5,6 +5,27 @@ import '../playback/playback_conflict_settings.dart';
 
 enum ReaderProgressConflictChoice { keepDevice, useServer }
 
+final class ReaderProgressRevisionView {
+  const ReaderProgressRevisionView({
+    required this.revision,
+    required this.position,
+    required this.deviceName,
+    required this.createdAt,
+    required this.fileTitle,
+  });
+
+  final int revision;
+  final MediaPosition position;
+  final String deviceName;
+  final DateTime createdAt;
+  final String fileTitle;
+}
+
+typedef ReaderProgressHistoryLoader =
+    Future<List<ReaderProgressRevisionView>> Function();
+typedef ReaderProgressRevisionRestorer =
+    Future<void> Function(ReaderProgressRevisionView revision);
+
 bool readerPositionsDiffer(MediaPosition device, MediaPosition server) {
   if (device.kind != server.kind || device.fileId != server.fileId) return true;
   if ((device.numericValue ?? 0).round() !=
@@ -95,6 +116,163 @@ Future<ReaderProgressConflictChoice> resolveReaderProgressConflict(
         ),
       ) ??
       ReaderProgressConflictChoice.keepDevice;
+}
+
+Future<ReaderProgressRevisionView?> showReaderProgressHistory(
+  BuildContext context, {
+  required ReaderProgressHistoryLoader loadHistory,
+  required ReaderProgressRevisionRestorer restoreRevision,
+}) => showDialog<ReaderProgressRevisionView>(
+  context: context,
+  builder: (context) => _ReaderProgressHistoryDialog(
+    loadHistory: loadHistory,
+    restoreRevision: restoreRevision,
+  ),
+);
+
+class _ReaderProgressHistoryDialog extends StatefulWidget {
+  const _ReaderProgressHistoryDialog({
+    required this.loadHistory,
+    required this.restoreRevision,
+  });
+
+  final ReaderProgressHistoryLoader loadHistory;
+  final ReaderProgressRevisionRestorer restoreRevision;
+
+  @override
+  State<_ReaderProgressHistoryDialog> createState() =>
+      _ReaderProgressHistoryDialogState();
+}
+
+class _ReaderProgressHistoryDialogState
+    extends State<_ReaderProgressHistoryDialog> {
+  late final Future<List<ReaderProgressRevisionView>> _history;
+  int? _restoring;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _history = widget.loadHistory();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    icon: const Icon(Icons.history),
+    title: const Text('Gerätestände'),
+    content: SizedBox(
+      width: 620,
+      child: FutureBuilder<List<ReaderProgressRevisionView>>(
+        future: _history,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return const Text('Die Gerätestände konnten nicht geladen werden.');
+          }
+          final revisions = snapshot.data ?? const [];
+          if (revisions.isEmpty) {
+            return const Text('Noch keine früheren Lesestände vorhanden.');
+          }
+          return ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 480),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_error != null) ...[
+                  Text(
+                    _error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: revisions.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final item = revisions[index];
+                      final restoring = _restoring == item.revision;
+                      return ListTile(
+                        leading: const Icon(Icons.devices_outlined),
+                        title: Text(_readerPositionLabel(item.position)),
+                        subtitle: Text(
+                          [
+                            item.deviceName,
+                            item.fileTitle,
+                            _readerHistoryDate(item.createdAt),
+                          ].join(' · '),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: restoring
+                            ? const SizedBox.square(
+                                dimension: 24,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : TextButton(
+                                onPressed: _restoring == null
+                                    ? () => _restore(item)
+                                    : null,
+                                child: const Text('Dorthin springen'),
+                              ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: _restoring == null ? () => Navigator.pop(context) : null,
+        child: const Text('Schließen'),
+      ),
+    ],
+  );
+
+  Future<void> _restore(ReaderProgressRevisionView revision) async {
+    setState(() {
+      _restoring = revision.revision;
+      _error = null;
+    });
+    try {
+      await widget.restoreRevision(revision);
+      if (mounted) Navigator.pop(context, revision);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _restoring = null;
+        _error = 'Dieser Lesestand konnte nicht wiederhergestellt werden.';
+      });
+    }
+  }
+}
+
+String _readerPositionLabel(MediaPosition position) {
+  final base = position.label?.trim().isNotEmpty == true
+      ? position.label!
+      : position.displayValue;
+  final offset = position.scrollOffset;
+  return offset == null
+      ? base
+      : '$base · ${(offset * 100).round()} % innerhalb der Seite';
+}
+
+String _readerHistoryDate(DateTime value) {
+  final local = value.toLocal();
+  String two(int number) => number.toString().padLeft(2, '0');
+  return '${two(local.day)}.${two(local.month)}.${local.year}, '
+      '${two(local.hour)}:${two(local.minute)} Uhr';
 }
 
 class _ReaderPositionCard extends StatelessWidget {

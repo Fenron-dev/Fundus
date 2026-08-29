@@ -174,6 +174,27 @@ void main() {
     expect(loadedReader?.mediaPosition?.numericValue, 7);
     expect(loadedReader?.mediaPosition?.elementId, '007.webp');
     expect(loadedReader?.mediaPosition?.scrollOffset, .35);
+    final readerHistory = await client.progressRevisions(
+      profile,
+      libraries.single.id,
+      works.single.id,
+    );
+    expect(
+      readerHistory.first.mediaPosition.kind,
+      MediaPositionKind.imageIndex,
+    );
+    expect(readerHistory.first.mediaPosition.elementId, '007.webp');
+    expect(readerHistory.first.mediaPosition.scrollOffset, .35);
+    final restoredReader = await client.restoreProgressRevision(
+      profile,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+      revision: readerHistory.first.revision,
+      deviceId: 'client-test',
+      operationId: 'restore-remote-reader-progress-test',
+    );
+    expect(restoredReader.mediaPosition?.numericValue, 7);
+    expect(restoredReader.mediaPosition?.scrollOffset, .35);
 
     final bookmarkAnnotations = await client.saveBookmark(
       profile,
