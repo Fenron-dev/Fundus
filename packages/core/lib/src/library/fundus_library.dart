@@ -508,6 +508,7 @@ final class FundusLibrary {
     String? description,
     String? publisher,
     int? publishedYear,
+    String? contentSensitivity,
   }) async {
     _ensureWritable();
     _database.updateWorkMetadata(
@@ -522,6 +523,7 @@ final class FundusLibrary {
       description: description,
       publisher: publisher,
       publishedYear: publishedYear,
+      contentSensitivity: contentSensitivity,
     );
     await _writeMetadataSidecar(workId);
     return listWorks(
@@ -1190,6 +1192,7 @@ final class FundusLibrary {
         'description': work.description,
         'publisher': work.publisher,
         'published_year': work.publishedYear,
+        'content_sensitivity': work.contentSensitivity,
         'field_sources': {
           for (final entry in work.metadataOrigins.entries) entry.key: {'source': entry.value.source.name, 'updated_at': entry.value.updatedAt.toUtc().toIso8601String()},
         },
@@ -1259,6 +1262,9 @@ final class FundusLibrary {
             description: value['description'] as String?,
             publisher: value['publisher'] as String?,
             publishedYear: (value['published_year'] as num?)?.round(),
+            contentSensitivity: _readContentSensitivity(
+              value['content_sensitivity'],
+            ),
             source: WorkMetadataSource.sidecar,
             updatedAt: await metaFile.lastModified(),
             fieldOrigins: fieldOrigins,
@@ -1359,6 +1365,14 @@ final class FundusLibrary {
         }
       }
     }
+  }
+
+  static String? _readContentSensitivity(Object? value) {
+    if (value is! String) return null;
+    final normalized = value.trim();
+    return FundusDatabase.supportedContentSensitivities.contains(normalized)
+        ? normalized
+        : null;
   }
 
   static Map<String, WorkMetadataOrigin> _readFieldOrigins(Object? value) {

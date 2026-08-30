@@ -136,4 +136,45 @@ void main() {
       'chapter-10.html',
     ]);
   });
+
+  test('groups movie files into a portable film work', () {
+    final importer = DocumentImporter(
+      mediaRoots: LibraryConfiguration.defaults,
+    );
+
+    final candidate = importer.group([
+      file('Movies/Star Wars/cover.webp', mimeType: 'image/webp'),
+      file('Movies/Star Wars/Star Wars.mkv', mimeType: 'video/x-matroska'),
+    ]).single;
+
+    expect(candidate.kind, 'movie');
+    expect(candidate.title, 'Star Wars');
+    expect(candidate.directory, 'Movies/Star Wars');
+    expect(candidate.coverFile?.filename, 'cover.webp');
+  });
+
+  test('groups a TV series and its season files into one work', () {
+    final importer = DocumentImporter(
+      mediaRoots: LibraryConfiguration.defaults,
+    );
+
+    final candidate = importer.group([
+      file(
+        'TV Shows/Firefly/Season 01/Firefly - S01E02.mp4',
+        mimeType: 'video/mp4',
+      ),
+      file(
+        'TV Shows/Firefly/Season 01/Firefly - S01E01.mp4',
+        mimeType: 'video/mp4',
+      ),
+    ]).single;
+
+    expect(candidate.kind, 'tv');
+    expect(candidate.title, 'Firefly');
+    expect(candidate.directory, 'TV Shows/Firefly');
+    expect(candidate.files.map((item) => item.filename), [
+      'Firefly - S01E01.mp4',
+      'Firefly - S01E02.mp4',
+    ]);
+  });
 }

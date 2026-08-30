@@ -72,6 +72,7 @@ final class LibraryWorkSummary {
   final String? isbn;
   final String? asin;
   final bool? explicit;
+
   /// Portable sensitivity classification. `adult_explicit` is rendered as HHH.
   final String? contentSensitivity;
   final bool? abridged;
@@ -104,6 +105,12 @@ final class FundusDatabase {
   FundusDatabase._(this._database);
 
   static const schemaVersion = 6;
+  static const supportedContentSensitivities = {
+    'general',
+    'mature',
+    'adult_explicit',
+    'unknown',
+  };
 
   final Database _database;
 
@@ -406,6 +413,7 @@ final class FundusDatabase {
     String? description,
     String? publisher,
     int? publishedYear,
+    String? contentSensitivity,
     WorkMetadataSource source = WorkMetadataSource.user,
     DateTime? updatedAt,
     Map<String, WorkMetadataOrigin> fieldOrigins = const {},
@@ -418,6 +426,16 @@ final class FundusDatabase {
         .toList(growable: false);
     if (normalizedTitle.isEmpty || normalizedAuthors.isEmpty) {
       throw ArgumentError('Titel und mindestens ein Autor sind erforderlich.');
+    }
+    final normalizedSensitivity = contentSensitivity?.trim();
+    if (normalizedSensitivity != null &&
+        normalizedSensitivity.isNotEmpty &&
+        !supportedContentSensitivities.contains(normalizedSensitivity)) {
+      throw ArgumentError.value(
+        contentSensitivity,
+        'contentSensitivity',
+        'Erwartet general, mature, adult_explicit oder unknown.',
+      );
     }
     final rows = _database.select(
       'SELECT metadata_json FROM works WHERE id = ?',
@@ -464,6 +482,11 @@ final class FundusDatabase {
     write('description', description);
     write('publisher', publisher);
     write('published_year', publishedYear);
+    // Older callers do not pass this optional field. Preserve an existing
+    // classification until a dedicated policy editor explicitly changes it.
+    if (normalizedSensitivity != null) {
+      write('content_sensitivity', normalizedSensitivity);
+    }
     write('title', normalizedTitle);
     write('series', series);
     write('series_sequence', seriesSequence);

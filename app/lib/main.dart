@@ -3062,6 +3062,7 @@ class _LibraryShellState extends State<LibraryShell> {
 
 enum _LibrarySection {
   library,
+  videos,
   manga,
   ttrpg,
   webnovels,
@@ -3080,6 +3081,7 @@ extension on _LibrarySection {
 
   Set<String>? get workKinds => switch (this) {
     _LibrarySection.library => const {'audiobook'},
+    _LibrarySection.videos => const {'movie', 'tv', 'video'},
     _LibrarySection.manga => const {'manga'},
     _LibrarySection.ttrpg => const {'ttrpg_product'},
     _LibrarySection.webnovels => const {'webnovel'},
@@ -3092,6 +3094,7 @@ extension on _LibrarySection {
 
   String get label => switch (this) {
     _LibrarySection.library => 'Hörbücher',
+    _LibrarySection.videos => 'Filme & Serien',
     _LibrarySection.manga => 'Manga & Comics',
     _LibrarySection.ttrpg => 'TTRPG',
     _LibrarySection.webnovels => 'Webnovels',
@@ -3104,11 +3107,13 @@ extension on _LibrarySection {
 
   String get browserTitle => switch (this) {
     _LibrarySection.library => 'Hörbücher & Hörspiele',
+    _LibrarySection.videos => 'Filme & Serien',
     _ => label,
   };
 
   IconData get icon => switch (this) {
     _LibrarySection.library => Icons.headphones_outlined,
+    _LibrarySection.videos => Icons.movie_outlined,
     _LibrarySection.manga => Icons.auto_stories_outlined,
     _LibrarySection.ttrpg => Icons.casino_outlined,
     _LibrarySection.webnovels => Icons.chrome_reader_mode_outlined,
@@ -3121,6 +3126,7 @@ extension on _LibrarySection {
 
   IconData get selectedIcon => switch (this) {
     _LibrarySection.library => Icons.headphones,
+    _LibrarySection.videos => Icons.movie,
     _LibrarySection.manga => Icons.auto_stories,
     _LibrarySection.ttrpg => Icons.casino,
     _LibrarySection.webnovels => Icons.chrome_reader_mode,
@@ -3572,10 +3578,6 @@ class _Sidebar extends StatelessWidget {
           title: const Text('Hörbücher'),
           selected: selectedSection == _LibrarySection.library,
           onTap: () => onSelectSection(_LibrarySection.library),
-        ),
-        const ListTile(
-          leading: Icon(Icons.movie_outlined),
-          title: Text('Filme & Serien'),
         ),
         for (final section in _LibrarySection.values.where(
           (section) => section.isDocumentSection,
@@ -6844,6 +6846,8 @@ class _WorkCover extends StatelessWidget {
 
 String _workKindLabel(String kind) => switch (kind) {
   'audiobook' => 'Hörbuch',
+  'movie' => 'Film',
+  'tv' || 'video' => 'Serie',
   'ebook' => 'E-Book/PDF',
   'webnovel' => 'Webnovel',
   'manga' => 'Manga/Comic',
@@ -6856,6 +6860,7 @@ String _workKindLabel(String kind) => switch (kind) {
 
 IconData _workKindIcon(String kind) => switch (kind) {
   'audiobook' => Icons.music_note,
+  'movie' || 'tv' || 'video' => Icons.movie_outlined,
   'ebook' => Icons.menu_book_outlined,
   'webnovel' => Icons.chrome_reader_mode_outlined,
   'manga' => Icons.auto_stories_outlined,

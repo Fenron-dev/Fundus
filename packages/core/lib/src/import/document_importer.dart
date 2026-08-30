@@ -65,6 +65,8 @@ final class DocumentImporter {
     'document',
     'ttrpg_product',
     'archive',
+    'movie',
+    'tv',
   };
   static const _extensions = {
     'pdf',
@@ -91,6 +93,16 @@ final class DocumentImporter {
     'rar',
     'tar',
     'gz',
+    'mp4',
+    'm4v',
+    'mkv',
+    'webm',
+    'mov',
+    'avi',
+    'wmv',
+    'flv',
+    'ts',
+    'm2ts',
   };
   static const _coverNames = {
     'cover.jpg',

@@ -401,6 +401,7 @@ void main() {
         description: 'Eine portable Beschreibung.',
         publisher: 'Testverlag',
         publishedYear: 2026,
+        contentSensitivity: 'adult_explicit',
       );
 
       expect(edited.title, 'Manuell korrigierter Titel');
@@ -410,6 +411,8 @@ void main() {
       expect(edited.narrators, ['Sprecher Eins', 'Sprecher Zwei']);
       expect(edited.language, 'de');
       expect(edited.description, 'Eine portable Beschreibung.');
+      expect(edited.contentSensitivity, 'adult_explicit');
+      expect(edited.isHhh, isTrue);
       expect(edited.metadataOrigins['title']?.source, WorkMetadataSource.user);
       expect(
         edited.metadataOrigins['narrators']?.source,
@@ -449,6 +452,8 @@ void main() {
       expect(restored.narrators, ['Sprecher Eins', 'Sprecher Zwei']);
       expect(restored.publisher, 'Testverlag');
       expect(restored.publishedYear, 2026);
+      expect(restored.contentSensitivity, 'adult_explicit');
+      expect(restored.isHhh, isTrue);
       expect(
         restored.metadataOrigins['title']?.source,
         WorkMetadataSource.user,
@@ -458,6 +463,7 @@ void main() {
       ).readAsString();
       expect(sidecar, contains('"field_sources"'));
       expect(sidecar, contains('"source": "user"'));
+      expect(sidecar, contains('"content_sensitivity": "adult_explicit"'));
     },
   );
 
