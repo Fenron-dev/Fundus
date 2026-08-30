@@ -28,9 +28,11 @@ import 'library/work_detail_header.dart';
 import 'library/work_detail_sections.dart';
 import 'library/work_content_list.dart';
 import 'library/work_annotation_list.dart';
+import 'library/video_player_page.dart';
 import 'library/zip_archive_browser.dart';
 import 'settings/hhh_content_settings.dart';
 import 'playback/fundus_player_controller.dart';
+import 'playback/fundus_video_player_controller.dart';
 import 'playback/track_jump_confirmation.dart';
 import 'playback/playback_conflict_settings.dart';
 import 'playback/playlist_session_conflict.dart';
@@ -5184,6 +5186,15 @@ class _DetailPanelState extends State<_DetailPanel> {
   }
 
   Future<void> _openDocument(LibraryPlaybackTrack file) async {
+    if (FundusVideoPlayerController.isVideoTrack(file)) {
+      final work = _editedWork ?? widget.work;
+      if (work != null) {
+        await _openVideoWork(work, startFileId: file.fileId);
+      } else {
+        await _openDocumentPath(file.absolutePath);
+      }
+      return;
+    }
     final descriptor = _publicationFormats.probe(file.absolutePath);
     if (descriptor?.renderer == PublicationRendererKind.comic) {
       final work = _editedWork ?? widget.work;
@@ -5257,6 +5268,10 @@ class _DetailPanelState extends State<_DetailPanel> {
     LibraryWorkSummary work,
     List<LibraryPlaybackTrack> files,
   ) async {
+    if (work.kind == 'movie' || work.kind == 'tv' || work.kind == 'video') {
+      await _openVideoWork(work);
+      return;
+    }
     final readable = _readableDocumentFiles(files);
     if (readable.isEmpty) return;
     final comics = readable
@@ -5301,6 +5316,35 @@ class _DetailPanelState extends State<_DetailPanel> {
       await _openPdf(work, selected, progress);
     } else {
       await _openDocument(selected);
+    }
+  }
+
+  Future<void> _openVideoWork(
+    LibraryWorkSummary work, {
+    String? startFileId,
+    Duration? startPosition,
+  }) async {
+    final library = widget.library;
+    if (library == null) return;
+    final controller = FundusVideoPlayerController();
+    final opening = controller.open(
+      library,
+      work,
+      startFileId: startFileId,
+      startPosition: startPosition,
+    );
+    try {
+      if (mounted) {
+        await showFundusVideoPlayer(context, controller: controller);
+      }
+      await opening;
+    } finally {
+      // Finish an in-flight open before disposing the native player. This is
+      // important when a user closes the player while a network volume is
+      // still resolving the first video file.
+      await opening;
+      await controller.close();
+      controller.dispose();
     }
   }
 
