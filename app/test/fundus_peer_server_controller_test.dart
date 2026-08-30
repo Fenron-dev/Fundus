@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/server/fundus_peer_server_controller.dart';
+import 'package:fundus/server/peer_server_identity_store.dart';
 import 'package:fundus_core/fundus_core.dart';
 
 void main() {
@@ -99,6 +100,38 @@ void main() {
       await controller.stop();
     },
   );
+
+  test('restores the requested running state after an app restart', () async {
+    final temporary = await Directory.systemTemp.createTemp(
+      'fundus-peer-autostart-',
+    );
+    addTearDown(() => temporary.delete(recursive: true));
+    final library = await _library(
+      Directory('${temporary.path}/Bibliothek'),
+      'Werk',
+    );
+    library.close();
+    final identityStore = PeerServerIdentityStore(
+      Directory('${temporary.path}/identity'),
+    );
+    await identityStore.savePreferences(
+      const PeerServerPreferences(autoStart: true),
+    );
+    final controller = FundusPeerServerController(
+      identityStore: identityStore,
+      token: 'local-test-token',
+    );
+    addTearDown(controller.dispose);
+    await controller.setSources([
+      PeerLibrarySource(path: library.root.path, name: 'Bibliothek'),
+    ]);
+
+    await controller.initialize();
+
+    expect(controller.state, PeerServerState.running);
+    await controller.stop();
+    expect((await identityStore.loadPreferences()).autoStart, isFalse);
+  });
 }
 
 Future<FundusLibrary> _library(Directory root, String title) async {

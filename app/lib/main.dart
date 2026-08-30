@@ -1234,7 +1234,7 @@ class _RemoteLibraryTile extends StatelessWidget {
             ? 'Neu koppeln'
             : offlineOnly
             ? '${choice.offlineCount} offline'
-            : 'Nicht erreichbar',
+            : 'Neu verbinden',
       ),
     );
   }
@@ -3173,73 +3173,82 @@ class _TopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       height: 52,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: Row(
-          children: [
-            Text('Fundus', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(width: 14),
-            Text(
-              '${libraryName ?? 'Entwicklung'} · Hörbücher',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const Spacer(),
-            SizedBox(
-              width: 320,
-              child: SearchBar(
-                controller: searchController,
-                leading: const Icon(Icons.search),
-                hintText: 'Suchen und filtern …',
-                onChanged: onSearch,
-              ),
-            ),
-            if (indexEvent != null)
-              Padding(
-                padding: const EdgeInsets.only(left: 8),
-                child: Text('${indexEvent!.fileCount} Dateien'),
-              ),
-            IconButton(
-              onPressed: onRescan,
-              tooltip: 'Neu einlesen',
-              icon: const Icon(Icons.refresh),
-            ),
-            IconButton(
-              onPressed: onToggleTheme,
-              tooltip: 'Theme wechseln',
-              icon: const Icon(Icons.contrast),
-            ),
-            if (onExportDiagnostics != null)
-              IconButton(
-                onPressed: onExportDiagnostics,
-                tooltip: 'Diagnoseprotokoll exportieren',
-                icon: const Icon(Icons.bug_report_outlined),
-              ),
-            if (onOpenSettings != null && peerServer != null)
-              _NetworkPresenceButton(
-                peerServer: peerServer!,
-                connectedServerCount: connectedServerCount,
-                onPressed: onOpenSettings!,
-              ),
-            if (onToggleDetails != null)
-              IconButton(
-                onPressed: onToggleDetails,
-                tooltip: detailPaneVisible ?? true
-                    ? 'Detailleiste ausblenden'
-                    : 'Detailleiste einblenden',
-                icon: Icon(
-                  detailPaneVisible ?? true
-                      ? Icons.view_sidebar_outlined
-                      : Icons.view_sidebar,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 1050;
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                Text('Fundus', style: Theme.of(context).textTheme.titleMedium),
+                if (!compact) ...[
+                  const SizedBox(width: 14),
+                  Text(
+                    '${libraryName ?? 'Entwicklung'} · Hörbücher',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+                if (onClose != null) ...[
+                  const SizedBox(width: 4),
+                  IconButton(
+                    onPressed: onClose,
+                    tooltip: 'Zur Bibliotheksauswahl',
+                    icon: const Icon(Icons.home_outlined),
+                  ),
+                ],
+                const Spacer(),
+                SizedBox(
+                  width: compact ? 200 : 320,
+                  child: SearchBar(
+                    controller: searchController,
+                    leading: const Icon(Icons.search),
+                    hintText: 'Suchen und filtern …',
+                    onChanged: onSearch,
+                  ),
                 ),
-              ),
-            if (onClose != null)
-              IconButton(
-                onPressed: onClose,
-                tooltip: 'Bibliothek schließen',
-                icon: const Icon(Icons.close),
-              ),
-          ],
-        ),
+                if (indexEvent != null && !compact)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8),
+                    child: Text('${indexEvent!.fileCount} Dateien'),
+                  ),
+                IconButton(
+                  onPressed: onRescan,
+                  tooltip: 'Neu einlesen',
+                  icon: const Icon(Icons.refresh),
+                ),
+                IconButton(
+                  onPressed: onToggleTheme,
+                  tooltip: 'Theme wechseln',
+                  icon: const Icon(Icons.contrast),
+                ),
+                if (onExportDiagnostics != null)
+                  IconButton(
+                    onPressed: onExportDiagnostics,
+                    tooltip: 'Diagnoseprotokoll exportieren',
+                    icon: const Icon(Icons.bug_report_outlined),
+                  ),
+                if (onOpenSettings != null && peerServer != null)
+                  _NetworkPresenceButton(
+                    peerServer: peerServer!,
+                    connectedServerCount: connectedServerCount,
+                    onPressed: onOpenSettings!,
+                  ),
+                if (onToggleDetails != null)
+                  IconButton(
+                    onPressed: onToggleDetails,
+                    tooltip: detailPaneVisible ?? true
+                        ? 'Detailleiste ausblenden'
+                        : 'Detailleiste einblenden',
+                    icon: Icon(
+                      detailPaneVisible ?? true
+                          ? Icons.view_sidebar_outlined
+                          : Icons.view_sidebar,
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -5706,13 +5715,10 @@ class _DetailPanelState extends State<_DetailPanel> {
         break;
       }
     }
-    if (library != null) {
-      final refreshed = library
-          .listWorks(includeMissing: true)
-          .where((candidate) => candidate.id == work.id)
-          .firstOrNull;
-      if (refreshed != null) widget.onMetadataChanged?.call(refreshed);
-    }
+    // Progress was already persisted by the reader callbacks. Avoid reading
+    // the complete catalogue here: with a network-mounted vault that blocks
+    // closing the reader for several seconds. A later dashboard refresh or
+    // incremental scan picks up the updated summary.
   }
 
   Future<void> _openComicWork(
@@ -5921,13 +5927,9 @@ class _DetailPanelState extends State<_DetailPanel> {
       }
       break;
     }
-    if (library != null && work != null) {
-      final refreshed = library
-          .listWorks(includeMissing: true)
-          .where((candidate) => candidate.id == work.id)
-          .firstOrNull;
-      if (refreshed != null) widget.onMetadataChanged?.call(refreshed);
-    }
+    // Position/profile changes are already durable. In particular, do not
+    // reload every work from SQLite here: the database can live on an SMB/NAS
+    // vault and made closing a comic much slower than opening it.
   }
 
   Future<void> _openPdf(
@@ -5982,13 +5984,8 @@ class _DetailPanelState extends State<_DetailPanel> {
         context,
       ).showSnackBar(SnackBar(content: Text(error.message)));
     }
-    if (library != null) {
-      final refreshed = library
-          .listWorks(includeMissing: true)
-          .where((candidate) => candidate.id == work.id)
-          .firstOrNull;
-      if (refreshed != null) widget.onMetadataChanged?.call(refreshed);
-    }
+    // Page progress is persisted above. Defer catalogue refresh so closing a
+    // PDF never waits for a full query against a network-mounted database.
   }
 
   Future<LibraryPlaybackProgress?> _resolveLocalReaderProgress(

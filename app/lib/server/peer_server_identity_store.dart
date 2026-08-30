@@ -25,6 +25,16 @@ final class PeerServerIdentity {
   final List<FundusPairedDevice> pairedDevices;
 }
 
+final class PeerServerPreferences {
+  const PeerServerPreferences({
+    this.lanEnabled = false,
+    this.autoStart = false,
+  });
+
+  final bool lanEnabled;
+  final bool autoStart;
+}
+
 final class PeerServerIdentityStore {
   PeerServerIdentityStore(this.directory);
 
@@ -66,6 +76,8 @@ final class PeerServerIdentityStore {
   File get _certificateFile => File('${directory.path}/server-cert.pem');
   File get _privateKeyFile => File('${directory.path}/server-key.pem');
   File get _devicesFile => File('${directory.path}/paired-devices.json');
+  File get _preferencesFile =>
+      File('${directory.path}/server-preferences.json');
 
   Future<PeerServerIdentity> loadOrCreate() async {
     await directory.create(recursive: true);
@@ -135,6 +147,32 @@ final class PeerServerIdentityStore {
       const JsonEncoder.withIndent(
         '  ',
       ).convert(devices.map((device) => device.toJson()).toList()),
+      flush: true,
+    );
+  }
+
+  Future<PeerServerPreferences> loadPreferences() async {
+    final source = await _readIfPresent(_preferencesFile);
+    if (source == null) return const PeerServerPreferences();
+    try {
+      final value = jsonDecode(source);
+      if (value is! Map) return const PeerServerPreferences();
+      return PeerServerPreferences(
+        lanEnabled: value['lan_enabled'] == true,
+        autoStart: value['auto_start'] == true,
+      );
+    } on FormatException {
+      return const PeerServerPreferences();
+    }
+  }
+
+  Future<void> savePreferences(PeerServerPreferences preferences) async {
+    await directory.create(recursive: true);
+    await _preferencesFile.writeAsString(
+      jsonEncode({
+        'lan_enabled': preferences.lanEnabled,
+        'auto_start': preferences.autoStart,
+      }),
       flush: true,
     );
   }

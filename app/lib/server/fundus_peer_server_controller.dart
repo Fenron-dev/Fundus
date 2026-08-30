@@ -66,6 +66,7 @@ final class FundusPeerServerController extends ChangeNotifier {
   PeerServerIdentity? _identity;
   FundusPairingAuthority? _pairingAuthority;
   bool _lanEnabled = false;
+  bool _autoStart = false;
   List<Uri> _networkUris = const [];
   Uri? _pairingUri;
   String _deviceName = 'Fundus-Gerät';
@@ -116,14 +117,19 @@ final class FundusPeerServerController extends ChangeNotifier {
 
   Future<void> initialize() async {
     await _ensureIdentity();
+    final preferences = await _identityStore!.loadPreferences();
+    _lanEnabled = preferences.lanEnabled;
+    _autoStart = preferences.autoStart;
     notifyListeners();
+    if (_autoStart && hasSharedSources && !isRunning) await start();
   }
 
   Future<void> setLanEnabled(bool enabled) async {
     if (_lanEnabled == enabled) return;
     final wasRunning = isRunning;
-    if (wasRunning) await stop();
+    if (wasRunning) await stop(remember: false);
     _lanEnabled = enabled;
+    await _savePreferences();
     notifyListeners();
     if (wasRunning && hasSharedSources) await start();
   }
@@ -189,7 +195,7 @@ final class FundusPeerServerController extends ChangeNotifier {
     await FundusRemoteServerStore().setDeviceName(normalized);
     final wasRunning = isRunning;
     if (wasRunning) {
-      await stop();
+      await stop(remember: false);
       await start();
     } else {
       notifyListeners();
@@ -210,7 +216,9 @@ final class FundusPeerServerController extends ChangeNotifier {
       byPath.keys.where((path) => !previousPaths.contains(path)),
     );
     if (isRunning) {
-      await stop();
+      await stop(remember: false);
+      await start();
+    } else if (_autoStart && hasSharedSources) {
       await start();
     } else {
       _libraries = [
@@ -230,7 +238,7 @@ final class FundusPeerServerController extends ChangeNotifier {
     final normalized = Directory(path).absolute.path;
     shared ? _sharedPaths.add(normalized) : _sharedPaths.remove(normalized);
     if (isRunning) {
-      await stop();
+      await stop(remember: false);
       if (hasSharedSources) await start();
       return;
     }
@@ -326,6 +334,8 @@ final class FundusPeerServerController extends ChangeNotifier {
       _pairingUri = _networkUris.firstOrNull;
       _libraries = statuses;
       _state = PeerServerState.running;
+      _autoStart = true;
+      await _savePreferences();
       _presenceTimer ??= Timer.periodic(
         const Duration(seconds: 5),
         (_) => notifyListeners(),
@@ -367,7 +377,7 @@ final class FundusPeerServerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> stop() async {
+  Future<void> stop({bool remember = true}) async {
     if (_state == PeerServerState.stopped ||
         _state == PeerServerState.stopping) {
       return;
@@ -385,6 +395,10 @@ final class FundusPeerServerController extends ChangeNotifier {
     _registry.close();
     _state = PeerServerState.stopped;
     _error = null;
+    if (remember) {
+      _autoStart = false;
+      await _savePreferences();
+    }
     _libraries = [
       for (final source in _sources)
         PeerSharedLibraryStatus(
@@ -400,6 +414,14 @@ final class FundusPeerServerController extends ChangeNotifier {
       }),
     );
     notifyListeners();
+  }
+
+  Future<void> _savePreferences() async {
+    final store = _identityStore;
+    if (store == null) return;
+    await store.savePreferences(
+      PeerServerPreferences(lanEnabled: _lanEnabled, autoStart: _autoStart),
+    );
   }
 
   @override
@@ -434,7 +456,12 @@ final class FundusPeerServerController extends ChangeNotifier {
     _identity = identity;
     _serverId ??= identity.serverId;
     _deviceName = identity.deviceName;
-    await FundusRemoteServerStore().setDeviceName(identity.deviceName);
+    try {
+      await FundusRemoteServerStore().setDeviceName(identity.deviceName);
+    } catch (_) {
+      // A platform keychain outage must not prevent the local server from
+      // restoring its file-backed identity and paired-device grants.
+    }
     _pairingAuthority = FundusPairingAuthority(
       devices: identity.pairedDevices,
       onChanged: (devices) async {

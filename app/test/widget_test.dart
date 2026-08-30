@@ -156,6 +156,32 @@ void main() {
     expect(find.byTooltip('Zurück zur Übersicht'), findsOneWidget);
   });
 
+  testWidgets('tablet shell always exposes the library selection button', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(900, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var closed = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LibraryShell(
+          works: testWorks,
+          libraryName: 'Lokale Bibliothek',
+          onToggleTheme: () {},
+          onClose: () => closed = true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Zur Bibliotheksauswahl'), findsOneWidget);
+    await tester.tap(find.byTooltip('Zur Bibliotheksauswahl'));
+    expect(closed, isTrue);
+  });
+
   testWidgets('desktop detail sidebar can be hidden and details open inline', (
     tester,
   ) async {

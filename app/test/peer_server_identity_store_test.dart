@@ -49,4 +49,26 @@ void main() {
     expect(source, isNot(contains('raw-secret-token')));
     expect(loaded.single.tokenHash, device.tokenHash);
   });
+
+  test('persists non-secret server startup preferences', () async {
+    final temporary = await Directory.systemTemp.createTemp(
+      'fundus-peer-preferences-',
+    );
+    addTearDown(() => temporary.delete(recursive: true));
+    final store = PeerServerIdentityStore(temporary);
+
+    expect((await store.loadPreferences()).autoStart, isFalse);
+    await store.savePreferences(
+      const PeerServerPreferences(lanEnabled: true, autoStart: true),
+    );
+
+    final loaded = await store.loadPreferences();
+    expect(loaded.lanEnabled, isTrue);
+    expect(loaded.autoStart, isTrue);
+    final source = await File(
+      '${temporary.path}/server-preferences.json',
+    ).readAsString();
+    expect(source, isNot(contains('token')));
+    expect(source, isNot(contains('certificate')));
+  });
 }
