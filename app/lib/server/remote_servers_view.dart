@@ -175,6 +175,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   late final AppLifecycleListener _lifecycleListener;
   Timer? _connectionHeartbeat;
   bool _serverOnline = false;
+  bool _authorizationRequired = false;
 
   @override
   void initState() {
@@ -428,13 +429,33 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         _selectedServer = result.server;
         _libraries = libraries;
         _serverOnline = true;
+        _authorizationRequired = false;
+        _busy = false;
+      });
+    } on FundusRemoteRequestException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _authorizationRequired =
+            error.statusCode == HttpStatus.unauthorized ||
+            error.statusCode == HttpStatus.forbidden;
+        _error = _authorizationRequired
+            ? 'Server erreichbar, aber die Kopplung ist nicht mehr gültig. '
+                  'Bitte das Gerät erneut per QR-Code oder PIN koppeln.'
+            : 'Server derzeit nicht erreichbar.';
+        _serverOnline = false;
+        if (server.id == widget.initialServerId &&
+            widget.initialLibraryId != null) {
+          _selectedServer = null;
+          _offlineLibraryFilter = widget.initialLibraryId;
+        }
         _busy = false;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _error = 'Server nicht erreichbar oder Berechtigung widerrufen.';
+        _error = 'Server derzeit nicht erreichbar.';
         _serverOnline = false;
+        _authorizationRequired = false;
         if (server.id == widget.initialServerId &&
             widget.initialLibraryId != null) {
           _selectedServer = null;
@@ -605,12 +626,22 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         Tooltip(
           message: _serverOnline
               ? 'Mit Server verbunden'
+              : _authorizationRequired
+              ? 'Server erreichbar – erneut koppeln'
               : 'Keine aktive Serververbindung',
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Icon(
-              _serverOnline ? Icons.cloud_done : Icons.cloud_off_outlined,
-              color: _serverOnline ? Colors.green : null,
+              _serverOnline
+                  ? Icons.cloud_done
+                  : _authorizationRequired
+                  ? Icons.key_off_outlined
+                  : Icons.cloud_off_outlined,
+              color: _serverOnline
+                  ? Colors.green
+                  : _authorizationRequired
+                  ? Theme.of(context).colorScheme.error
+                  : null,
             ),
           ),
         ),
@@ -3106,6 +3137,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       // Relocation can only help transport/server failures, never a valid 4xx
       // response such as a permanently missing cover.
       if (error.statusCode >= 400 && error.statusCode < 500) {
+        if (error.statusCode == HttpStatus.unauthorized ||
+            error.statusCode == HttpStatus.forbidden) {
+          if (mounted) setState(() => _authorizationRequired = true);
+        }
         _setServerOnline(
           error.statusCode != HttpStatus.unauthorized &&
               error.statusCode != HttpStatus.forbidden,
@@ -3119,8 +3154,14 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   }
 
   void _setServerOnline(bool value) {
-    if (!mounted || _serverOnline == value) return;
-    setState(() => _serverOnline = value);
+    if (!mounted ||
+        (_serverOnline == value && !(value && _authorizationRequired))) {
+      return;
+    }
+    setState(() {
+      _serverOnline = value;
+      if (value) _authorizationRequired = false;
+    });
   }
 
   Future<void> _refreshServerConnection() async {

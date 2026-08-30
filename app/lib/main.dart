@@ -63,12 +63,14 @@ final class _RemoteLibraryChoice {
     required this.server,
     required this.library,
     required this.reachable,
+    required this.authorizationRequired,
     required this.offlineCount,
   });
 
   final FundusRemoteServer server;
   final FundusRemoteLibraryReference library;
   final bool reachable;
+  final bool authorizationRequired;
   final int offlineCount;
 }
 
@@ -142,6 +144,7 @@ class _FundusAppState extends State<FundusApp> {
   List<_RemoteLibraryChoice> _remoteLibraries = const [];
   List<FundusOfflineWork> _offlineWorks = const [];
   Set<String> _reachableServerIds = const {};
+  Set<String> _unauthorizedServerIds = const {};
   bool _loadingRemoteLibraries = false;
   Timer? _remoteHeartbeat;
   late final AppLifecycleListener _lifecycleListener;
@@ -474,13 +477,15 @@ class _FundusAppState extends State<FundusApp> {
       var offline = await _offlineStore.listAll();
       offline = await _resolveOfflineSourceLabels(offline, servers, references);
       final reachable = <String>{};
+      final unauthorized = <String>{};
       if (mounted) {
         setState(() {
           _offlineWorks = offline;
           _remoteLibraries = _remoteChoices(
             servers,
             references,
-            reachable,
+            _reachableServerIds,
+            _unauthorizedServerIds,
             offline,
           );
         });
@@ -495,6 +500,12 @@ class _FundusAppState extends State<FundusApp> {
               final libraries = await _remoteClient.libraries(server);
               await _remoteStore.rememberLibraries(server, libraries);
               reachable.add(server.id);
+            } on FundusRemoteRequestException catch (error) {
+              if (error.statusCode == HttpStatus.unauthorized ||
+                  error.statusCode == HttpStatus.forbidden) {
+                unauthorized.add(server.id);
+              }
+              // Gespeicherte Metadaten bleiben für Offline-Inhalte sichtbar.
             } catch (_) {
               // Gespeicherte Metadaten bleiben für Offline-Inhalte sichtbar.
             }
@@ -505,11 +516,13 @@ class _FundusAppState extends State<FundusApp> {
       if (!mounted) return;
       setState(() {
         _reachableServerIds = Set.unmodifiable(reachable);
+        _unauthorizedServerIds = Set.unmodifiable(unauthorized);
         _offlineWorks = offline;
         _remoteLibraries = _remoteChoices(
           servers,
           references,
           reachable,
+          unauthorized,
           offline,
         );
       });
@@ -553,6 +566,7 @@ class _FundusAppState extends State<FundusApp> {
     List<FundusRemoteServer> servers,
     List<FundusRemoteLibraryReference> references,
     Set<String> reachable,
+    Set<String> unauthorized,
     List<FundusOfflineWork> offline,
   ) {
     final byId = {for (final server in servers) server.id: server};
@@ -563,6 +577,7 @@ class _FundusAppState extends State<FundusApp> {
             server: server,
             library: reference,
             reachable: reachable.contains(server.id),
+            authorizationRequired: unauthorized.contains(server.id),
             offlineCount: offline
                 .where(
                   (work) =>
@@ -1204,6 +1219,8 @@ class _RemoteLibraryTile extends StatelessWidget {
         size: 12,
         color: choice.reachable
             ? Colors.green
+            : choice.authorizationRequired
+            ? Theme.of(context).colorScheme.error
             : offlineOnly
             ? Colors.orange
             : Theme.of(context).colorScheme.error,
@@ -1213,6 +1230,8 @@ class _RemoteLibraryTile extends StatelessWidget {
       trailing: Text(
         choice.reachable
             ? '${choice.library.workCount} Werk(e)'
+            : choice.authorizationRequired
+            ? 'Neu koppeln'
             : offlineOnly
             ? '${choice.offlineCount} offline'
             : 'Nicht erreichbar',

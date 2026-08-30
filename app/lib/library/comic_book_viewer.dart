@@ -347,7 +347,12 @@ ComicReaderTapZone comicReaderTapZoneAtPoint(
   Size viewport, {
   double edgeFraction = .3,
   double verticalNavigationInset = .2,
+  bool continuousVertical = false,
 }) {
+  // A short swipe in a vertically scrolling reader can end as a tap when the
+  // finger moves only a few pixels. It may toggle the chrome, but must never
+  // seek to another page or chapter.
+  if (continuousVertical) return ComicReaderTapZone.center;
   if (viewport.height <= 0) return ComicReaderTapZone.center;
   final normalizedY = localPosition.dy / viewport.height;
   // Keep the top and bottom bands exclusively for showing or hiding reader
@@ -660,6 +665,7 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
       details.localPosition,
       viewport,
       edgeFraction: _profile.tapZoneWidth,
+      continuousVertical: _continuous && !_continuousHorizontal,
     );
     if (_profile.invertTapZones) {
       zone = switch (zone) {

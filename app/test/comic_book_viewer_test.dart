@@ -124,6 +124,27 @@ void main() {
     );
   });
 
+  test('vertical continuous readers never navigate from an edge tap', () {
+    const viewport = Size(400, 800);
+
+    expect(
+      comicReaderTapZoneAtPoint(
+        const Offset(10, 400),
+        viewport,
+        continuousVertical: true,
+      ),
+      ComicReaderTapZone.center,
+    );
+    expect(
+      comicReaderTapZoneAtPoint(
+        const Offset(390, 400),
+        viewport,
+        continuousVertical: true,
+      ),
+      ComicReaderTapZone.center,
+    );
+  });
+
   test('overall progress combines chapter and page positions', () {
     expect(comicOverallProgress(page: 4, pageCount: 10), .5);
     expect(
