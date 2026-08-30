@@ -19,6 +19,8 @@ Future<void> showFundusServerSettings(
   FundusOfflineStore? offlineStore,
   ThemeMode themeMode = ThemeMode.dark,
   ValueChanged<ThemeMode>? onThemeModeChanged,
+  bool hhhEnabled = false,
+  ValueChanged<bool>? onHhhEnabledChanged,
   VoidCallback? onExportDiagnostics,
 }) => showDialog<void>(
   context: context,
@@ -30,6 +32,8 @@ Future<void> showFundusServerSettings(
         offlineStore: offlineStore,
         themeMode: themeMode,
         onThemeModeChanged: onThemeModeChanged,
+        hhhEnabled: hhhEnabled,
+        onHhhEnabledChanged: onHhhEnabledChanged,
         onExportDiagnostics: onExportDiagnostics,
       ),
     ),
@@ -42,6 +46,8 @@ class _ServerSettings extends StatelessWidget {
     required this.themeMode,
     this.offlineStore,
     this.onThemeModeChanged,
+    required this.hhhEnabled,
+    this.onHhhEnabledChanged,
     this.onExportDiagnostics,
   });
 
@@ -49,6 +55,8 @@ class _ServerSettings extends StatelessWidget {
   final FundusOfflineStore? offlineStore;
   final ThemeMode themeMode;
   final ValueChanged<ThemeMode>? onThemeModeChanged;
+  final bool hhhEnabled;
+  final ValueChanged<bool>? onHhhEnabledChanged;
   final VoidCallback? onExportDiagnostics;
 
   @override
@@ -118,6 +126,17 @@ class _ServerSettings extends StatelessWidget {
                       ? null
                       : (value) => onThemeModeChanged!(value.single),
                 ),
+              ),
+              const Divider(),
+              SwitchListTile(
+                secondary: const Icon(Icons.visibility_off_outlined),
+                title: const Text('HHH-Inhalte anzeigen'),
+                subtitle: const Text(
+                  'Explizite Inhalte medienübergreifend ein- oder ausblenden. '
+                  'Der geschützte Serverfilter folgt als eigener Schritt.',
+                ),
+                value: hhhEnabled,
+                onChanged: onHhhEnabledChanged,
               ),
             ]),
             _librarySettings(context),

@@ -29,6 +29,7 @@ import 'library/work_detail_sections.dart';
 import 'library/work_content_list.dart';
 import 'library/work_annotation_list.dart';
 import 'library/zip_archive_browser.dart';
+import 'settings/hhh_content_settings.dart';
 import 'playback/fundus_player_controller.dart';
 import 'playback/track_jump_confirmation.dart';
 import 'playback/playback_conflict_settings.dart';
@@ -146,6 +147,7 @@ class _FundusAppState extends State<FundusApp> {
   Set<String> _reachableServerIds = const {};
   Set<String> _unauthorizedServerIds = const {};
   bool _loadingRemoteLibraries = false;
+  bool _showHhh = false;
   Timer? _remoteHeartbeat;
   late final AppLifecycleListener _lifecycleListener;
 
@@ -153,6 +155,7 @@ class _FundusAppState extends State<FundusApp> {
   void initState() {
     super.initState();
     _offlineStore = _deviceOfflineStore;
+    unawaited(_loadHhhVisibility());
     _peerServer = FundusPeerServerController();
     _recentStoreReady = _initializeRecentStore();
     _works = widget.initialWorks;
@@ -246,6 +249,7 @@ class _FundusAppState extends State<FundusApp> {
               offlineWorks: _offlineWorks,
               onOpenDownloads: _openOfflineMedia,
               onOpenOfflineWork: _openOfflineWork,
+              showHhh: _showHhh,
             ),
     );
   }
@@ -255,6 +259,11 @@ class _FundusAppState extends State<FundusApp> {
         ? ThemeMode.light
         : ThemeMode.dark;
   });
+
+  Future<void> _loadHhhVisibility() async {
+    final enabled = await HhhContentSettings.enabled();
+    if (mounted) setState(() => _showHhh = enabled);
+  }
 
   Future<void> _chooseLibrary({required bool create}) async {
     if (!await _ensureAndroidLibraryAccess()) return;
@@ -682,6 +691,11 @@ class _FundusAppState extends State<FundusApp> {
       offlineStore: _offlineStore,
       themeMode: _themeMode,
       onThemeModeChanged: (mode) => setState(() => _themeMode = mode),
+      hhhEnabled: _showHhh,
+      onHhhEnabledChanged: (enabled) async {
+        await HhhContentSettings.setEnabled(enabled);
+        if (mounted) setState(() => _showHhh = enabled);
+      },
       onExportDiagnostics: _library == null ? null : _exportDiagnostics,
     );
     await _loadRemoteLibraries();
@@ -1299,6 +1313,7 @@ class LibraryShell extends StatefulWidget {
     this.offlineWorks = const [],
     this.onOpenDownloads,
     this.onOpenOfflineWork,
+    this.showHhh = false,
   });
 
   final List<LibraryWorkSummary> works;
@@ -1322,6 +1337,7 @@ class LibraryShell extends StatefulWidget {
   final List<FundusOfflineWork> offlineWorks;
   final VoidCallback? onOpenDownloads;
   final OfflineWorkOpenCallback? onOpenOfflineWork;
+  final bool showHhh;
 
   @override
   State<LibraryShell> createState() => _LibraryShellState();
@@ -1373,7 +1389,7 @@ class _LibraryShellState extends State<LibraryShell> {
   List<LibraryWorkSummary> get _allWorks => [
     ...widget.works,
     for (final work in widget.offlineWorks) _offlineLibrarySummary(work),
-  ];
+  ].where((work) => widget.showHhh || !work.isHhh).toList(growable: false);
 
   List<LibraryWorkSummary> get _visibleWorks {
     final works = LibraryWorkSearch.apply(_allWorks, _query);

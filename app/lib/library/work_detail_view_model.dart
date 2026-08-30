@@ -53,6 +53,7 @@ final class WorkDetailViewModel {
       progressDuration: work.progressDuration,
       progressTrackIndex: work.progressTrackIndex,
       progressFinished: work.progressFinished,
+      contentSensitivity: work.contentSensitivity,
       tags: work.tags,
       lastListenedAt: work.lastListenedAt,
       offline: offlineAvailable,
@@ -99,6 +100,7 @@ final class WorkDetailViewModel {
             ? progressTrackIndex
             : null,
         progressFinished: progress?.finished ?? false,
+        contentSensitivity: work.contentSensitivity,
         lastListenedAt: progress?.updatedAt,
         status: work.incomplete ? 'incomplete' : 'available',
         tags: work.tags,

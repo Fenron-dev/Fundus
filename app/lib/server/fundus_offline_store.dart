@@ -49,6 +49,7 @@ final class FundusOfflineWork {
     this.publishedYear,
     this.coverPath,
     this.tags = const [],
+    this.contentSensitivity,
     this.progress,
     this.missingTrackTitles = const [],
   });
@@ -74,6 +75,7 @@ final class FundusOfflineWork {
   final int? publishedYear;
   final String? coverPath;
   final List<String> tags;
+  final String? contentSensitivity;
   final FundusRemoteProgress? progress;
   final List<String> missingTrackTitles;
 
@@ -273,6 +275,9 @@ final class FundusOfflineStore {
         tags: (value['tags'] as List? ?? const []).whereType<String>().toList(
           growable: false,
         ),
+        contentSensitivity: value['content_sensitivity'] is String
+            ? value['content_sensitivity'] as String
+            : null,
         downloadedAt:
             DateTime.tryParse('${value['downloaded_at'] ?? ''}') ??
             DateTime.fromMillisecondsSinceEpoch(0),
@@ -480,6 +485,9 @@ final class FundusOfflineStore {
         ..['description'] = work.description
         ..['publisher'] = work.publisher
         ..['published_year'] = work.publishedYear;
+      if (work.contentSensitivity != null) {
+        value['content_sensitivity'] = work.contentSensitivity;
+      }
       value['tags'] = work.tags;
       final partial = File('${manifest.path}.part');
       await partial.writeAsString(
@@ -647,6 +655,8 @@ final class FundusOfflineStore {
           if (work.publisher != null) 'publisher': work.publisher,
           if (work.publishedYear != null) 'published_year': work.publishedYear,
           'tags': work.tags,
+          if (work.contentSensitivity != null)
+            'content_sensitivity': work.contentSensitivity,
           'downloaded_at': downloadedAt.toIso8601String(),
           if (coverPath != null) 'cover_path': p.basename(coverPath),
           'tracks': [

@@ -985,6 +985,7 @@ final class FundusLibrary {
       isbn: work.isbn,
       asin: work.asin,
       explicit: work.explicit,
+      contentSensitivity: work.contentSensitivity,
       abridged: work.abridged,
       progressPosition: work.progressPosition,
       progressDuration: work.progressDuration,

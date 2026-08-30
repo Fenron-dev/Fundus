@@ -36,6 +36,7 @@ final class LibraryWorkSummary {
     this.isbn,
     this.asin,
     this.explicit,
+    this.contentSensitivity,
     this.abridged,
     this.progressPosition,
     this.progressDuration,
@@ -71,6 +72,8 @@ final class LibraryWorkSummary {
   final String? isbn;
   final String? asin;
   final bool? explicit;
+  /// Portable sensitivity classification. `adult_explicit` is rendered as HHH.
+  final String? contentSensitivity;
   final bool? abridged;
   final Duration? progressPosition;
   final Duration? progressDuration;
@@ -86,6 +89,8 @@ final class LibraryWorkSummary {
   final String? sourceLibraryName;
 
   bool get available => status == 'available';
+
+  bool get isHhh => contentSensitivity == 'adult_explicit';
 }
 
 final class WorkMetadataOrigin {
@@ -576,6 +581,9 @@ final class FundusDatabase {
             isbn: metadata['isbn'] as String?,
             asin: metadata['asin'] as String?,
             explicit: metadata['explicit'] as bool?,
+            contentSensitivity: metadata['content_sensitivity'] is String
+                ? metadata['content_sensitivity'] as String
+                : null,
             abridged: metadata['abridged'] as bool?,
             progressPosition: row['progress_kind'] == 'time'
                 ? _seconds(row['progress_position'])
