@@ -4083,12 +4083,14 @@ class _DocumentFilesPanel extends StatefulWidget {
     required this.files,
     required this.onOpen,
     required this.availability,
+    this.isVideo = false,
     this.progress,
   });
 
   final List<LibraryPlaybackTrack> files;
   final ValueChanged<LibraryPlaybackTrack> onOpen;
   final WorkContentAvailability availability;
+  final bool isVideo;
   final LibraryPlaybackProgress? progress;
 
   @override
@@ -4157,16 +4159,26 @@ class _DocumentFilesPanelState extends State<_DocumentFilesPanel> {
       ),
       children: [
         for (final file in _files)
-          WorkContentListTile(
-            item: WorkContentItemViewModel(
-              id: file.fileId,
-              title: file.title,
-              number: widget.files.indexOf(file) + 1,
-              readState: _readState(file),
-              availability: widget.availability,
-              subtitle: Text(file.relativePath),
-            ),
-            onTap: () => widget.onOpen(file),
+          Builder(
+            builder: (context) {
+              final episode = widget.isVideo
+                  ? parseVideoEpisode(file.title)
+                  : null;
+              final title = episode == null
+                  ? file.title
+                  : '${episode.label} · ${episode.title}';
+              return WorkContentListTile(
+                item: WorkContentItemViewModel(
+                  id: file.fileId,
+                  title: title,
+                  number: episode?.episode ?? widget.files.indexOf(file) + 1,
+                  readState: _readState(file),
+                  availability: widget.availability,
+                  subtitle: Text(file.relativePath),
+                ),
+                onTap: () => widget.onOpen(file),
+              );
+            },
           ),
       ],
     ),
@@ -4547,6 +4559,10 @@ class _DetailPanelState extends State<_DetailPanel> {
             ],
             _DocumentFilesPanel(
               files: workFiles,
+              isVideo:
+                  selectedWork.kind == 'movie' ||
+                  selectedWork.kind == 'tv' ||
+                  selectedWork.kind == 'video',
               progress: widget.library?.loadProgress(selectedWork.id),
               availability: !selectedWork.available
                   ? WorkContentAvailability.missing
@@ -4842,6 +4858,10 @@ class _DetailPanelState extends State<_DetailPanel> {
                   ? const Center(child: Text('Keine Dateien gefunden.'))
                   : _DocumentFilesPanel(
                       files: files,
+                      isVideo:
+                          work.kind == 'movie' ||
+                          work.kind == 'tv' ||
+                          work.kind == 'video',
                       progress: progress,
                       availability: !work.available
                           ? WorkContentAvailability.missing
@@ -5003,6 +5023,10 @@ class _DetailPanelState extends State<_DetailPanel> {
           ? const Center(child: Text('Keine Kapitel gefunden.'))
           : _DocumentFilesPanel(
               files: chapters,
+              isVideo:
+                  work.kind == 'movie' ||
+                  work.kind == 'tv' ||
+                  work.kind == 'video',
               progress: progress,
               availability: !work.available
                   ? WorkContentAvailability.missing
