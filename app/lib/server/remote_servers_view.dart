@@ -23,6 +23,7 @@ import '../library/work_detail_header.dart';
 import '../library/work_detail_sections.dart';
 import '../library/work_content_list.dart';
 import '../library/work_annotation_list.dart';
+import '../library/video_player_page.dart';
 import '../library/zip_archive_browser.dart';
 import '../playback/playback_sleep_timer_button.dart';
 import '../playback/playback_conflict_settings.dart';
@@ -47,6 +48,9 @@ enum _RemoteLibrarySection { media, playlists }
 enum _DocumentTrackSort { oldestFirst, newestFirst, titleAscending }
 
 enum _ChapterSelectionMode { range, individual }
+
+bool _isRemoteVideoWork(FundusRemoteWork work) =>
+    work.kind == 'movie' || work.kind == 'tv' || work.kind == 'video';
 
 Set<int> chapterSelectionRange({
   required int total,
@@ -1503,6 +1507,42 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     }
   }
 
+  Future<void> _playRemoteVideo(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work, {
+    FundusOfflineWork? offlineWork,
+  }) async {
+    final player =
+        _remotePlayer ??
+        FundusRemotePlayerController(
+          deviceId: await _store.deviceId(),
+          deviceName: await _store.deviceName(),
+          offlineStore: _offlineStore,
+          onConflict: (conflict) => resolvePlaybackConflict(context, conflict),
+          serverResolver: _relocatePlayerServer,
+        );
+    if (_remotePlayer == null && mounted) {
+      setState(() => _remotePlayer = player);
+    }
+    if (offlineWork != null) {
+      await player.open(server, library, work, offlineWork: offlineWork);
+    } else {
+      final result = await _runWithReconnect(
+        server,
+        (active) => _client.verifyEndpoint(active, active.baseUri),
+      );
+      await player.open(result.server, library, work);
+    }
+    if (mounted) {
+      await showFundusVideoPlayerForPlayer(
+        context,
+        player: player.player,
+        title: work.title,
+      );
+    }
+  }
+
   LibraryWorkSummary _remoteSummary(FundusRemoteWork work) {
     final server = _selectedServer;
     final library = _selectedLibrary;
@@ -2592,6 +2632,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       return;
     }
     if (action.startsWith('open:')) {
+      if (_isRemoteVideoWork(work)) {
+        await _playRemoteVideo(server, library, work, offlineWork: offlineWork);
+        return;
+      }
       final target = action.substring(5);
       final resume = target == 'resume';
       final progressFileId = documentProgressFileId ?? documentPosition?.fileId;
@@ -2648,6 +2692,20 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       return;
     }
     if (action != 'play' || !mounted) return;
+    if (_isRemoteVideoWork(work)) {
+      try {
+        await _playRemoteVideo(server, library, work, offlineWork: offlineWork);
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Video konnte nicht gestartet werden.'),
+            ),
+          );
+        }
+      }
+      return;
+    }
     final player =
         _remotePlayer ??
         FundusRemotePlayerController(

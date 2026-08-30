@@ -28,6 +28,25 @@ final class FundusRemoteChapterTarget {
   final Duration position;
 }
 
+bool _isVideoWork(FundusRemoteWork work) =>
+    work.kind == 'movie' || work.kind == 'tv' || work.kind == 'video';
+
+bool _isVideoTrack(FundusRemoteTrack track) {
+  final path = track.title.toLowerCase();
+  return const {
+    '.mp4',
+    '.m4v',
+    '.mkv',
+    '.webm',
+    '.mov',
+    '.avi',
+    '.wmv',
+    '.flv',
+    '.ts',
+    '.m2ts',
+  }.any(path.endsWith);
+}
+
 FundusRemoteChapterTarget? resolveRemoteChapterTarget(
   List<FundusRemoteTrack> tracks,
   FundusRemoteChapter chapter,
@@ -164,6 +183,9 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   List<int> _shuffleOrder = const [];
 
   FundusRemoteWork? get work => _work;
+
+  /// The media-kit player is also used by the shared fullscreen video page.
+  Player get player => _player;
   List<FundusRemoteWork> get workQueue => List.unmodifiable(_workQueue);
   int get workQueueIndex => _workQueueIndex;
   RepeatMode get repeatMode => _repeatMode;
@@ -312,7 +334,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     _activateSystemMediaSession();
     notifyListeners();
     try {
-      final List<FundusRemoteTrack> tracks;
+      List<FundusRemoteTrack> tracks;
       final List<FundusRemoteChapter> chapters;
       if (offlineWork == null) {
         final detail = await _withReconnect(
@@ -332,6 +354,11 @@ final class FundusRemotePlayerController extends ChangeNotifier {
             ),
         ];
         chapters = offlineWork.chapters;
+      }
+      if (_isVideoWork(work)) {
+        // Document works can contain a poster/cover alongside the actual
+        // media. Never put those image files into the video playlist.
+        tracks = tracks.where(_isVideoTrack).toList(growable: false);
       }
       sourceReadyMs = openStarted.elapsedMilliseconds;
       FundusRemoteProgress? localProgress;
