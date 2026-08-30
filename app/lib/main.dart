@@ -6082,6 +6082,7 @@ class _DetailPanelState extends State<_DetailPanel> {
         description: input.description,
         publisher: input.publisher,
         publishedYear: input.publishedYear,
+        contentSensitivity: input.contentSensitivity,
       );
       if (!mounted) return;
       setState(() => _editedWork = updated);
@@ -6450,6 +6451,7 @@ final class _WorkMetadataInput {
     this.description,
     this.publisher,
     this.publishedYear,
+    this.contentSensitivity,
   });
 
   final String title;
@@ -6462,6 +6464,7 @@ final class _WorkMetadataInput {
   final String? description;
   final String? publisher;
   final int? publishedYear;
+  final String? contentSensitivity;
 }
 
 class _WorkMetadataDialog extends StatefulWidget {
@@ -6484,7 +6487,10 @@ class _WorkMetadataDialogState extends State<_WorkMetadataDialog> {
   late final TextEditingController _publisher;
   late final TextEditingController _year;
   late final TextEditingController _description;
+  String _contentSensitivity = _sensitivityUnset;
   String? _error;
+
+  static const _sensitivityUnset = '__unset__';
 
   @override
   void initState() {
@@ -6504,6 +6510,14 @@ class _WorkMetadataDialogState extends State<_WorkMetadataDialog> {
     _publisher = TextEditingController(text: work.publisher ?? '');
     _year = TextEditingController(text: work.publishedYear?.toString() ?? '');
     _description = TextEditingController(text: work.description ?? '');
+    final storedSensitivity = work.contentSensitivity;
+    _contentSensitivity =
+        storedSensitivity != null &&
+            FundusDatabase.supportedContentSensitivities.contains(
+              storedSensitivity,
+            )
+        ? storedSensitivity
+        : _sensitivityUnset;
   }
 
   @override
@@ -6585,6 +6599,31 @@ class _WorkMetadataDialogState extends State<_WorkMetadataDialog> {
               originKey: 'description',
               minLines: 4,
               maxLines: 10,
+            ),
+            DropdownButtonFormField<String>(
+              initialValue: _contentSensitivity,
+              decoration: InputDecoration(
+                labelText: 'Inhaltseinstufung',
+                helperText:
+                    '„HHH“ wird medienübergreifend nur bei adult_explicit angezeigt.',
+                border: const OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: _sensitivityUnset,
+                  child: Text('Nicht klassifiziert'),
+                ),
+                DropdownMenuItem(value: 'general', child: Text('Allgemein')),
+                DropdownMenuItem(value: 'mature', child: Text('Mature')),
+                DropdownMenuItem(
+                  value: 'adult_explicit',
+                  child: Text('HHH (adult explicit)'),
+                ),
+                DropdownMenuItem(value: 'unknown', child: Text('Unbekannt')),
+              ],
+              onChanged: (value) => setState(
+                () => _contentSensitivity = value ?? _sensitivityUnset,
+              ),
             ),
             if (_error case final error?) ...[
               const SizedBox(height: 8),
@@ -6690,6 +6729,9 @@ class _WorkMetadataDialogState extends State<_WorkMetadataDialog> {
         description: _nullable(_description.text),
         publisher: _nullable(_publisher.text),
         publishedYear: year,
+        contentSensitivity: _contentSensitivity == _sensitivityUnset
+            ? null
+            : _contentSensitivity,
       ),
     );
   }
