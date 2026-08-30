@@ -164,6 +164,13 @@ Audible ist im ersten Meilenstein enthalten. Der Aufwand ist überschaubar: MyFi
 
 Aufrufe erfolgen **nur auf ausdrückliche Auslösung**, mit Host-Allowlist, HTTPS-Zwang, Zeit- und Größenlimits — nach dem Muster von MyFileSorters `providers.Registry`.
 
+Die verbindliche Anbieterabgrenzung für Video lautet: AniList für Anime und
+HHH-Anime, TMDB für normale Filme und Serien sowie TheTVDB nur als optionaler
+Episoden-/ID-Fallback. HHH ist eine appweite, serverseitig durchgesetzte
+Sensitivitätsklasse für alle Medientypen und kein bloß ausgeblendeter
+Videotab. Datenmodell, Schutzumfang, Video-MVP und Abnahmekriterien stehen in
+[Video, Anime und appweiter HHH-Schutz](KONZEPT_ERWEITERUNG_VIDEO_ANIME_UND_HHH.md).
+
 **Cover-Reihenfolge:** eingebettet → `cover.jpg` im Ordner → Sidecar → Online-Provider → vom Nutzer gesetzt. Höhere Priorität gewinnt, Nutzerauswahl immer.
 
 ### 2.4 Server und Clients
@@ -598,7 +605,8 @@ verbindliche Abgrenzung zu Kampagnenplaner und VTT steht in
 
 ## 9. Danach
 
-1. Filme/Serien/Anime, Musik
+1. Filme/Serien/Anime und appweiter HHH-Schutz gemäß
+   [Konzepterweiterung](KONZEPT_ERWEITERUNG_VIDEO_ANIME_UND_HHH.md), danach Musik
 2. Manga/Comics auf der modularen Media Engine gemäß
    [Konzepterweiterung](KONZEPT_ERWEITERUNG_MEDIA_ENGINE_UND_MANGA_READER.md)
 3. Podcasts nativ in Fundus (Feeds, Episoden, Auto-Download)

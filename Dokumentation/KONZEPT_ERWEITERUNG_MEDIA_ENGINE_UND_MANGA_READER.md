@@ -54,6 +54,11 @@ medienübergreifende Benutzer- und Sitzungslogik:
 | Image Engine | Fotos und Bildsammlungen | Galerie, Zoom, Diashow, Bildmetadaten |
 | Archive Engine | ZIP und weitere Archive | schreibgeschützte virtuelle Navigation und sichere temporäre Übergabe an passende Engines |
 
+Der konkrete Ausbau der Video Engine, die Providerwahl für Anime und normale
+Filme/Serien sowie der appweite HHH-Schutz sind in
+[Video, Anime und appweiter HHH-Schutz](KONZEPT_ERWEITERUNG_VIDEO_ANIME_UND_HHH.md)
+verbindlich festgelegt.
+
 Die Publication Engine ist selbst eine Familie aus Fixed Document Reader für
 PDF und Reflow Reader für EPUB/Webnovels. Publication- und Comic-Engine dürfen
 gemeinsame Bausteine wie Zoom, Seitencache, Bilddekodierung, Annotationen und
