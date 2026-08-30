@@ -113,6 +113,13 @@ final class DocumentImporter {
     'folder.jpeg',
     'folder.png',
     'folder.webp',
+    'poster.jpg',
+    'poster.jpeg',
+    'poster.png',
+    'poster.webp',
+    'fanart.jpg',
+    'fanart.png',
+    'fanart.webp',
   };
 
   final List<({String kind, List<String> parts})> _roots;
