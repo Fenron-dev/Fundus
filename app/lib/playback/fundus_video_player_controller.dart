@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 import '../diagnostics/fundus_diagnostics.dart';
 import 'playback_autosave_settings.dart';
@@ -15,6 +16,10 @@ import 'video_track_preferences.dart';
 /// without changing the player UI later.
 final class FundusVideoPlayerController extends ChangeNotifier {
   FundusVideoPlayerController() : _player = Player() {
+    // Attach the native video output before a medium is opened. Creating it
+    // only in the fullscreen route lets audio decode and seek correctly while
+    // the resumed video decoder has no texture to render into.
+    _videoController = VideoController(_player);
     _subscriptions.addAll([
       _player.stream.playing.listen((value) {
         _playing = value;
@@ -60,6 +65,7 @@ final class FundusVideoPlayerController extends ChangeNotifier {
   }
 
   final Player _player;
+  late final VideoController _videoController;
   final List<StreamSubscription<Object?>> _subscriptions = [];
   FundusLibrary? _library;
   LibraryWorkSummary? _work;
@@ -77,6 +83,7 @@ final class FundusVideoPlayerController extends ChangeNotifier {
   String? _error;
 
   Player get player => _player;
+  VideoController get videoController => _videoController;
   LibraryWorkSummary? get work => _work;
   List<LibraryPlaybackTrack> get tracks => List.unmodifiable(_tracks);
   LibraryPlaybackTrack? get track =>
@@ -257,7 +264,7 @@ final class FundusVideoPlayerController extends ChangeNotifier {
     );
   }
 
-  Future<void> rememberAudioLanguage(String? language) async {
+  Future<void> rememberAudioTrack(AudioTrack selected) async {
     final work = _work;
     final current = track;
     if (work == null || current == null) return;
@@ -270,13 +277,17 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       kind: work.kind,
       workId: work.id,
       fileId: current.fileId,
-      preference: preference.copyWith(audioLanguage: language),
+      preference: preference.copyWith(
+        audioLanguage: selected.language,
+        audioTrackId: selected.id,
+        audioTrackTitle: selected.title,
+      ),
     );
   }
 
   Future<void> rememberSubtitlePreference({
     required bool enabled,
-    String? language,
+    SubtitleTrack? selected,
   }) async {
     final work = _work;
     final current = track;
@@ -292,7 +303,9 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       fileId: current.fileId,
       preference: preference.copyWith(
         subtitlesEnabled: enabled,
-        subtitleLanguage: language,
+        subtitleLanguage: selected?.language,
+        subtitleTrackId: selected?.id,
+        subtitleTrackTitle: selected?.title,
       ),
     );
   }
@@ -333,45 +346,108 @@ final class FundusVideoPlayerController extends ChangeNotifier {
     // selection, while leaving the player's automatic choice as fallback.
     for (var attempt = 0; attempt < 8; attempt++) {
       final tracks = _player.state.tracks;
-      final audio = _findAudioLanguage(tracks.audio, preference.audioLanguage);
-      final subtitles = _findSubtitleLanguage(
-        tracks.subtitle,
-        preference.subtitleLanguage,
-      );
+      final audio = _findAudioTrack(tracks.audio, preference);
+      final subtitles = _findSubtitleTrack(tracks.subtitle, preference);
       if (audio != null) await _player.setAudioTrack(audio);
       if (!preference.subtitlesEnabled) {
         await _player.setSubtitleTrack(SubtitleTrack.no());
       } else if (subtitles != null) {
         await _player.setSubtitleTrack(subtitles);
       }
-      if (audio != null || subtitles != null || tracks.subtitle.isNotEmpty) {
+      final needsAudio =
+          preference.audioTrackId != null ||
+          preference.audioTrackTitle != null ||
+          preference.audioLanguage != null;
+      final needsSubtitle =
+          preference.subtitlesEnabled &&
+          (preference.subtitleTrackId != null ||
+              preference.subtitleTrackTitle != null ||
+              preference.subtitleLanguage != null);
+      if ((!needsAudio || audio != null) &&
+          (!needsSubtitle || subtitles != null)) {
+        unawaited(
+          FundusDiagnostics.instance.record('video.track_preferences_applied', {
+            'work_id': _work?.id,
+            'file_id': track?.fileId,
+            'audio_language': audio?.language,
+            'audio_track_id': audio?.id,
+            'subtitle_language': subtitles?.language,
+            'subtitle_track_id': subtitles?.id,
+            'subtitles_enabled': preference.subtitlesEnabled,
+          }),
+        );
         return;
       }
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
   }
 
-  AudioTrack? _findAudioLanguage(List<AudioTrack> tracks, String? language) {
-    if (language == null || language.isEmpty) return null;
-    final normalized = language.toLowerCase().split('-').first;
+  AudioTrack? _findAudioTrack(
+    List<AudioTrack> tracks,
+    VideoTrackPreference preference,
+  ) {
     for (final item in tracks) {
-      final value = (item.language ?? '').toLowerCase().split('-').first;
+      if (preference.audioTrackId != null &&
+          item.id == preference.audioTrackId) {
+        return item;
+      }
+    }
+    final wantedTitle = _normalizeTitle(preference.audioTrackTitle);
+    if (wantedTitle != null) {
+      for (final item in tracks) {
+        if (_normalizeTitle(item.title) == wantedTitle) return item;
+      }
+    }
+    final normalized = _canonicalLanguage(preference.audioLanguage);
+    if (normalized == null) return null;
+    for (final item in tracks) {
+      final value = _canonicalLanguage(item.language);
       if (value == normalized) return item;
     }
     return null;
   }
 
-  SubtitleTrack? _findSubtitleLanguage(
+  SubtitleTrack? _findSubtitleTrack(
     List<SubtitleTrack> tracks,
-    String? language,
+    VideoTrackPreference preference,
   ) {
-    if (language == null || language.isEmpty) return null;
-    final normalized = language.toLowerCase().split('-').first;
     for (final item in tracks) {
-      final value = (item.language ?? '').toLowerCase().split('-').first;
+      if (preference.subtitleTrackId != null &&
+          item.id == preference.subtitleTrackId) {
+        return item;
+      }
+    }
+    final wantedTitle = _normalizeTitle(preference.subtitleTrackTitle);
+    if (wantedTitle != null) {
+      for (final item in tracks) {
+        if (_normalizeTitle(item.title) == wantedTitle) return item;
+      }
+    }
+    final normalized = _canonicalLanguage(preference.subtitleLanguage);
+    if (normalized == null) return null;
+    for (final item in tracks) {
+      final value = _canonicalLanguage(item.language);
       if (value == normalized) return item;
     }
     return null;
+  }
+
+  static String? _normalizeTitle(String? value) {
+    final normalized = value?.trim().toLowerCase();
+    return normalized == null || normalized.isEmpty ? null : normalized;
+  }
+
+  static String? _canonicalLanguage(String? value) {
+    final normalized = value?.trim().toLowerCase().split(RegExp('[-_]')).first;
+    if (normalized == null || normalized.isEmpty || normalized == 'und') {
+      return null;
+    }
+    return switch (normalized) {
+      'de' || 'deu' || 'ger' || 'deutsch' || 'german' => 'de',
+      'en' || 'eng' || 'english' => 'en',
+      'ja' || 'jpn' || 'jp' || 'japanese' => 'ja',
+      _ => normalized,
+    };
   }
 
   @override

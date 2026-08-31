@@ -11,31 +11,57 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 final class VideoTrackPreference {
   const VideoTrackPreference({
     this.audioLanguage,
+    this.audioTrackId,
+    this.audioTrackTitle,
     this.subtitleLanguage,
+    this.subtitleTrackId,
+    this.subtitleTrackTitle,
     this.subtitlesEnabled = false,
   });
 
   final String? audioLanguage;
+  final String? audioTrackId;
+  final String? audioTrackTitle;
   final String? subtitleLanguage;
+  final String? subtitleTrackId;
+  final String? subtitleTrackTitle;
   final bool subtitlesEnabled;
 
   VideoTrackPreference copyWith({
     String? audioLanguage,
+    String? audioTrackId,
+    String? audioTrackTitle,
     String? subtitleLanguage,
+    String? subtitleTrackId,
+    String? subtitleTrackTitle,
     bool? subtitlesEnabled,
     bool clearAudio = false,
     bool clearSubtitleLanguage = false,
   }) => VideoTrackPreference(
     audioLanguage: clearAudio ? null : audioLanguage ?? this.audioLanguage,
+    audioTrackId: clearAudio ? null : audioTrackId ?? this.audioTrackId,
+    audioTrackTitle: clearAudio
+        ? null
+        : audioTrackTitle ?? this.audioTrackTitle,
     subtitleLanguage: clearSubtitleLanguage
         ? null
         : subtitleLanguage ?? this.subtitleLanguage,
+    subtitleTrackId: clearSubtitleLanguage
+        ? null
+        : subtitleTrackId ?? this.subtitleTrackId,
+    subtitleTrackTitle: clearSubtitleLanguage
+        ? null
+        : subtitleTrackTitle ?? this.subtitleTrackTitle,
     subtitlesEnabled: subtitlesEnabled ?? this.subtitlesEnabled,
   );
 
   Map<String, Object?> toJson() => {
     if (audioLanguage != null) 'audio_language': audioLanguage,
+    if (audioTrackId != null) 'audio_track_id': audioTrackId,
+    if (audioTrackTitle != null) 'audio_track_title': audioTrackTitle,
     if (subtitleLanguage != null) 'subtitle_language': subtitleLanguage,
+    if (subtitleTrackId != null) 'subtitle_track_id': subtitleTrackId,
+    if (subtitleTrackTitle != null) 'subtitle_track_title': subtitleTrackTitle,
     'subtitles_enabled': subtitlesEnabled,
   };
 
@@ -43,7 +69,11 @@ final class VideoTrackPreference {
     if (value is! Map) return const VideoTrackPreference();
     return VideoTrackPreference(
       audioLanguage: value['audio_language'] as String?,
+      audioTrackId: value['audio_track_id'] as String?,
+      audioTrackTitle: value['audio_track_title'] as String?,
       subtitleLanguage: value['subtitle_language'] as String?,
+      subtitleTrackId: value['subtitle_track_id'] as String?,
+      subtitleTrackTitle: value['subtitle_track_title'] as String?,
       subtitlesEnabled: value['subtitles_enabled'] == true,
     );
   }
@@ -68,8 +98,13 @@ abstract final class VideoTrackPreferences {
       if (preference == null) continue;
       result = VideoTrackPreference(
         audioLanguage: preference.audioLanguage ?? result.audioLanguage,
+        audioTrackId: preference.audioTrackId ?? result.audioTrackId,
+        audioTrackTitle: preference.audioTrackTitle ?? result.audioTrackTitle,
         subtitleLanguage:
             preference.subtitleLanguage ?? result.subtitleLanguage,
+        subtitleTrackId: preference.subtitleTrackId ?? result.subtitleTrackId,
+        subtitleTrackTitle:
+            preference.subtitleTrackTitle ?? result.subtitleTrackTitle,
         subtitlesEnabled: preference.subtitlesEnabled,
       );
     }

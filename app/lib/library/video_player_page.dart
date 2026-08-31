@@ -15,6 +15,7 @@ Future<void> showFundusVideoPlayer(
 }) => showFundusVideoPlayerForPlayer(
   context,
   player: controller.player,
+  videoController: controller.videoController,
   fundusController: controller,
   title: controller.work?.title ?? 'Video',
   initialPosition: controller.position,
@@ -23,17 +24,24 @@ Future<void> showFundusVideoPlayer(
 Future<void> showFundusVideoPlayerForPlayer(
   BuildContext context, {
   required Player player,
+  required VideoController videoController,
   required String title,
   FundusVideoPlayerController? fundusController,
   Duration? initialPosition,
+  Future<void> Function(AudioTrack track)? onAudioTrackSelected,
+  Future<void> Function(bool enabled, SubtitleTrack? track)?
+  onSubtitleTrackSelected,
 }) => Navigator.of(context).push<void>(
   MaterialPageRoute(
     fullscreenDialog: true,
     builder: (context) => _FundusVideoPlayerPage(
       player: player,
+      videoController: videoController,
       title: title,
       fundusController: fundusController,
       initialPosition: initialPosition,
+      onAudioTrackSelected: onAudioTrackSelected,
+      onSubtitleTrackSelected: onSubtitleTrackSelected,
     ),
   ),
 );
@@ -41,28 +49,32 @@ Future<void> showFundusVideoPlayerForPlayer(
 final class _FundusVideoPlayerPage extends StatefulWidget {
   const _FundusVideoPlayerPage({
     required this.player,
+    required this.videoController,
     required this.title,
     this.fundusController,
     this.initialPosition,
+    this.onAudioTrackSelected,
+    this.onSubtitleTrackSelected,
   });
   final Player player;
+  final VideoController videoController;
   final String title;
   final FundusVideoPlayerController? fundusController;
   final Duration? initialPosition;
+  final Future<void> Function(AudioTrack track)? onAudioTrackSelected;
+  final Future<void> Function(bool enabled, SubtitleTrack? track)?
+  onSubtitleTrackSelected;
   @override
   State<_FundusVideoPlayerPage> createState() => _FundusVideoPlayerPageState();
 }
 
 final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
-  late final VideoController _videoController;
-
   @override
   void initState() {
     super.initState();
     final wasPlaying = widget.player.state.playing;
     final initialPosition =
         widget.initialPosition ?? widget.player.state.position;
-    _videoController = VideoController(widget.player);
     // The native texture is not attached during initState. Starting or
     // seeking a resumed player here can leave the audio decoder at the right
     // timestamp while the video output stays black. Defer the hand-off until
@@ -91,7 +103,7 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
     // produced its first frame. Waiting for it is more reliable than a fixed
     // delay (especially for remote streams and hardware decoders).
     try {
-      await _videoController.waitUntilFirstFrameRendered.timeout(
+      await widget.videoController.waitUntilFirstFrameRendered.timeout(
         const Duration(seconds: 5),
       );
     } on TimeoutException {
@@ -134,7 +146,7 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
       child: AspectRatio(
         aspectRatio: 16 / 9,
         child: Video(
-          controller: _videoController,
+          controller: widget.videoController,
           fit: BoxFit.contain,
           controls: AdaptiveVideoControls,
         ),
@@ -160,9 +172,8 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
                   subtitle: Text(track.language ?? ''),
                   onTap: () async {
                     await widget.player.setAudioTrack(track);
-                    await widget.fundusController?.rememberAudioLanguage(
-                      track.language,
-                    );
+                    await widget.fundusController?.rememberAudioTrack(track);
+                    await widget.onAudioTrackSelected?.call(track);
                     if (context.mounted) Navigator.pop(context);
                   },
                 ),
@@ -177,6 +188,7 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
                   await widget.fundusController?.rememberSubtitlePreference(
                     enabled: false,
                   );
+                  await widget.onSubtitleTrackSelected?.call(false, null);
                   if (context.mounted) Navigator.pop(context);
                 },
               ),
@@ -189,8 +201,9 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
                     await widget.player.setSubtitleTrack(track);
                     await widget.fundusController?.rememberSubtitlePreference(
                       enabled: true,
-                      language: track.language,
+                      selected: track,
                     );
+                    await widget.onSubtitleTrackSelected?.call(true, track);
                     if (context.mounted) Navigator.pop(context);
                   },
                 ),

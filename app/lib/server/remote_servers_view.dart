@@ -1561,7 +1561,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       await showFundusVideoPlayerForPlayer(
         context,
         player: player.player,
+        videoController: player.videoController,
         title: work.title,
+        onAudioTrackSelected: player.rememberVideoAudioTrack,
+        onSubtitleTrackSelected: player.rememberVideoSubtitleTrack,
       );
     }
   }

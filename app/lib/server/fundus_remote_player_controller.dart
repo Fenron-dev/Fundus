@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 import '../diagnostics/fundus_diagnostics.dart';
 import '../playback/playback_sleep_timer.dart';
@@ -12,6 +13,7 @@ import '../playback/playback_shake_restart.dart';
 import '../playback/playback_conflict_settings.dart';
 import '../playback/playback_autosave_settings.dart';
 import '../playback/fundus_system_media_session.dart';
+import '../playback/video_track_preferences.dart';
 import 'fundus_remote_client.dart';
 import 'fundus_remote_stream_proxy.dart';
 import 'fundus_offline_store.dart';
@@ -76,6 +78,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   }) : _client = client,
        _offlineStore = offlineStore ?? FundusOfflineStore(),
        _player = Player() {
+    _videoController = VideoController(_player);
     _sleepTimer = PlaybackSleepTimer(onElapsed: _pauseForSleepTimer);
     _sleepTimer.addListener(notifyListeners);
     _shakeRestart = PlaybackShakeRestartController(
@@ -155,6 +158,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   final PlaybackConflictResolver? onConflict;
   final FundusRemoteServerResolver? serverResolver;
   final Player _player;
+  late final VideoController _videoController;
   late final PlaybackSleepTimer _sleepTimer;
   late final PlaybackShakeRestartController _shakeRestart;
   final List<StreamSubscription<Object?>> _subscriptions = [];
@@ -191,6 +195,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
 
   /// The media-kit player is also used by the shared fullscreen video page.
   Player get player => _player;
+  VideoController get videoController => _videoController;
   List<FundusRemoteWork> get workQueue => List.unmodifiable(_workQueue);
   int get workQueueIndex => _workQueueIndex;
   RepeatMode get repeatMode => _repeatMode;
@@ -529,6 +534,14 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       _lastPersistedAt = DateTime.now();
       notifyListeners();
       await _player.play();
+      if (_isVideoWork(work)) {
+        final preference = await VideoTrackPreferences.load(
+          kind: work.kind,
+          workId: work.id,
+          fileId: track?.id,
+        );
+        await _applyVideoTrackPreference(preference);
+      }
       final resumePosition = startPosition ?? progress?.position;
       if (resumePosition != null &&
           !(progress?.finished ?? false) &&
@@ -1151,6 +1164,148 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       if ((actual - target).abs() <= const Duration(seconds: 2)) return actual;
     }
     throw StateError('Fortsetzungsposition konnte nicht gesetzt werden.');
+  }
+
+  Future<void> rememberVideoAudioTrack(AudioTrack selected) async {
+    final work = _work;
+    final current = track;
+    if (work == null || current == null) return;
+    final preference = await VideoTrackPreferences.load(
+      kind: work.kind,
+      workId: work.id,
+      fileId: current.id,
+    );
+    await VideoTrackPreferences.save(
+      kind: work.kind,
+      workId: work.id,
+      fileId: current.id,
+      preference: preference.copyWith(
+        audioLanguage: selected.language,
+        audioTrackId: selected.id,
+        audioTrackTitle: selected.title,
+      ),
+    );
+  }
+
+  Future<void> rememberVideoSubtitleTrack(
+    bool enabled,
+    SubtitleTrack? selected,
+  ) async {
+    final work = _work;
+    final current = track;
+    if (work == null || current == null) return;
+    final preference = await VideoTrackPreferences.load(
+      kind: work.kind,
+      workId: work.id,
+      fileId: current.id,
+    );
+    await VideoTrackPreferences.save(
+      kind: work.kind,
+      workId: work.id,
+      fileId: current.id,
+      preference: preference.copyWith(
+        subtitlesEnabled: enabled,
+        subtitleLanguage: selected?.language,
+        subtitleTrackId: selected?.id,
+        subtitleTrackTitle: selected?.title,
+      ),
+    );
+  }
+
+  Future<void> _applyVideoTrackPreference(
+    VideoTrackPreference preference,
+  ) async {
+    for (var attempt = 0; attempt < 8; attempt++) {
+      final tracks = _player.state.tracks;
+      final audio = _findAudioTrack(tracks.audio, preference);
+      final subtitle = _findSubtitleTrack(tracks.subtitle, preference);
+      if (audio != null) await _player.setAudioTrack(audio);
+      if (!preference.subtitlesEnabled) {
+        await _player.setSubtitleTrack(SubtitleTrack.no());
+      } else if (subtitle != null) {
+        await _player.setSubtitleTrack(subtitle);
+      }
+      final needsAudio =
+          preference.audioTrackId != null ||
+          preference.audioTrackTitle != null ||
+          preference.audioLanguage != null;
+      final needsSubtitle =
+          preference.subtitlesEnabled &&
+          (preference.subtitleTrackId != null ||
+              preference.subtitleTrackTitle != null ||
+              preference.subtitleLanguage != null);
+      if ((!needsAudio || audio != null) &&
+          (!needsSubtitle || subtitle != null)) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+  }
+
+  AudioTrack? _findAudioTrack(
+    List<AudioTrack> tracks,
+    VideoTrackPreference preference,
+  ) {
+    for (final item in tracks) {
+      if (preference.audioTrackId != null &&
+          item.id == preference.audioTrackId) {
+        return item;
+      }
+    }
+    final wantedTitle = _normalizeTrackTitle(preference.audioTrackTitle);
+    if (wantedTitle != null) {
+      for (final item in tracks) {
+        if (_normalizeTrackTitle(item.title) == wantedTitle) return item;
+      }
+    }
+    final wantedLanguage = _canonicalTrackLanguage(preference.audioLanguage);
+    if (wantedLanguage == null) return null;
+    for (final item in tracks) {
+      if (_canonicalTrackLanguage(item.language) == wantedLanguage) return item;
+    }
+    return null;
+  }
+
+  SubtitleTrack? _findSubtitleTrack(
+    List<SubtitleTrack> tracks,
+    VideoTrackPreference preference,
+  ) {
+    for (final item in tracks) {
+      if (preference.subtitleTrackId != null &&
+          item.id == preference.subtitleTrackId) {
+        return item;
+      }
+    }
+    final wantedTitle = _normalizeTrackTitle(preference.subtitleTrackTitle);
+    if (wantedTitle != null) {
+      for (final item in tracks) {
+        if (_normalizeTrackTitle(item.title) == wantedTitle) return item;
+      }
+    }
+    final wantedLanguage = _canonicalTrackLanguage(preference.subtitleLanguage);
+    if (wantedLanguage == null) return null;
+    for (final item in tracks) {
+      if (_canonicalTrackLanguage(item.language) == wantedLanguage) return item;
+    }
+    return null;
+  }
+
+  static String? _normalizeTrackTitle(String? value) {
+    final normalized = value?.trim().toLowerCase();
+    return normalized == null || normalized.isEmpty ? null : normalized;
+  }
+
+  static String? _canonicalTrackLanguage(String? value) {
+    final normalized = value?.trim().toLowerCase().split(RegExp('[-_]')).first;
+    if (normalized == null || normalized.isEmpty || normalized == 'und') {
+      return null;
+    }
+    return switch (normalized) {
+      'de' || 'deu' || 'ger' || 'deutsch' || 'german' => 'de',
+      'en' || 'eng' || 'english' => 'en',
+      'ja' || 'jpn' || 'jp' || 'japanese' => 'ja',
+      _ => normalized,
+    };
   }
 
   Future<void> _pauseForSleepTimer() async {
