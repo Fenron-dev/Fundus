@@ -656,6 +656,7 @@ class _FundusAppState extends State<FundusApp> {
       initialLibraryId: choice.library.libraryId,
       peerServer: _peerServer,
       offlineStore: _offlineStore,
+      showHhh: _showHhh,
     );
     await _loadRemoteLibraries();
   }
@@ -667,6 +668,7 @@ class _FundusAppState extends State<FundusApp> {
       dialogContext,
       peerServer: _peerServer,
       offlineStore: _offlineStore,
+      showHhh: _showHhh,
     );
     await _loadRemoteLibraries();
   }
@@ -680,6 +682,7 @@ class _FundusAppState extends State<FundusApp> {
       offlineStore: _offlineStore,
       initialOfflineWork: work,
       closeAfterInitialOfflineWork: true,
+      showHhh: _showHhh,
     );
     await _loadRemoteLibraries();
   }

@@ -277,6 +277,8 @@ final class FundusRemoteWork {
   final List<String> tags;
   final DateTime? addedAt;
   final DateTime? lastListenedAt;
+
+  bool get isHhh => contentSensitivity == 'adult_explicit';
 }
 
 final class FundusRemoteTrack {

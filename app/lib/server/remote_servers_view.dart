@@ -104,6 +104,7 @@ Future<void> showFundusRemoteServers(
   FundusOfflineStore? offlineStore,
   FundusOfflineWork? initialOfflineWork,
   bool closeAfterInitialOfflineWork = false,
+  bool showHhh = false,
 }) => Navigator.of(context).push(
   MaterialPageRoute<void>(
     builder: (_) => FundusRemoteServersView(
@@ -113,6 +114,7 @@ Future<void> showFundusRemoteServers(
       offlineStore: offlineStore,
       initialOfflineWork: initialOfflineWork,
       closeAfterInitialOfflineWork: closeAfterInitialOfflineWork,
+      showHhh: showHhh,
     ),
   ),
 );
@@ -126,6 +128,7 @@ class FundusRemoteServersView extends StatefulWidget {
     this.offlineStore,
     this.initialOfflineWork,
     this.closeAfterInitialOfflineWork = false,
+    this.showHhh = false,
   });
 
   final String? initialServerId;
@@ -134,6 +137,7 @@ class FundusRemoteServersView extends StatefulWidget {
   final FundusOfflineStore? offlineStore;
   final FundusOfflineWork? initialOfflineWork;
   final bool closeAfterInitialOfflineWork;
+  final bool showHhh;
 
   @override
   State<FundusRemoteServersView> createState() =>
@@ -181,6 +185,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   bool _serverOnline = false;
   bool _authorizationRequired = false;
 
+  List<FundusRemoteWork> _visibleWorks(Iterable<FundusRemoteWork> works) =>
+      widget.showHhh
+      ? works.toList(growable: false)
+      : works.where((work) => !work.isHhh).toList(growable: false);
+
   @override
   void initState() {
     super.initState();
@@ -214,7 +223,14 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       if (!mounted) return;
       setState(() {
         _servers = servers;
-        _offlineWorks = offlineWorks;
+        _offlineWorks = widget.showHhh
+            ? offlineWorks
+            : offlineWorks
+                  .where((work) {
+                    final sensitivity = work.contentSensitivity;
+                    return sensitivity != 'adult_explicit';
+                  })
+                  .toList(growable: false);
         _offlineKeys.addAll(
           offlineWorks.map(
             (work) => '${work.serverId}/${work.libraryId}/${work.workId}',
@@ -491,7 +507,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         ),
       );
       final activeServer = result.server;
-      final works = result.value.works;
+      final works = _visibleWorks(result.value.works);
       final playlists = result.value.playlists;
       final views = result.value.views;
       final offline = await Future.wait([
@@ -1951,6 +1967,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     FundusRemoteWork work, {
     bool forceOffline = false,
   }) async {
+    if (!widget.showHhh && work.isHhh) return;
     final pageContext = context;
     final mobilePublicationLayout = MediaQuery.sizeOf(pageContext).width < 760;
     final key = _offlineKey(server, library, work);
@@ -2480,7 +2497,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         if (mounted) {
           setState(() {
             _selectedServer = result.server;
-            _works = result.value;
+            _works = _visibleWorks(result.value);
           });
         }
       } catch (_) {}
