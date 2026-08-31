@@ -1430,6 +1430,13 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
 
   Widget _remotePlaylistsView(FundusRemoteLibrary library) {
     final server = _selectedServer!;
+    final visibleWorkIds = _works.map((work) => work.id).toSet();
+    final playlists = _playlists
+        .where(
+          (playlist) =>
+              widget.showHhh || playlist.workIds.every(visibleWorkIds.contains),
+        )
+        .toList(growable: false);
     return ListView(
       padding: const EdgeInsets.only(bottom: 16),
       children: [
@@ -1438,10 +1445,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             onPressed: () => setState(() => _selectedLibrary = null),
           ),
           title: Text(library.name),
-          subtitle: Text('${_playlists.length} Playlist(en)'),
+          subtitle: Text('${playlists.length} Playlist(en)'),
         ),
         _librarySectionSelector(),
-        if (_playlists.isEmpty)
+        if (playlists.isEmpty)
           const Padding(
             padding: EdgeInsets.all(32),
             child: Center(
@@ -1451,7 +1458,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
               ),
             ),
           ),
-        for (final playlist in _playlists)
+        for (final playlist in playlists)
           Card(
             margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
             child: ListTile(
