@@ -11,6 +11,7 @@ final class FundusPairedDevice {
     required this.tokenHash,
     required this.pairedAt,
     this.lastSeenAt,
+    this.allowAdultExplicit = false,
   });
 
   final String id;
@@ -18,6 +19,7 @@ final class FundusPairedDevice {
   final String tokenHash;
   final DateTime pairedAt;
   final DateTime? lastSeenAt;
+  final bool allowAdultExplicit;
 
   Map<String, Object?> toJson() => {
     'id': id,
@@ -26,6 +28,7 @@ final class FundusPairedDevice {
     'paired_at': pairedAt.toUtc().toIso8601String(),
     if (lastSeenAt != null)
       'last_seen_at': lastSeenAt!.toUtc().toIso8601String(),
+    'allow_adult_explicit': allowAdultExplicit,
   };
 
   static FundusPairedDevice? fromJson(Object? value) {
@@ -47,6 +50,7 @@ final class FundusPairedDevice {
       tokenHash: hash,
       pairedAt: pairedAt,
       lastSeenAt: lastSeenAt,
+      allowAdultExplicit: value['allow_adult_explicit'] == true,
     );
   }
 }
@@ -208,6 +212,7 @@ final class FundusPairingAuthority {
       tokenHash: device.tokenHash,
       pairedAt: device.pairedAt,
       lastSeenAt: now,
+      allowAdultExplicit: device.allowAdultExplicit,
     );
     final callback = onChanged;
     if (callback != null) unawaited(callback(devices));
@@ -227,9 +232,27 @@ final class FundusPairingAuthority {
       tokenHash: current.tokenHash,
       pairedAt: current.pairedAt,
       lastSeenAt: current.lastSeenAt,
+      allowAdultExplicit: current.allowAdultExplicit,
     );
     await _notifyChanged();
   }
+
+  Future<void> setAdultExplicitAllowed(String deviceId, bool allowed) async {
+    final current = _devices[deviceId];
+    if (current == null || current.allowAdultExplicit == allowed) return;
+    _devices[deviceId] = FundusPairedDevice(
+      id: current.id,
+      name: current.name,
+      tokenHash: current.tokenHash,
+      pairedAt: current.pairedAt,
+      lastSeenAt: current.lastSeenAt,
+      allowAdultExplicit: allowed,
+    );
+    await _notifyChanged();
+  }
+
+  bool adultExplicitAllowed(String deviceId) =>
+      _devices[deviceId]?.allowAdultExplicit ?? false;
 
   Future<void> _notifyChanged() async {
     final callback = onChanged;

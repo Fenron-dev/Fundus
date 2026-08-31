@@ -115,6 +115,9 @@ void main() {
     expect(authority.devices.single.tokenHash, isNot(deviceToken));
     await authority.rename('phone-1', 'Privates Telefon');
     expect(authority.devices.single.name, 'Privates Telefon');
+    expect(authority.devices.single.allowAdultExplicit, isFalse);
+    await authority.setAdultExplicitAllowed('phone-1', true);
+    expect(authority.devices.single.allowAdultExplicit, isTrue);
 
     final accepted = await pairedServer.handler(
       Request(

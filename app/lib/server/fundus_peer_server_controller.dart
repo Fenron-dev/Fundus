@@ -177,6 +177,14 @@ final class FundusPeerServerController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setDeviceAdultExplicitAllowed(
+    String deviceId,
+    bool allowed,
+  ) async {
+    await _pairingAuthority?.setAdultExplicitAllowed(deviceId, allowed);
+    notifyListeners();
+  }
+
   Future<void> renamePairedDevice(String deviceId, String name) async {
     await _pairingAuthority?.rename(deviceId, name);
     notifyListeners();

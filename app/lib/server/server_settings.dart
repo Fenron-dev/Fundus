@@ -643,7 +643,27 @@ class _ServerSettings extends StatelessWidget {
                   title: Text(device.name),
                   subtitle: Text(_devicePresenceLabel(context, device)),
                   trailing: Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
+                      Tooltip(
+                        message: 'HHH-Inhalte für dieses Gerät freigeben',
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('HHH'),
+                            Switch.adaptive(
+                              value: device.allowAdultExplicit,
+                              onChanged: controller.isBusy
+                                  ? null
+                                  : (value) => controller
+                                        .setDeviceAdultExplicitAllowed(
+                                          device.id,
+                                          value,
+                                        ),
+                            ),
+                          ],
+                        ),
+                      ),
                       IconButton(
                         onPressed: () => _renamePairedDevice(
                           context,

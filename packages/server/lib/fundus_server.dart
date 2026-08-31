@@ -291,7 +291,10 @@ final class FundusServerHandler {
   });
 
   Response _libraries(Request request) => _json({
-    'libraries': [for (final entry in registry.libraries) _libraryJson(entry)],
+    'libraries': [
+      for (final entry in registry.libraries)
+        _libraryJson(entry, includeAdultExplicit: _canViewAdult(request)),
+    ],
   });
 
   Response _works(Request request, String libraryId) {
@@ -301,12 +304,13 @@ final class FundusServerHandler {
       'library_id': libraryId,
       'works': [
         for (final work in entry.works)
-          {
-            ..._workJson(work),
-            'cover_url': work.coverPath == null
-                ? null
-                : '/v1/libraries/$libraryId/works/${work.id}/cover',
-          },
+          if (_canViewWork(request, work))
+            {
+              ..._workJson(work),
+              'cover_url': work.coverPath == null
+                  ? null
+                  : '/v1/libraries/$libraryId/works/${work.id}/cover',
+            },
       ],
     });
   }
@@ -320,6 +324,7 @@ final class FundusServerHandler {
     if (entry == null) return _notFound('library_not_found');
     final work = entry.findWork(workId);
     if (work == null) return _notFound('work_not_found');
+    if (!_canViewWork(request, work)) return _notFound('work_not_found');
     final chapters = work.kind == 'audiobook'
         ? await entry.library.playbackChapters(workId)
         : const <LibraryPlaybackChapter>[];
@@ -342,6 +347,7 @@ final class FundusServerHandler {
     if (entry == null) return _notFound('library_not_found');
     final work = entry.findWork(workId);
     if (work == null) return _notFound('work_not_found');
+    if (!_canViewWork(request, work)) return _notFound('cover_not_found');
     final path = work.coverPath;
     if (path == null) return _notFound('cover_not_found');
     return _serveFile(request, File(path), resourceId: 'cover-$workId');
@@ -352,6 +358,8 @@ final class FundusServerHandler {
     if (entry == null) return _notFound('library_not_found');
     final located = entry.findTrack(fileId);
     if (located == null) return _notFound('file_not_found');
+    if (!_canViewWork(request, located.work))
+      return _notFound('file_not_found');
     return _json({
       ..._trackJson(located.track),
       'work_id': located.work.id,
@@ -368,6 +376,8 @@ final class FundusServerHandler {
     if (entry == null) return _notFound('library_not_found');
     final located = entry.findTrack(fileId);
     if (located == null) return _notFound('file_not_found');
+    if (!_canViewWork(request, located.work))
+      return _notFound('file_not_found');
     return _serveFile(
       request,
       File(located.track.absolutePath),
@@ -382,6 +392,8 @@ final class FundusServerHandler {
   ) async {
     final located = _comicTrack(libraryId, fileId);
     if (located == null) return _notFound('file_not_found');
+    if (!_canViewWork(request, located.work))
+      return _notFound('file_not_found');
     try {
       final manifest = await _comicManifest(File(located.track.absolutePath));
       return _json({
@@ -415,6 +427,8 @@ final class FundusServerHandler {
   ) async {
     final located = _comicTrack(libraryId, fileId);
     if (located == null) return _notFound('file_not_found');
+    if (!_canViewWork(request, located.work))
+      return _notFound('file_not_found');
     final index = int.tryParse(pageIndex);
     if (index == null || index < 0) return _badRequest('invalid_page_index');
     try {
@@ -481,7 +495,8 @@ final class FundusServerHandler {
       'library_id': libraryId,
       'playlists': [
         for (final playlist in entry.library.listPlaylists())
-          _playlistJson(playlist),
+          if (_canViewPlaylist(request, entry, playlist))
+            _playlistJson(playlist),
       ],
     });
   }
@@ -491,6 +506,9 @@ final class FundusServerHandler {
     if (entry == null) return _notFound('library_not_found');
     final playlist = entry.library.loadPlaylist(playlistId);
     if (playlist == null) return _notFound('playlist_not_found');
+    if (!_canViewPlaylist(request, entry, playlist)) {
+      return _notFound('playlist_not_found');
+    }
     return _json(_playlistJson(playlist));
   }
 
@@ -504,6 +522,9 @@ final class FundusServerHandler {
     if (decoded == null) return _badRequest('invalid_json');
     final values = _playlistValues(entry.library, decoded);
     if (values == null) return _badRequest('invalid_playlist');
+    if (!_canViewWorkIds(request, entry, values.workIds)) {
+      return _badRequest('work_not_found');
+    }
     final playlist = entry.library.savePlaylist(
       name: values.name,
       mediaType: values.mediaType,
@@ -524,6 +545,9 @@ final class FundusServerHandler {
     }
     final current = entry.library.loadPlaylist(playlistId);
     if (current == null) return _notFound('playlist_not_found');
+    if (!_canViewPlaylist(request, entry, current)) {
+      return _notFound('playlist_not_found');
+    }
     final decoded = await _readJson(request);
     if (decoded == null) return _badRequest('invalid_json');
     final expectedRevision = decoded['expected_revision'];
@@ -531,13 +555,21 @@ final class FundusServerHandler {
       return _badRequest('invalid_playlist_revision');
     }
     if (expectedRevision != current.revision) {
+      final visibleCurrent = _canViewPlaylist(request, entry, current)
+          ? current
+          : null;
       return _json({
         'error': 'playlist_conflict',
-        'playlist': _playlistJson(current),
+        'playlist': visibleCurrent == null
+            ? null
+            : _playlistJson(visibleCurrent),
       }, statusCode: HttpStatus.conflict);
     }
     final values = _playlistValues(entry.library, decoded);
     if (values == null) return _badRequest('invalid_playlist');
+    if (!_canViewWorkIds(request, entry, values.workIds)) {
+      return _badRequest('work_not_found');
+    }
     final playlist = entry.library.savePlaylist(
       playlistId: playlistId,
       name: values.name,
@@ -559,6 +591,9 @@ final class FundusServerHandler {
     }
     final current = entry.library.loadPlaylist(playlistId);
     if (current == null) return _notFound('playlist_not_found');
+    if (!_canViewPlaylist(request, entry, current)) {
+      return _notFound('playlist_not_found');
+    }
     final expectedRevision = int.tryParse(
       request.url.queryParameters['expected_revision'] ?? '',
     );
@@ -566,9 +601,14 @@ final class FundusServerHandler {
       return _badRequest('invalid_playlist_revision');
     }
     if (expectedRevision != current.revision) {
+      final visibleCurrent = _canViewPlaylist(request, entry, current)
+          ? current
+          : null;
       return _json({
         'error': 'playlist_conflict',
-        'playlist': _playlistJson(current),
+        'playlist': visibleCurrent == null
+            ? null
+            : _playlistJson(visibleCurrent),
       }, statusCode: HttpStatus.conflict);
     }
     entry.library.deletePlaylist(playlistId);
@@ -579,9 +619,15 @@ final class FundusServerHandler {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
     final session = entry.library.latestPlaybackSession();
+    final visibleSession =
+        session != null && _canViewPlaybackSession(request, entry, session)
+        ? session
+        : null;
     return _json({
       'library_id': libraryId,
-      'session': session == null ? null : _playbackSessionJson(session),
+      'session': visibleSession == null
+          ? null
+          : _playbackSessionJson(visibleSession),
     });
   }
 
@@ -602,13 +648,22 @@ final class FundusServerHandler {
     }
     final current = entry.library.latestPlaybackSession();
     if (expectedRevision != (current?.revision ?? 0)) {
+      final visibleCurrent =
+          current != null && _canViewPlaybackSession(request, entry, current)
+          ? current
+          : null;
       return _json({
         'error': 'playback_session_conflict',
-        'session': current == null ? null : _playbackSessionJson(current),
+        'session': visibleCurrent == null
+            ? null
+            : _playbackSessionJson(visibleCurrent),
       }, statusCode: HttpStatus.conflict);
     }
     final session = _playbackSessionFromJson(entry.library, libraryId, decoded);
     if (session == null) return _badRequest('invalid_playback_session');
+    if (!_canViewPlaybackSession(request, entry, session)) {
+      return _badRequest('work_not_found');
+    }
     final saved = entry.library.savePlaybackSession(
       session,
       deviceId: decoded['device_id'] is String
@@ -736,7 +791,7 @@ final class FundusServerHandler {
   Response _progress(Request request, String libraryId, String workId) {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
-    if (entry.findWork(workId) == null) {
+    if (!_canViewWorkId(request, entry, workId)) {
       return _notFound('work_not_found');
     }
     final progress = entry.library.loadProgress(workId);
@@ -750,7 +805,7 @@ final class FundusServerHandler {
   Response _annotations(Request request, String libraryId, String workId) {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
-    if (entry.findWork(workId) == null) {
+    if (!_canViewWorkId(request, entry, workId)) {
       return _notFound('work_not_found');
     }
     return _json(_annotationsJson(entry.library.loadAnnotations(workId)));
@@ -766,7 +821,7 @@ final class FundusServerHandler {
     if (entry.library.isReadOnly) {
       return _json({'error': 'library_read_only'}, statusCode: 403);
     }
-    if (entry.findWork(workId) == null) {
+    if (!_canViewWorkId(request, entry, workId)) {
       return _notFound('work_not_found');
     }
     final decoded = await _readJson(request);
@@ -788,7 +843,7 @@ final class FundusServerHandler {
     if (entry.library.isReadOnly) {
       return _json({'error': 'library_read_only'}, statusCode: 403);
     }
-    if (entry.findWork(workId) == null) {
+    if (!_canViewWorkId(request, entry, workId)) {
       return _notFound('work_not_found');
     }
     final decoded = await _readJson(request);
@@ -813,7 +868,9 @@ final class FundusServerHandler {
     if (entry.library.isReadOnly) {
       return _json({'error': 'library_read_only'}, statusCode: 403);
     }
-    if (entry.findWork(workId) == null) return _notFound('work_not_found');
+    if (!_canViewWorkId(request, entry, workId)) {
+      return _notFound('work_not_found');
+    }
     final decoded = await _readJson(request);
     final fileId = decoded?['file_id'];
     final encodedPosition = decoded?['position'];
@@ -851,7 +908,9 @@ final class FundusServerHandler {
     if (entry.library.isReadOnly) {
       return _json({'error': 'library_read_only'}, statusCode: 403);
     }
-    if (entry.findWork(workId) == null) return _notFound('work_not_found');
+    if (!_canViewWorkId(request, entry, workId)) {
+      return _notFound('work_not_found');
+    }
     final decoded = await _readJson(request);
     final fileId = decoded?['file_id'];
     final encodedPosition = decoded?['position'];
@@ -894,7 +953,9 @@ final class FundusServerHandler {
     if (entry.library.isReadOnly) {
       return _json({'error': 'library_read_only'}, statusCode: 403);
     }
-    if (entry.findWork(workId) == null) return _notFound('work_not_found');
+    if (!_canViewWorkId(request, entry, workId)) {
+      return _notFound('work_not_found');
+    }
     return _json(
       _annotationsJson(
         await entry.library.deleteBookmark(workId, annotationId),
@@ -913,7 +974,9 @@ final class FundusServerHandler {
     if (entry.library.isReadOnly) {
       return _json({'error': 'library_read_only'}, statusCode: 403);
     }
-    if (entry.findWork(workId) == null) return _notFound('work_not_found');
+    if (!_canViewWorkId(request, entry, workId)) {
+      return _notFound('work_not_found');
+    }
     return _json(
       _annotationsJson(
         await entry.library.deleteHighlight(workId, annotationId),
@@ -965,7 +1028,7 @@ final class FundusServerHandler {
   ) async {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
-    if (entry.findWork(workId) == null) {
+    if (!_canViewWorkId(request, entry, workId)) {
       return _notFound('work_not_found');
     }
     final profile = await entry.library.loadPortableReaderProfile(
@@ -988,7 +1051,7 @@ final class FundusServerHandler {
     if (entry.library.isReadOnly) {
       return _json({'error': 'library_read_only'}, statusCode: 403);
     }
-    if (entry.findWork(workId) == null) {
+    if (!_canViewWorkId(request, entry, workId)) {
       return _notFound('work_not_found');
     }
     final decoded = await _readJson(request);
@@ -1012,7 +1075,7 @@ final class FundusServerHandler {
   ) async {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
-    if (entry.findWork(workId) == null) {
+    if (!_canViewWorkId(request, entry, workId)) {
       return _notFound('work_not_found');
     }
     if (entry.library.isReadOnly) {
@@ -1100,7 +1163,7 @@ final class FundusServerHandler {
   ) {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
-    if (entry.findWork(workId) == null) {
+    if (!_canViewWorkId(request, entry, workId)) {
       return _notFound('work_not_found');
     }
     return _json({
@@ -1122,6 +1185,9 @@ final class FundusServerHandler {
     if (entry == null) return _notFound('library_not_found');
     if (entry.library.isReadOnly) {
       return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    if (!_canViewWorkId(request, entry, workId)) {
+      return _notFound('work_not_found');
     }
     final parsedRevision = int.tryParse(revision);
     final decoded = await _readJson(request);
@@ -1202,14 +1268,64 @@ final class FundusServerHandler {
         final bearer = authorization?.startsWith('Bearer ') == true
             ? authorization!.substring(7)
             : null;
-        if (!_constantTimeEquals(authorization, 'Bearer $token') &&
-            !(pairingAuthority?.authorize(bearer) ?? false)) {
+        final directToken = _constantTimeEquals(authorization, 'Bearer $token');
+        final deviceId = directToken
+            ? null
+            : pairingAuthority?.authorizeDevice(bearer);
+        if (!directToken && deviceId == null) {
           return _json({'error': 'unauthorized'}, statusCode: 401);
         }
-        return inner(request);
+        return inner(
+          request.change(
+            context: {
+              ...request.context,
+              'fundus_device_id': deviceId,
+              'fundus_adult_explicit':
+                  directToken ||
+                  (deviceId != null &&
+                      (pairingAuthority?.adultExplicitAllowed(deviceId) ??
+                          false)),
+            },
+          ),
+        );
       };
     };
   }
+
+  bool _canViewAdult(Request request) =>
+      request.context['fundus_adult_explicit'] == true;
+
+  bool _canViewWork(Request request, LibraryWorkSummary work) =>
+      !work.isHhh || _canViewAdult(request);
+
+  bool _canViewWorkId(
+    Request request,
+    SharedFundusLibrary entry,
+    String workId,
+  ) {
+    final work = entry.findWork(workId);
+    return work != null && _canViewWork(request, work);
+  }
+
+  bool _canViewWorkIds(
+    Request request,
+    SharedFundusLibrary entry,
+    Iterable<String> workIds,
+  ) => workIds.every((workId) => _canViewWorkId(request, entry, workId));
+
+  bool _canViewPlaylist(
+    Request request,
+    SharedFundusLibrary entry,
+    LibraryPlaylist playlist,
+  ) => _canViewWorkIds(request, entry, playlist.workIds);
+
+  bool _canViewPlaybackSession(
+    Request request,
+    SharedFundusLibrary entry,
+    PlaybackSession session,
+  ) => session.items.every(
+    (item) => _canViewWorkId(request, entry, item.workId),
+  );
 
   Middleware _jsonErrors() {
     return (inner) {
@@ -1226,13 +1342,21 @@ final class FundusServerHandler {
   static LibraryWorkSummary? _findWork(FundusLibrary library, String workId) =>
       library.listWorks().where((work) => work.id == workId).firstOrNull;
 
-  static Map<String, Object?> _libraryJson(SharedFundusLibrary entry) => {
-    'id': entry.id,
-    'name': entry.name,
-    'available': true,
-    'read_only': entry.library.isReadOnly,
-    'work_count': entry.works.length,
-  };
+  static Map<String, Object?> _libraryJson(
+    SharedFundusLibrary entry, {
+    required bool includeAdultExplicit,
+  }) {
+    final workCount = includeAdultExplicit
+        ? entry.works.length
+        : entry.works.where((work) => !work.isHhh).length;
+    return {
+      'id': entry.id,
+      'name': entry.name,
+      'available': true,
+      'read_only': entry.library.isReadOnly,
+      'work_count': workCount,
+    };
+  }
 
   static Map<String, Object?> _workJson(LibraryWorkSummary work) => {
     'id': work.id,
