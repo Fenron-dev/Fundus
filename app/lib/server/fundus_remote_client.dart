@@ -286,6 +286,7 @@ final class FundusRemoteTrack {
     required this.position,
     this.duration,
     this.audioMetadata,
+    this.episode,
   });
 
   final String id;
@@ -293,6 +294,7 @@ final class FundusRemoteTrack {
   final int position;
   final Duration? duration;
   final AudioTechnicalMetadata? audioMetadata;
+  final VideoEpisodeIdentity? episode;
 }
 
 final class FundusRemoteComicPage {
@@ -949,6 +951,9 @@ final class FundusRemoteClient {
                     )
                   : null,
               audioMetadata: _audioMetadata(item['audio']),
+              episode:
+                  videoEpisodeFromJson(item['episode']) ??
+                  parseVideoEpisode(item['title'] as String),
             ),
       ]..sort((a, b) => a.position.compareTo(b.position)),
       chapters: [

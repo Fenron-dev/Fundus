@@ -1266,23 +1266,27 @@ final class FundusServerHandler {
     },
   };
 
-  static Map<String, Object?> _trackJson(LibraryPlaybackTrack track) => {
-    'id': track.fileId,
-    'title': track.title,
-    'position': track.index,
-    'duration_seconds': track.duration?.inMilliseconds == null
-        ? null
-        : track.duration!.inMilliseconds / 1000,
-    'audio': track.audioMetadata == null
-        ? null
-        : {
-            'container': track.audioMetadata!.container,
-            'codec': track.audioMetadata!.codec,
-            'profile': track.audioMetadata!.profile,
-            'channels': track.audioMetadata!.channels,
-            'sample_rate_hz': track.audioMetadata!.sampleRateHz,
-          },
-  };
+  static Map<String, Object?> _trackJson(LibraryPlaybackTrack track) {
+    final episode = parseVideoEpisode(track.title);
+    return {
+      'id': track.fileId,
+      'title': track.title,
+      'position': track.index,
+      'duration_seconds': track.duration?.inMilliseconds == null
+          ? null
+          : track.duration!.inMilliseconds / 1000,
+      'audio': track.audioMetadata == null
+          ? null
+          : {
+              'container': track.audioMetadata!.container,
+              'codec': track.audioMetadata!.codec,
+              'profile': track.audioMetadata!.profile,
+              'channels': track.audioMetadata!.channels,
+              'sample_rate_hz': track.audioMetadata!.sampleRateHz,
+            },
+      if (episode != null) 'episode': videoEpisodeToJson(episode),
+    };
+  }
 
   static Map<String, Object?> _chapterJson(LibraryPlaybackChapter chapter) => {
     'title': chapter.title,

@@ -23,4 +23,19 @@ void main() {
   test('does not classify movie filenames as episodes', () {
     expect(parseVideoEpisode('Star Wars Episode IV.mkv'), isNull);
   });
+
+  test('serializes episode identity for remote clients', () {
+    final original = parseVideoEpisode('Firefly - S01E02 - The Train Job.mkv')!;
+    final restored = videoEpisodeFromJson(videoEpisodeToJson(original));
+
+    expect(restored?.season, original.season);
+    expect(restored?.episode, original.episode);
+    expect(restored?.label, original.label);
+    expect(restored?.title, original.title);
+  });
+
+  test('ignores malformed episode identity payloads', () {
+    expect(videoEpisodeFromJson({'season': '1', 'episode': 2}), isNull);
+    expect(videoEpisodeFromJson(null), isNull);
+  });
 }

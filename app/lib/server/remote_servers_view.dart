@@ -1974,6 +1974,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             position: track.position,
             duration: track.duration,
             audioMetadata: track.audioMetadata,
+            episode: parseVideoEpisode(track.title),
           ),
       ];
     } else {
@@ -2403,7 +2404,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                           ),
                         ),
                         title: Text(
-                          entry.track.title,
+                          _remoteTrackLabel(entry.track),
                           style: documentChapterTitleStyle(
                             context,
                             documentChapterReadState(
@@ -5222,8 +5223,8 @@ class _MobileRemotePublicationDetailsState
         WorkContentListTile(
           item: WorkContentItemViewModel(
             id: entry.track.id,
-            title: entry.track.title,
-            number: entry.originalIndex + 1,
+            title: _remoteTrackLabel(entry.track),
+            number: entry.track.episode?.episode ?? entry.originalIndex + 1,
             readState: documentChapterReadState(
               chapterIndex: entry.originalIndex,
               currentChapterIndex: widget.progressIndex,
@@ -5835,6 +5836,12 @@ Widget? _remoteTechnicalSubtitle(FundusRemoteTrack track) {
   return Text(
     '${parts.join(' · ')}\n${Platform.isAndroid ? 'Android' : 'Desktop'}: $label',
   );
+}
+
+String _remoteTrackLabel(FundusRemoteTrack track) {
+  final episode = track.episode ?? parseVideoEpisode(track.title);
+  if (episode == null || episode.title.isEmpty) return track.title;
+  return '${episode.label} · ${episode.title}';
 }
 
 class _PairingScanner extends StatefulWidget {

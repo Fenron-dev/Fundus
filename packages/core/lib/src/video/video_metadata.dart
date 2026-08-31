@@ -17,7 +17,35 @@ final class VideoEpisodeIdentity {
 
   String get label =>
       'S${season.toString().padLeft(2, '0')}E${episode.toString().padLeft(2, '0')}';
+
+  Map<String, Object?> toJson() => {
+    'season': season,
+    'episode': episode,
+    'label': label,
+    'title': title,
+  };
+
+  static VideoEpisodeIdentity? fromJson(Object? value) {
+    if (value is! Map) return null;
+    final season = value['season'];
+    final episode = value['episode'];
+    if (season is! int || episode is! int || season < 0 || episode < 0) {
+      return null;
+    }
+    final title = value['title'];
+    return VideoEpisodeIdentity(
+      season: season,
+      episode: episode,
+      title: title is String ? title : '',
+    );
+  }
 }
+
+Map<String, Object?> videoEpisodeToJson(VideoEpisodeIdentity episode) =>
+    episode.toJson();
+
+VideoEpisodeIdentity? videoEpisodeFromJson(Object? value) =>
+    VideoEpisodeIdentity.fromJson(value);
 
 /// Parses common season/episode forms without making the folder layout part of
 /// the media identity. Provider metadata can replace the title later.
