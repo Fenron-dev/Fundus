@@ -20,6 +20,7 @@ dependencies:
   flutter_secure_storage: ^10.3.1
   fundus_core: any
   fundus_server: any
+  http: ^1.2.2
   media_kit: ^1.2.6
   media_kit_libs_video: ^1.0.7
   media_kit_video: ^2.0.1

@@ -1,0 +1,121 @@
+import 'dart:convert';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+
+import '../lib/video/video_metadata_provider.dart';
+
+void main() {
+  test('AniList maps alternate titles and adult sensitivity', () async {
+    final client = _StubClient(
+      jsonEncode({
+        'data': {
+          'Page': {
+            'media': [
+              {
+                'id': 42,
+                'format': 'TV',
+                'isAdult': true,
+                'episodes': 12,
+                'seasonYear': 2025,
+                'title': {
+                  'romaji': 'Secret Title',
+                  'english': 'A Secret Title',
+                  'native': '秘密',
+                },
+                'synonyms': ['Hidden Title'],
+                'description': '<b>Short</b> description',
+                'coverImage': {'large': 'https://img.example/cover.webp'},
+                'bannerImage': 'https://img.example/banner.webp',
+              },
+            ],
+          },
+        },
+      }),
+    );
+    final results = await AniListVideoProvider(client: client).search('secret');
+
+    expect(results, hasLength(1));
+    expect(results.single.providerId, '42');
+    expect(results.single.title, 'A Secret Title');
+    expect(results.single.alternateTitles, containsAll(['Secret Title', '秘密']));
+    expect(results.single.contentSensitivity, 'adult_explicit');
+    expect(results.single.description, 'Short description');
+    expect(client.lastRequest?.url.toString(), 'https://graphql.anilist.co');
+  });
+
+  test('TMDB maps movies and never sends an empty key', () async {
+    final empty = _StubClient('{}');
+    expect(
+      await TmdbVideoProvider(apiKey: '', client: empty).search('film'),
+      isEmpty,
+    );
+    expect(empty.lastRequest, isNull);
+
+    final client = _StubClient(
+      jsonEncode({
+        'results': [
+          {
+            'id': 7,
+            'media_type': 'movie',
+            'adult': false,
+            'title': 'Der Film',
+            'original_title': 'The Film',
+            'release_date': '2024-03-01',
+            'overview': 'Eine Beschreibung',
+            'poster_path': '/poster.jpg',
+            'backdrop_path': '/backdrop.jpg',
+          },
+        ],
+      }),
+    );
+    final results = await TmdbVideoProvider(
+      apiKey: 'runtime-only-key',
+      client: client,
+    ).search('film');
+
+    expect(results.single.videoKind, 'movie');
+    expect(results.single.releaseYear, 2024);
+    expect(results.single.alternateTitles, ['The Film']);
+    expect(
+      results.single.posterUrl,
+      'https://image.tmdb.org/t/p/w500/poster.jpg',
+    );
+    expect(
+      client.lastRequest?.url.queryParameters['api_key'],
+      'runtime-only-key',
+    );
+  });
+
+  test('provider errors do not echo credentials', () async {
+    final client = _StubClient('{}', statusCode: 500);
+    expect(
+      () => TmdbVideoProvider(apiKey: 'secret-key', client: client).search('x'),
+      throwsA(
+        predicate<Object>(
+          (error) =>
+              error.toString().contains('Provider antwortete') &&
+              !error.toString().contains('secret-key'),
+        ),
+      ),
+    );
+  });
+}
+
+final class _StubClient extends http.BaseClient {
+  _StubClient(this.body, {this.statusCode = 200});
+
+  final String body;
+  final int statusCode;
+  http.BaseRequest? lastRequest;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    lastRequest = request;
+    return http.StreamedResponse(
+      Stream<List<int>>.value(utf8.encode(body)),
+      statusCode,
+      headers: const {'content-type': 'application/json'},
+    );
+  }
+}

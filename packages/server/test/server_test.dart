@@ -232,7 +232,7 @@ void main() {
       );
       final libraryId = secondLibrary.manifest.libraryId;
       final workId = secondLibrary.listWorks().single.id;
-      final request = (String path) => Request(
+      Request request(String path) => Request(
         'GET',
         Uri.parse('http://localhost$path'),
         headers: {'authorization': 'Bearer $deviceToken'},

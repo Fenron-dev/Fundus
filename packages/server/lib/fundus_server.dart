@@ -358,8 +358,9 @@ final class FundusServerHandler {
     if (entry == null) return _notFound('library_not_found');
     final located = entry.findTrack(fileId);
     if (located == null) return _notFound('file_not_found');
-    if (!_canViewWork(request, located.work))
+    if (!_canViewWork(request, located.work)) {
       return _notFound('file_not_found');
+    }
     return _json({
       ..._trackJson(located.track),
       'work_id': located.work.id,
@@ -376,8 +377,9 @@ final class FundusServerHandler {
     if (entry == null) return _notFound('library_not_found');
     final located = entry.findTrack(fileId);
     if (located == null) return _notFound('file_not_found');
-    if (!_canViewWork(request, located.work))
+    if (!_canViewWork(request, located.work)) {
       return _notFound('file_not_found');
+    }
     return _serveFile(
       request,
       File(located.track.absolutePath),
@@ -392,8 +394,9 @@ final class FundusServerHandler {
   ) async {
     final located = _comicTrack(libraryId, fileId);
     if (located == null) return _notFound('file_not_found');
-    if (!_canViewWork(request, located.work))
+    if (!_canViewWork(request, located.work)) {
       return _notFound('file_not_found');
+    }
     try {
       final manifest = await _comicManifest(File(located.track.absolutePath));
       return _json({
@@ -427,8 +430,9 @@ final class FundusServerHandler {
   ) async {
     final located = _comicTrack(libraryId, fileId);
     if (located == null) return _notFound('file_not_found');
-    if (!_canViewWork(request, located.work))
+    if (!_canViewWork(request, located.work)) {
       return _notFound('file_not_found');
+    }
     final index = int.tryParse(pageIndex);
     if (index == null || index < 0) return _badRequest('invalid_page_index');
     try {
