@@ -10,6 +10,7 @@ import '../diagnostics/fundus_diagnostics.dart';
 import '../playback/playback_sleep_timer.dart';
 import '../playback/playback_shake_restart.dart';
 import '../playback/playback_conflict_settings.dart';
+import '../playback/playback_autosave_settings.dart';
 import '../playback/fundus_system_media_session.dart';
 import 'fundus_remote_client.dart';
 import 'fundus_remote_stream_proxy.dart';
@@ -103,7 +104,11 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         notifyListeners();
         final last = _lastPersistedAt;
         if (_ready && _playing && last != null) {
-          if (DateTime.now().difference(last) >= const Duration(seconds: 5)) {
+          final interval = PlaybackAutosaveSettings.interval(
+            _work?.kind ?? 'audiobook',
+          );
+          if (interval > Duration.zero &&
+              DateTime.now().difference(last) >= interval) {
             unawaited(persist());
           }
         }

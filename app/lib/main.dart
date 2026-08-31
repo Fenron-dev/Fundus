@@ -252,6 +252,10 @@ class _FundusAppState extends State<FundusApp> {
               onOpenDownloads: _openOfflineMedia,
               onOpenOfflineWork: _openOfflineWork,
               showHhh: _showHhh,
+              onHhhEnabledChanged: (enabled) async {
+                await HhhContentSettings.setEnabled(enabled);
+                if (mounted) setState(() => _showHhh = enabled);
+              },
             ),
     );
   }
@@ -1319,6 +1323,7 @@ class LibraryShell extends StatefulWidget {
     this.onOpenDownloads,
     this.onOpenOfflineWork,
     this.showHhh = false,
+    this.onHhhEnabledChanged,
   });
 
   final List<LibraryWorkSummary> works;
@@ -1343,6 +1348,7 @@ class LibraryShell extends StatefulWidget {
   final VoidCallback? onOpenDownloads;
   final OfflineWorkOpenCallback? onOpenOfflineWork;
   final bool showHhh;
+  final ValueChanged<bool>? onHhhEnabledChanged;
 
   @override
   State<LibraryShell> createState() => _LibraryShellState();
@@ -1396,14 +1402,20 @@ class _LibraryShellState extends State<LibraryShell> {
     for (final work in widget.offlineWorks) _offlineLibrarySummary(work),
   ].where((work) => widget.showHhh || !work.isHhh).toList(growable: false);
 
+  List<_LibrarySection> get _availableSections => _LibrarySection.values
+      .where((section) => !section.isHhhSection || widget.showHhh)
+      .toList(growable: false);
+
   List<LibraryWorkSummary> get _visibleWorks {
     final works = LibraryWorkSearch.apply(_allWorks, _query);
     final kinds = _section.workKinds;
-    return kinds == null
-        ? works
-        : works
-              .where((work) => kinds.contains(work.kind))
-              .toList(growable: false);
+    return works
+        .where(
+          (work) =>
+              (kinds == null || kinds.contains(work.kind)) &&
+              _section.matchesWork(work),
+        )
+        .toList(growable: false);
   }
 
   bool get _showingGroups => _section.isDocumentSection
@@ -1506,6 +1518,7 @@ class _LibraryShellState extends State<LibraryShell> {
                     width: _leftPaneWidth,
                     child: _Sidebar(
                       selectedSection: _section,
+                      showHhh: widget.showHhh,
                       onSelectSection: (section) => setState(() {
                         _section = section;
                         if (section.isDocumentSection) {
@@ -1609,9 +1622,11 @@ class _LibraryShellState extends State<LibraryShell> {
               child: Row(
                 children: [
                   NavigationRail(
-                    selectedIndex: _section.index,
+                    selectedIndex: _availableSections
+                        .indexOf(_section)
+                        .clamp(0, _availableSections.length - 1),
                     onDestinationSelected: (value) => setState(() {
-                      _section = _LibrarySection.values[value];
+                      _section = _availableSections[value];
                       if (_section.isDocumentSection) {
                         _grouping = _LibraryGrouping.books;
                       }
@@ -1620,7 +1635,7 @@ class _LibraryShellState extends State<LibraryShell> {
                     }),
                     labelType: NavigationRailLabelType.all,
                     destinations: [
-                      for (final section in _LibrarySection.values)
+                      for (final section in _availableSections)
                         NavigationRailDestination(
                           icon: Icon(section.icon),
                           selectedIcon: Icon(section.selectedIcon),
@@ -1802,7 +1817,10 @@ class _LibraryShellState extends State<LibraryShell> {
       ..sort((left, right) => right.addedAt.compareTo(left.addedAt));
     final sections = <_LibrarySection>[
       _LibrarySection.library,
-      ..._LibrarySection.values.where((section) => section.isDocumentSection),
+      ..._availableSections.where(
+        (section) =>
+            section.isDocumentSection && section != _LibrarySection.library,
+      ),
     ];
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
@@ -2364,6 +2382,8 @@ class _LibraryShellState extends State<LibraryShell> {
       offlineStore: widget.offlineStore,
       themeMode: widget.themeMode,
       onThemeModeChanged: widget.onThemeModeChanged,
+      hhhEnabled: widget.showHhh,
+      onHhhEnabledChanged: widget.onHhhEnabledChanged,
       onExportDiagnostics: widget.onExportDiagnostics,
     );
   }
@@ -3068,6 +3088,10 @@ class _LibraryShellState extends State<LibraryShell> {
 enum _LibrarySection {
   library,
   videos,
+  movies,
+  series,
+  anime,
+  hhh,
   manga,
   ttrpg,
   webnovels,
@@ -3079,6 +3103,8 @@ enum _LibrarySection {
 }
 
 extension on _LibrarySection {
+  bool get isHhhSection => this == _LibrarySection.hhh;
+
   bool get isDocumentSection => switch (this) {
     _LibrarySection.library || _LibrarySection.playlists => false,
     _ => true,
@@ -3087,6 +3113,9 @@ extension on _LibrarySection {
   Set<String>? get workKinds => switch (this) {
     _LibrarySection.library => const {'audiobook'},
     _LibrarySection.videos => const {'movie', 'tv', 'video'},
+    _LibrarySection.movies => const {'movie'},
+    _LibrarySection.series || _LibrarySection.anime => const {'tv', 'video'},
+    _LibrarySection.hhh => null,
     _LibrarySection.manga => const {'manga'},
     _LibrarySection.ttrpg => const {'ttrpg_product'},
     _LibrarySection.webnovels => const {'webnovel'},
@@ -3097,9 +3126,21 @@ extension on _LibrarySection {
     _LibrarySection.playlists => null,
   };
 
+  bool matchesWork(LibraryWorkSummary work) => switch (this) {
+    _LibrarySection.anime =>
+      work.contentStyle?.toLowerCase() == 'anime' ||
+          work.tags.any((tag) => tag.toLowerCase() == 'anime'),
+    _LibrarySection.hhh => work.isHhh,
+    _ => true,
+  };
+
   String get label => switch (this) {
     _LibrarySection.library => 'Hörbücher',
     _LibrarySection.videos => 'Filme & Serien',
+    _LibrarySection.movies => 'Filme',
+    _LibrarySection.series => 'Serien',
+    _LibrarySection.anime => 'Anime',
+    _LibrarySection.hhh => 'HHH',
     _LibrarySection.manga => 'Manga & Comics',
     _LibrarySection.ttrpg => 'TTRPG',
     _LibrarySection.webnovels => 'Webnovels',
@@ -3113,12 +3154,20 @@ extension on _LibrarySection {
   String get browserTitle => switch (this) {
     _LibrarySection.library => 'Hörbücher & Hörspiele',
     _LibrarySection.videos => 'Filme & Serien',
+    _LibrarySection.movies => 'Filme',
+    _LibrarySection.series => 'Serien',
+    _LibrarySection.anime => 'Anime',
+    _LibrarySection.hhh => 'HHH',
     _ => label,
   };
 
   IconData get icon => switch (this) {
     _LibrarySection.library => Icons.headphones_outlined,
     _LibrarySection.videos => Icons.movie_outlined,
+    _LibrarySection.movies => Icons.local_movies_outlined,
+    _LibrarySection.series => Icons.video_library_outlined,
+    _LibrarySection.anime => Icons.auto_awesome_outlined,
+    _LibrarySection.hhh => Icons.visibility_off_outlined,
     _LibrarySection.manga => Icons.auto_stories_outlined,
     _LibrarySection.ttrpg => Icons.casino_outlined,
     _LibrarySection.webnovels => Icons.chrome_reader_mode_outlined,
@@ -3132,6 +3181,10 @@ extension on _LibrarySection {
   IconData get selectedIcon => switch (this) {
     _LibrarySection.library => Icons.headphones,
     _LibrarySection.videos => Icons.movie,
+    _LibrarySection.movies => Icons.local_movies,
+    _LibrarySection.series => Icons.video_library,
+    _LibrarySection.anime => Icons.auto_awesome,
+    _LibrarySection.hhh => Icons.visibility_off,
     _LibrarySection.manga => Icons.auto_stories,
     _LibrarySection.ttrpg => Icons.casino,
     _LibrarySection.webnovels => Icons.chrome_reader_mode,
@@ -3565,11 +3618,13 @@ class _Sidebar extends StatelessWidget {
   const _Sidebar({
     required this.selectedSection,
     required this.onSelectSection,
+    this.showHhh = false,
     this.onOpenSettings,
   });
 
   final _LibrarySection selectedSection;
   final ValueChanged<_LibrarySection> onSelectSection;
+  final bool showHhh;
   final VoidCallback? onOpenSettings;
 
   @override
@@ -3584,8 +3639,52 @@ class _Sidebar extends StatelessWidget {
           selected: selectedSection == _LibrarySection.library,
           onTap: () => onSelectSection(_LibrarySection.library),
         ),
+        ListTile(
+          leading: const Icon(Icons.movie_outlined),
+          title: const Text('Filme & Serien'),
+          selected: selectedSection == _LibrarySection.videos,
+          onTap: () => onSelectSection(_LibrarySection.videos),
+        ),
+        ExpansionTile(
+          initiallyExpanded:
+              selectedSection == _LibrarySection.movies ||
+              selectedSection == _LibrarySection.series ||
+              selectedSection == _LibrarySection.anime ||
+              (selectedSection == _LibrarySection.hhh && showHhh),
+          leading: const Icon(Icons.tune_outlined),
+          title: const Text('Video-Unterteilung'),
+          children: [
+            for (final section in const [
+              _LibrarySection.movies,
+              _LibrarySection.series,
+              _LibrarySection.anime,
+              _LibrarySection.hhh,
+            ])
+              if (!section.isHhhSection || showHhh)
+                ListTile(
+                  contentPadding: const EdgeInsets.only(left: 54, right: 16),
+                  leading: Icon(section.icon),
+                  title: Text(section.label),
+                  selected: selectedSection == section,
+                  onTap: () => onSelectSection(section),
+                ),
+          ],
+        ),
+        ListTile(
+          leading: const Icon(Icons.queue_music_outlined),
+          title: const Text('Playlists'),
+          selected: selectedSection == _LibrarySection.playlists,
+          onTap: () => onSelectSection(_LibrarySection.playlists),
+        ),
         for (final section in _LibrarySection.values.where(
-          (section) => section.isDocumentSection,
+          (section) =>
+              section.isDocumentSection &&
+              section != _LibrarySection.videos &&
+              section != _LibrarySection.movies &&
+              section != _LibrarySection.series &&
+              section != _LibrarySection.anime &&
+              section != _LibrarySection.hhh &&
+              (!section.isHhhSection || showHhh),
         ))
           ListTile(
             leading: Icon(section.icon),
@@ -3607,12 +3706,6 @@ class _Sidebar extends StatelessWidget {
         const ListTile(
           leading: Icon(Icons.star_outline),
           title: Text('Sammlungen'),
-        ),
-        ListTile(
-          leading: const Icon(Icons.queue_music_outlined),
-          title: const Text('Playlists'),
-          selected: selectedSection == _LibrarySection.playlists,
-          onTap: () => onSelectSection(_LibrarySection.playlists),
         ),
         const ListTile(
           leading: Icon(Icons.folder_outlined),
@@ -4079,6 +4172,134 @@ class _DocumentHero extends StatelessWidget {
   }
 }
 
+/// Plex-like identity block for films and series. Playback and metadata
+/// enrichment remain transport/provider-neutral; this widget only presents the
+/// information already stored in the portable work record.
+class _VideoHero extends StatelessWidget {
+  const _VideoHero({
+    required this.work,
+    required this.directoryPath,
+    required this.onOpen,
+  });
+
+  final LibraryWorkSummary work;
+  final String? directoryPath;
+  final VoidCallback? onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final wide = MediaQuery.sizeOf(context).width >= 720;
+    final facts = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(work.title, style: Theme.of(context).textTheme.headlineMedium),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            Chip(
+              avatar: const Icon(Icons.movie_outlined, size: 18),
+              label: Text(work.kind == 'movie' ? 'Film' : 'Serie'),
+            ),
+            if (work.contentStyle case final style?) Chip(label: Text(style)),
+            if (work.publishedYear case final year?) Chip(label: Text('$year')),
+            Chip(label: Text('${work.fileCount} Datei(en)')),
+          ],
+        ),
+        if (work.authors.isNotEmpty || work.author != 'Unbekannt') ...[
+          const SizedBox(height: 12),
+          Text(
+            work.authors.isEmpty ? work.author : work.authors.join(', '),
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ],
+        if (work.genres.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              for (final genre in work.genres) Chip(label: Text(genre)),
+            ],
+          ),
+        ],
+        if (work.description case final description?) ...[
+          const SizedBox(height: 14),
+          Text(
+            description,
+            maxLines: wide ? 8 : 5,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+        if (directoryPath case final path?) ...[
+          const SizedBox(height: 14),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.folder_outlined, size: 18),
+              const SizedBox(width: 7),
+              Expanded(child: SelectableText(path)),
+            ],
+          ),
+        ],
+        if (onOpen != null) ...[
+          const SizedBox(height: 16),
+          SizedBox(
+            width: wide ? 280 : double.infinity,
+            child: FilledButton.icon(
+              onPressed: onOpen,
+              icon: const Icon(Icons.play_arrow),
+              label: const Text('Abspielen'),
+            ),
+          ),
+        ],
+      ],
+    );
+    final cover = AspectRatio(
+      aspectRatio: .68,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: _WorkCover(work: work, iconSize: 84),
+      ),
+    );
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            scheme.secondaryContainer.withValues(alpha: .42),
+            scheme.surfaceContainer.withValues(alpha: .55),
+          ],
+        ),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: wide
+            ? Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(width: 230, child: cover),
+                  const SizedBox(width: 28),
+                  Expanded(child: facts),
+                ],
+              )
+            : Column(
+                children: [
+                  SizedBox(width: 190, child: cover),
+                  const SizedBox(height: 18),
+                  facts,
+                ],
+              ),
+      ),
+    );
+  }
+}
+
 enum _DocumentFileSort { oldestFirst, newestFirst, titleAscending }
 
 class _DocumentFilesPanel extends StatefulWidget {
@@ -4486,6 +4707,14 @@ class _DetailPanelState extends State<_DetailPanel> {
             onSelectAuthor: widget.onSelectAuthor,
             onSelectNarrator: widget.onSelectNarrator,
           )
+        else if (_isVideoWorkKind(selectedWork.kind))
+          _VideoHero(
+            work: selectedWork,
+            directoryPath: directoryPath,
+            onOpen: workFiles == null || workFiles.isEmpty
+                ? null
+                : () => _openDocumentWork(selectedWork, workFiles),
+          )
         else
           _DocumentHero(work: selectedWork, directoryPath: directoryPath),
         const SizedBox(height: 10),
@@ -4564,7 +4793,8 @@ class _DetailPanelState extends State<_DetailPanel> {
           if (selectedWork.kind == 'audiobook')
             _AudioCompatibilityPanel(tracks: workFiles)
           else ...[
-            if (_readableDocumentFiles(workFiles).isNotEmpty) ...[
+            if (!_isVideoWorkKind(selectedWork.kind) &&
+                _readableDocumentFiles(workFiles).isNotEmpty) ...[
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
@@ -6989,6 +7219,9 @@ String _workKindLabel(String kind) => switch (kind) {
   'archive' => 'Archiv',
   _ => kind,
 };
+
+bool _isVideoWorkKind(String kind) =>
+    kind == 'movie' || kind == 'tv' || kind == 'video';
 
 IconData _workKindIcon(String kind) => switch (kind) {
   'audiobook' => Icons.music_note,

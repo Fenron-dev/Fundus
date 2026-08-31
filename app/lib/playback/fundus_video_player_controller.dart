@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:media_kit/media_kit.dart';
 
+import 'playback_autosave_settings.dart';
+
 /// Local video playback kept separate from the audiobook controller.
 ///
 /// The controller deliberately uses the same media-neutral `MediaPosition`
@@ -20,9 +22,12 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       _player.stream.position.listen((value) {
         _position = value;
         notifyListeners();
+        final interval = PlaybackAutosaveSettings.interval(
+          _work?.kind ?? 'video',
+        );
         if (_playing &&
-            DateTime.now().difference(_lastPersistedAt) >=
-                const Duration(seconds: 5)) {
+            interval > Duration.zero &&
+            DateTime.now().difference(_lastPersistedAt) >= interval) {
           unawaited(persist());
         }
       }),
@@ -119,7 +124,6 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       _loading = false;
       _lastPersistedAt = DateTime.now();
       notifyListeners();
-      await _player.play();
       final resume =
           startPosition ??
           (progress?.position.kind == MediaPositionKind.time
@@ -133,6 +137,9 @@ final class FundusVideoPlayerController extends ChangeNotifier {
         _position = resume;
         notifyListeners();
       }
+      // Seek before starting playback. Some containers emit a fresh zero
+      // position when playback starts directly after opening the playlist.
+      await _player.play();
     } catch (error) {
       _loading = false;
       _ready = false;

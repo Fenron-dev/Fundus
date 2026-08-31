@@ -6,6 +6,7 @@ import 'package:fundus_server/fundus_server.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../playback/playback_conflict_settings.dart';
+import '../playback/playback_autosave_settings.dart';
 import '../playback/playback_shake_restart.dart';
 import '../settings/fundus_settings_snapshot.dart';
 import 'annotation_sync_settings.dart';
@@ -98,6 +99,8 @@ class _ServerSettings extends StatelessWidget {
               const PlaybackConflictSettingTile(),
               const Divider(),
               const PlaybackShakeSettingTile(),
+              const Divider(),
+              const PlaybackAutosaveSettingTile(),
               const Divider(),
               const AnnotationSyncSettingTile(),
             ]),

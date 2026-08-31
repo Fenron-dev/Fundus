@@ -7,6 +7,7 @@ import 'package:media_kit/media_kit.dart';
 
 import '../diagnostics/fundus_diagnostics.dart';
 import 'playback_conflict_settings.dart';
+import 'playback_autosave_settings.dart';
 import 'playback_sleep_timer.dart';
 import 'playback_shake_restart.dart';
 import 'playback_resume_policy.dart';
@@ -28,8 +29,6 @@ final class PlayerWorkProgress {
 }
 
 final class FundusPlayerController extends ChangeNotifier {
-  static const progressPersistInterval = Duration(seconds: 5);
-
   FundusPlayerController({
     this.onConflict,
     this.onPlaylistConflict,
@@ -65,7 +64,10 @@ final class FundusPlayerController extends ChangeNotifier {
         notifyListeners();
         if (_ready && _playing && _lastPersistedAt != null) {
           final elapsed = DateTime.now().difference(_lastPersistedAt!);
-          if (elapsed >= progressPersistInterval) unawaited(persist());
+          if (_autosaveInterval > Duration.zero &&
+              elapsed >= _autosaveInterval) {
+            unawaited(persist());
+          }
         }
       }),
       _player.stream.duration.listen((value) {
@@ -129,6 +131,9 @@ final class FundusPlayerController extends ChangeNotifier {
   int? _playlistRevision;
   int _playbackSessionRevision = 0;
   List<LibraryPlaylist> _savedPlaylists = [];
+
+  Duration get _autosaveInterval =>
+      PlaybackAutosaveSettings.interval(_work?.kind ?? 'audiobook');
 
   LibraryWorkSummary? get work => _work;
   LibraryPlaybackTrack? get track =>

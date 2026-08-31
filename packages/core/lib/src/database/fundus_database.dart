@@ -37,6 +37,7 @@ final class LibraryWorkSummary {
     this.asin,
     this.explicit,
     this.contentSensitivity,
+    this.contentStyle,
     this.abridged,
     this.progressPosition,
     this.progressDuration,
@@ -75,6 +76,9 @@ final class LibraryWorkSummary {
 
   /// Portable sensitivity classification. `adult_explicit` is rendered as HHH.
   final String? contentSensitivity;
+
+  /// Provider-neutral style such as `anime`, persisted in metadata JSON.
+  final String? contentStyle;
   final bool? abridged;
   final Duration? progressPosition;
   final Duration? progressDuration;
@@ -606,6 +610,9 @@ final class FundusDatabase {
             explicit: metadata['explicit'] as bool?,
             contentSensitivity: metadata['content_sensitivity'] is String
                 ? metadata['content_sensitivity'] as String
+                : null,
+            contentStyle: metadata['content_style'] is String
+                ? metadata['content_style'] as String
                 : null,
             abridged: metadata['abridged'] as bool?,
             progressPosition: row['progress_kind'] == 'time'
