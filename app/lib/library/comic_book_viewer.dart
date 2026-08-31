@@ -31,12 +31,7 @@ class _ZoomableComicPage extends StatefulWidget {
 
 class _ZoomableComicPageState extends State<_ZoomableComicPage> {
   final TransformationController _controller = TransformationController();
-  final Map<int, Offset> _pointers = {};
   bool _zoomed = false;
-  double? _pinchStartDistance;
-  double _pinchStartScale = 1;
-  Offset? _pinchStartFocalPoint;
-  Matrix4? _pinchStartMatrix;
 
   @override
   void initState() {
@@ -49,58 +44,6 @@ class _ZoomableComicPageState extends State<_ZoomableComicPage> {
     if (zoomed != _zoomed && mounted) setState(() => _zoomed = zoomed);
   }
 
-  void _startPinch() {
-    if (_pointers.length < 2) return;
-    final points = _pointers.values.take(2).toList(growable: false);
-    _pinchStartDistance = (points[0] - points[1]).distance;
-    _pinchStartFocalPoint = Offset(
-      (points[0].dx + points[1].dx) / 2,
-      (points[0].dy + points[1].dy) / 2,
-    );
-    _pinchStartMatrix = Matrix4.copy(_controller.value);
-    _pinchStartScale = _controller.value.getMaxScaleOnAxis();
-  }
-
-  void _updatePinch() {
-    final startDistance = _pinchStartDistance;
-    final startFocalPoint = _pinchStartFocalPoint;
-    final startMatrix = _pinchStartMatrix;
-    if (_pointers.length < 2 ||
-        startDistance == null ||
-        startDistance <= 0 ||
-        startFocalPoint == null ||
-        startMatrix == null) {
-      return;
-    }
-    final points = _pointers.values.take(2).toList(growable: false);
-    final distance = (points[0] - points[1]).distance;
-    final focalPoint = Offset(
-      (points[0].dx + points[1].dx) / 2,
-      (points[0].dy + points[1].dy) / 2,
-    );
-    final targetScale = (_pinchStartScale * distance / startDistance).clamp(
-      widget.minScale,
-      6.0,
-    );
-    final relativeScale = targetScale / _pinchStartScale;
-    final delta = Matrix4.identity()
-      ..translateByDouble(focalPoint.dx, focalPoint.dy, 0, 1)
-      ..scaleByDouble(relativeScale, relativeScale, 1, 1)
-      ..translateByDouble(-startFocalPoint.dx, -startFocalPoint.dy, 0, 1);
-    _controller.value = delta.multiplied(startMatrix);
-  }
-
-  void _endPointer(int pointer) {
-    _pointers.remove(pointer);
-    if (_pointers.length < 2) {
-      _pinchStartDistance = null;
-      _pinchStartFocalPoint = null;
-      _pinchStartMatrix = null;
-    } else {
-      _startPinch();
-    }
-  }
-
   @override
   void dispose() {
     _controller.removeListener(_syncZoomState);
@@ -109,34 +52,19 @@ class _ZoomableComicPageState extends State<_ZoomableComicPage> {
   }
 
   @override
-  Widget build(BuildContext context) => Listener(
+  Widget build(BuildContext context) => GestureDetector(
     behavior: HitTestBehavior.translucent,
-    onPointerDown: (event) {
-      _pointers[event.pointer] = event.localPosition;
-      if (_pointers.length == 2) _startPinch();
-    },
-    onPointerMove: (event) {
-      if (!_pointers.containsKey(event.pointer)) return;
-      _pointers[event.pointer] = event.localPosition;
-      _updatePinch();
-    },
-    onPointerUp: (event) => _endPointer(event.pointer),
-    onPointerCancel: (event) => _endPointer(event.pointer),
-    child: GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onDoubleTap: () => _controller.value = Matrix4.identity(),
-      child: InteractiveViewer(
-        transformationController: _controller,
-        minScale: widget.minScale,
-        maxScale: 6,
-        // Scaling is handled from raw two-pointer events so a parent Webtoon
-        // scroll cannot win the gesture arena before the second finger lands.
-        // InteractiveViewer remains responsible for bounded panning.
-        panEnabled: _zoomed,
-        scaleEnabled: false,
-        clipBehavior: Clip.none,
-        child: widget.child,
-      ),
+    onDoubleTap: () => _controller.value = Matrix4.identity(),
+    child: InteractiveViewer(
+      transformationController: _controller,
+      minScale: widget.minScale,
+      maxScale: 6,
+      // InteractiveViewer's scale recognizer claims a two-finger gesture
+      // reliably, while the parent Webtoon scroll remains available at 1×.
+      panEnabled: _zoomed,
+      scaleEnabled: true,
+      clipBehavior: Clip.none,
+      child: widget.child,
     ),
   );
 }
