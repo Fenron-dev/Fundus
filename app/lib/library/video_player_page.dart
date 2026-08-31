@@ -17,6 +17,7 @@ Future<void> showFundusVideoPlayer(
   player: controller.player,
   fundusController: controller,
   title: controller.work?.title ?? 'Video',
+  initialPosition: controller.position,
 );
 
 Future<void> showFundusVideoPlayerForPlayer(
@@ -24,6 +25,7 @@ Future<void> showFundusVideoPlayerForPlayer(
   required Player player,
   required String title,
   FundusVideoPlayerController? fundusController,
+  Duration? initialPosition,
 }) => Navigator.of(context).push<void>(
   MaterialPageRoute(
     fullscreenDialog: true,
@@ -31,6 +33,7 @@ Future<void> showFundusVideoPlayerForPlayer(
       player: player,
       title: title,
       fundusController: fundusController,
+      initialPosition: initialPosition,
     ),
   ),
 );
@@ -40,10 +43,12 @@ final class _FundusVideoPlayerPage extends StatefulWidget {
     required this.player,
     required this.title,
     this.fundusController,
+    this.initialPosition,
   });
   final Player player;
   final String title;
   final FundusVideoPlayerController? fundusController;
+  final Duration? initialPosition;
   @override
   State<_FundusVideoPlayerPage> createState() => _FundusVideoPlayerPageState();
 }
@@ -55,25 +60,54 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
   void initState() {
     super.initState();
     final wasPlaying = widget.player.state.playing;
-    final initialPosition = widget.player.state.position;
+    final initialPosition =
+        widget.initialPosition ?? widget.player.state.position;
     _videoController = VideoController(widget.player);
-    // Attach the video texture before resuming a player that was opened at a
-    // saved position; otherwise audio may play while the picture is black.
-    if (wasPlaying) {
-      unawaited(_resumeAfterTexture(initialPosition));
-    }
+    // The native texture is not attached during initState. Starting or
+    // seeking a resumed player here can leave the audio decoder at the right
+    // timestamp while the video output stays black. Defer the hand-off until
+    // after the first frame of this route has been laid out.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_resumeAfterTexture(initialPosition, wasPlaying: wasPlaying));
+    });
   }
 
-  Future<void> _resumeAfterTexture(Duration position) async {
-    await widget.player.pause();
+  Future<void> _resumeAfterTexture(
+    Duration position, {
+    required bool wasPlaying,
+  }) async {
     await WidgetsBinding.instance.endOfFrame;
-    await Future<void>.delayed(const Duration(milliseconds: 180));
+    await WidgetsBinding.instance.endOfFrame;
     if (!mounted) return;
-    // Re-apply the position after the video texture is attached. This avoids
-    // the media-kit decoder keeping audio at the saved time while its first
-    // video frame remains black.
+
+    // A player opened by the local/remote Fundus controllers is already
+    // running. Pause it while the texture catches up so an early progress
+    // callback cannot overwrite the saved resume position.
+    await widget.player.pause();
     if (position > Duration.zero) await widget.player.seek(position);
     await widget.player.play();
+
+    // media_kit exposes the exact point at which the native video output has
+    // produced its first frame. Waiting for it is more reliable than a fixed
+    // delay (especially for remote streams and hardware decoders).
+    try {
+      await _videoController.waitUntilFirstFrameRendered.timeout(
+        const Duration(seconds: 5),
+      );
+    } on TimeoutException {
+      // Keep playback alive; some platforms do not complete the native
+      // first-frame future even though frames are already visible.
+    } on Object {
+      // A platform decoder may tear down the future while the route is being
+      // closed. The player itself remains usable in that case.
+    }
+    if (!mounted) return;
+
+    // Re-apply once after the first rendered frame. This handles the case
+    // where the decoder accepted the first seek before the texture existed.
+    await widget.player.pause();
+    if (position > Duration.zero) await widget.player.seek(position);
+    if (wasPlaying || position > Duration.zero) await widget.player.play();
   }
 
   @override
