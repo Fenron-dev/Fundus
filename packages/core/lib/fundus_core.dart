@@ -23,3 +23,4 @@ export 'src/scan/audio_technical_metadata.dart';
 export 'src/scan/library_scanner.dart';
 export 'src/search/library_work_query.dart';
 export 'src/video/video_metadata.dart';
+export 'src/video/video_provider.dart';

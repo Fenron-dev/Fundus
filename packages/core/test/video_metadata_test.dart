@@ -38,4 +38,41 @@ void main() {
     expect(videoEpisodeFromJson({'season': '1', 'episode': 2}), isNull);
     expect(videoEpisodeFromJson(null), isNull);
   });
+
+  test('ranks provider candidates using alternate titles', () {
+    final matches = rankVideoProviderMatches('Star Wars', [
+      const VideoProviderCandidate(
+        provider: 'tmdb',
+        providerId: '11',
+        title: 'Krieg der Sterne',
+        alternateTitles: ['Star Wars'],
+      ),
+      const VideoProviderCandidate(
+        provider: 'tmdb',
+        providerId: '12',
+        title: 'Star Trek',
+      ),
+    ]);
+
+    expect(matches.first.candidate.providerId, '11');
+    expect(matches.first.score, 1);
+    expect(matches.first.needsConfirmation, isFalse);
+  });
+
+  test('provider candidate JSON is portable and ignores malformed values', () {
+    const candidate = VideoProviderCandidate(
+      provider: 'anilist',
+      providerId: '42',
+      title: 'Cowboy Bebop',
+      releaseYear: 1998,
+      isAdult: false,
+      externalIds: {'mal': '1'},
+    );
+    final restored = VideoProviderCandidate.fromJson(candidate.toJson());
+
+    expect(restored?.provider, 'anilist');
+    expect(restored?.releaseYear, 1998);
+    expect(restored?.externalIds['mal'], '1');
+    expect(VideoProviderCandidate.fromJson({'title': 'unvollständig'}), isNull);
+  });
 }
