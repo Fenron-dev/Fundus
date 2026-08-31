@@ -30,10 +30,7 @@ abstract final class HhhContentSettings {
     await file.parent.create(recursive: true);
     final temporary = File('${file.path}.part');
     await temporary.writeAsString(
-      JsonEncoder.withIndent('  ').convert({
-        'version': 1,
-        'show_hhh': value,
-      }),
+      JsonEncoder.withIndent('  ').convert({'version': 1, 'show_hhh': value}),
       flush: true,
     );
     if (await file.exists()) await file.delete();
