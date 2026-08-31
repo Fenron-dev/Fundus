@@ -196,6 +196,7 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       _position = playerPosition;
     }
     _persisting = true;
+    final write = Stopwatch()..start();
     try {
       final current = track!;
       final position = MediaPosition(
@@ -220,6 +221,8 @@ final class FundusVideoPlayerController extends ChangeNotifier {
           'file_id': current.fileId,
           'position_ms': _position.inMilliseconds,
           'duration_ms': _duration.inMilliseconds,
+          'write_duration_ms': write.elapsedMilliseconds,
+          'network_volume': _library!.root.path.startsWith('/Volumes/'),
           'finished': finished,
         }),
       );
