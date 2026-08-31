@@ -17,6 +17,7 @@ final class VideoProviderCandidate {
     this.episodeCount,
     this.isAdult,
     this.description,
+    this.genres = const [],
     this.posterUrl,
     this.backdropUrl,
     this.externalIds = const {},
@@ -34,6 +35,7 @@ final class VideoProviderCandidate {
   final int? episodeCount;
   final bool? isAdult;
   final String? description;
+  final List<String> genres;
   final String? posterUrl;
   final String? backdropUrl;
   final Map<String, String> externalIds;
@@ -51,6 +53,7 @@ final class VideoProviderCandidate {
     if (episodeCount != null) 'episode_count': episodeCount,
     if (isAdult != null) 'is_adult': isAdult,
     if (description != null) 'description': description,
+    if (genres.isNotEmpty) 'genres': genres,
     if (posterUrl != null) 'poster_url': posterUrl,
     if (backdropUrl != null) 'backdrop_url': backdropUrl,
     if (externalIds.isNotEmpty) 'external_ids': externalIds,
@@ -65,6 +68,7 @@ final class VideoProviderCandidate {
     }
     final alternateTitles = value['alternate_titles'];
     final externalIds = value['external_ids'];
+    final genres = value['genres'];
     return VideoProviderCandidate(
       provider: value['provider'] as String,
       providerId: value['provider_id'] as String,
@@ -80,6 +84,9 @@ final class VideoProviderCandidate {
       episodeCount: (value['episode_count'] as num?)?.round(),
       isAdult: value['is_adult'] as bool?,
       description: value['description'] as String?,
+      genres: genres is List
+          ? genres.whereType<String>().toList(growable: false)
+          : const [],
       posterUrl: value['poster_url'] as String?,
       backdropUrl: value['backdrop_url'] as String?,
       externalIds: externalIds is Map

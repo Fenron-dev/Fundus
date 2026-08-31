@@ -26,6 +26,7 @@ void main() {
                 },
                 'synonyms': ['Hidden Title'],
                 'description': '<b>Short</b> description',
+                'genres': ['Action', 'Comedy'],
                 'coverImage': {'large': 'https://img.example/cover.webp'},
                 'bannerImage': 'https://img.example/banner.webp',
               },
@@ -42,6 +43,7 @@ void main() {
     expect(results.single.alternateTitles, containsAll(['Secret Title', '秘密']));
     expect(results.single.contentSensitivity, 'adult_explicit');
     expect(results.single.description, 'Short description');
+    expect(results.single.genres, ['Action', 'Comedy']);
     expect(client.lastRequest?.url.toString(), 'https://graphql.anilist.co');
   });
 

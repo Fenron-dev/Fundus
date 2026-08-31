@@ -509,6 +509,8 @@ final class FundusLibrary {
     String? publisher,
     int? publishedYear,
     String? contentSensitivity,
+    List<String>? genres,
+    String? contentStyle,
   }) async {
     _ensureWritable();
     _database.updateWorkMetadata(
@@ -524,6 +526,8 @@ final class FundusLibrary {
       publisher: publisher,
       publishedYear: publishedYear,
       contentSensitivity: contentSensitivity,
+      genres: genres,
+      contentStyle: contentStyle,
     );
     await _writeMetadataSidecar(workId);
     return listWorks(
@@ -1193,6 +1197,8 @@ final class FundusLibrary {
         'publisher': work.publisher,
         'published_year': work.publishedYear,
         'content_sensitivity': work.contentSensitivity,
+        'content_style': work.contentStyle,
+        'genres': work.genres,
         'field_sources': {
           for (final entry in work.metadataOrigins.entries) entry.key: {'source': entry.value.source.name, 'updated_at': entry.value.updatedAt.toUtc().toIso8601String()},
         },
@@ -1265,6 +1271,12 @@ final class FundusLibrary {
             contentSensitivity: _readContentSensitivity(
               value['content_sensitivity'],
             ),
+            contentStyle: value['content_style'] as String?,
+            genres: value['genres'] is List
+                ? (value['genres'] as List).whereType<String>().toList(
+                    growable: false,
+                  )
+                : null,
             source: WorkMetadataSource.sidecar,
             updatedAt: await metaFile.lastModified(),
             fieldOrigins: fieldOrigins,

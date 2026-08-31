@@ -174,6 +174,11 @@ query ($search: String!, $perPage: Int!) {
       episodeCount: (value['episodes'] as num?)?.round(),
       isAdult: isAdult,
       description: _cleanDescription(value['description']),
+      genres: value['genres'] is List
+          ? (value['genres'] as List).whereType<String>().toList(
+              growable: false,
+            )
+          : const [],
       posterUrl:
           _stringFromMap(value['coverImage'], 'large') ??
           _stringFromMap(value['coverImage'], 'medium'),

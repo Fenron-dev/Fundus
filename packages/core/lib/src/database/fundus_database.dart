@@ -418,6 +418,8 @@ final class FundusDatabase {
     String? publisher,
     int? publishedYear,
     String? contentSensitivity,
+    List<String>? genres,
+    String? contentStyle,
     WorkMetadataSource source = WorkMetadataSource.user,
     DateTime? updatedAt,
     Map<String, WorkMetadataOrigin> fieldOrigins = const {},
@@ -491,6 +493,17 @@ final class FundusDatabase {
     if (normalizedSensitivity != null) {
       write('content_sensitivity', normalizedSensitivity);
     }
+    if (genres != null) {
+      write(
+        'genres',
+        genres
+            .map((value) => value.trim())
+            .where((value) => value.isNotEmpty)
+            .toSet()
+            .toList(growable: false),
+      );
+    }
+    if (contentStyle != null) write('content_style', contentStyle);
     write('title', normalizedTitle);
     write('series', series);
     write('series_sequence', seriesSequence);

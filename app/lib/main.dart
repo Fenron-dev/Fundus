@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fundus_core/fundus_core.dart';
+import 'package:http/http.dart' as http;
 import 'package:media_kit/media_kit.dart';
 import 'package:path/path.dart' as p;
 
@@ -44,6 +45,7 @@ import 'server/fundus_offline_store.dart';
 import 'server/fundus_remote_client.dart';
 import 'server/remote_servers_view.dart';
 import 'server/server_settings.dart';
+import 'video/video_metadata_dialog.dart';
 
 const _favoriteTag = 'Favorit';
 
@@ -4180,11 +4182,13 @@ class _VideoHero extends StatelessWidget {
     required this.work,
     required this.directoryPath,
     required this.onOpen,
+    required this.onLoadMetadata,
   });
 
   final LibraryWorkSummary work;
   final String? directoryPath;
   final VoidCallback? onOpen;
+  final VoidCallback? onLoadMetadata;
 
   @override
   Widget build(BuildContext context) {
@@ -4244,15 +4248,33 @@ class _VideoHero extends StatelessWidget {
             ],
           ),
         ],
-        if (onOpen != null) ...[
+        if (onOpen != null || onLoadMetadata != null) ...[
           const SizedBox(height: 16),
-          SizedBox(
-            width: wide ? 280 : double.infinity,
-            child: FilledButton.icon(
-              onPressed: onOpen,
-              icon: const Icon(Icons.play_arrow),
-              label: const Text('Abspielen'),
-            ),
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              if (onOpen != null)
+                SizedBox(
+                  width: wide ? 280 : double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: onOpen,
+                    icon: const Icon(Icons.play_arrow),
+                    label: Text(
+                      work.progressPosition != null &&
+                              work.progressPosition! > Duration.zero
+                          ? 'Fortsetzen'
+                          : 'Abspielen',
+                    ),
+                  ),
+                ),
+              if (onLoadMetadata != null)
+                OutlinedButton.icon(
+                  onPressed: onLoadMetadata,
+                  icon: const Icon(Icons.cloud_download_outlined),
+                  label: const Text('Details laden'),
+                ),
+            ],
           ),
         ],
       ],
@@ -4714,6 +4736,10 @@ class _DetailPanelState extends State<_DetailPanel> {
             onOpen: workFiles == null || workFiles.isEmpty
                 ? null
                 : () => _openDocumentWork(selectedWork, workFiles),
+            onLoadMetadata:
+                widget.library == null || widget.library!.isReadOnly || _saving
+                ? null
+                : () => _loadVideoMetadata(selectedWork),
           )
         else
           _DocumentHero(work: selectedWork, directoryPath: directoryPath),
@@ -5603,22 +5629,25 @@ class _DetailPanelState extends State<_DetailPanel> {
     final library = widget.library;
     if (library == null) return;
     final controller = FundusVideoPlayerController();
-    final opening = controller.open(
-      library,
-      work,
-      startFileId: startFileId,
-      startPosition: startPosition,
-    );
     try {
-      if (mounted) {
-        await showFundusVideoPlayer(context, controller: controller);
+      // The native video widget must only be created after the playlist and
+      // its resume position have been restored. Creating it while `open` was
+      // still running let the first decoded frame reset the player to zero.
+      await controller.open(
+        library,
+        work,
+        startFileId: startFileId,
+        startPosition: startPosition,
+      );
+      if (!mounted) return;
+      if (controller.error case final error?) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Video konnte nicht geöffnet werden: $error')),
+        );
+        return;
       }
-      await opening;
+      await showFundusVideoPlayer(context, controller: controller);
     } finally {
-      // Finish an in-flight open before disposing the native player. This is
-      // important when a user closes the player while a network volume is
-      // still resolving the first video file.
-      await opening;
       await controller.close();
       controller.dispose();
     }
@@ -6377,6 +6406,79 @@ class _DetailPanelState extends State<_DetailPanel> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+
+  Future<void> _loadVideoMetadata(LibraryWorkSummary work) async {
+    final library = widget.library;
+    if (library == null || library.isReadOnly) return;
+    final anime =
+        work.contentStyle == 'anime' ||
+        work.tags.any((tag) => tag.toLowerCase() == 'anime');
+    final candidate = await showVideoMetadataDialog(
+      context,
+      initialQuery: work.title,
+      anime: anime,
+    );
+    if (candidate == null || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      var updated = await library.updateWorkMetadata(
+        workId: work.id,
+        title: candidate.title,
+        authors: work.authors.isNotEmpty ? work.authors : [work.author],
+        subtitle: work.subtitle,
+        series: work.series,
+        seriesSequence: work.seriesSequence,
+        narrators: work.narrators,
+        language: work.language,
+        description: candidate.description ?? work.description,
+        publisher: work.publisher,
+        publishedYear: candidate.releaseYear ?? work.publishedYear,
+        contentSensitivity:
+            candidate.contentSensitivity ?? work.contentSensitivity,
+        genres: candidate.genres.isEmpty ? work.genres : candidate.genres,
+        contentStyle: candidate.contentStyle ?? work.contentStyle,
+      );
+      final poster = candidate.posterUrl;
+      if (poster != null) {
+        try {
+          final response = await http
+              .get(Uri.parse(poster))
+              .timeout(const Duration(seconds: 15));
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            await library.cacheGeneratedCover(
+              workId: work.id,
+              bytes: response.bodyBytes,
+              extension: poster.toLowerCase().contains('.png') ? 'png' : 'jpg',
+            );
+            updated = library
+                .listWorks(includeMissing: true)
+                .firstWhere((item) => item.id == work.id);
+          }
+        } on Object {
+          // Metadata is still useful when an optional poster download fails.
+        }
+      }
+      if (!mounted) return;
+      setState(() => _editedWork = updated);
+      widget.onMetadataChanged?.call(updated);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Details von ${candidate.provider.toUpperCase()} übernommen.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Details konnten nicht gespeichert werden: $error'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 

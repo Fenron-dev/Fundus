@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:media_kit/media_kit.dart';
 
+import '../diagnostics/fundus_diagnostics.dart';
 import 'playback_autosave_settings.dart';
 
 /// Local video playback kept separate from the audiobook controller.
@@ -17,7 +18,7 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       _player.stream.playing.listen((value) {
         _playing = value;
         notifyListeners();
-        if (!value) unawaited(persist());
+        if (!value && !_restoringPosition) unawaited(persist());
       }),
       _player.stream.position.listen((value) {
         _position = value;
@@ -26,6 +27,7 @@ final class FundusVideoPlayerController extends ChangeNotifier {
           _work?.kind ?? 'video',
         );
         if (_playing &&
+            !_restoringPosition &&
             interval > Duration.zero &&
             DateTime.now().difference(_lastPersistedAt) >= interval) {
           unawaited(persist());
@@ -37,8 +39,12 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       }),
       _player.stream.playlist.listen((playlist) {
         if (_tracks.isEmpty) return;
-        _currentIndex = playlist.index.clamp(0, _tracks.length - 1);
-        _position = Duration.zero;
+        final nextIndex = playlist.index.clamp(0, _tracks.length - 1);
+        final changedTrack = nextIndex != _currentIndex;
+        _currentIndex = nextIndex;
+        if (changedTrack && !_restoringPosition) {
+          _position = Duration.zero;
+        }
         notifyListeners();
       }),
       _player.stream.completed.listen((completed) {
@@ -65,6 +71,7 @@ final class FundusVideoPlayerController extends ChangeNotifier {
   bool _loading = false;
   bool _ready = false;
   bool _persisting = false;
+  bool _restoringPosition = false;
   bool _closed = false;
   String? _error;
 
@@ -114,6 +121,7 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       return;
     }
     try {
+      _restoringPosition = true;
       await _player.open(
         Playlist([
           for (final item in _tracks) Media(item.absolutePath),
@@ -126,21 +134,34 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       notifyListeners();
       final resume =
           startPosition ??
-          (progress?.position.kind == MediaPositionKind.time
+          (progress?.position.kind == MediaPositionKind.time &&
+                  progress?.fileId == _tracks[_currentIndex].fileId
               ? Duration(
                   milliseconds: ((progress?.position.numericValue ?? 0) * 1000)
                       .round(),
                 )
               : Duration.zero);
+      unawaited(
+        FundusDiagnostics.instance.record('video.resume_loaded', {
+          'work_id': work.id,
+          'file_id': _tracks[_currentIndex].fileId,
+          'saved_file_id': progress?.fileId,
+          'target_ms': resume.inMilliseconds,
+          'revision': progress?.revision,
+        }),
+      );
+      // media-kit can acknowledge a seek before the first video frame exists
+      // without applying it to the decoder. Start decoding first and keep
+      // progress persistence suppressed until the saved position is verified.
+      await _player.play();
       if (resume > Duration.zero) {
-        await _player.seek(resume);
-        _position = resume;
+        _position = await _seekAndVerify(resume);
         notifyListeners();
       }
-      // Seek before starting playback. Some containers emit a fresh zero
-      // position when playback starts directly after opening the playlist.
-      await _player.play();
+      _restoringPosition = false;
+      _lastPersistedAt = DateTime.now();
     } catch (error) {
+      _restoringPosition = false;
       _loading = false;
       _ready = false;
       _error = error.toString();
@@ -149,7 +170,17 @@ final class FundusVideoPlayerController extends ChangeNotifier {
   }
 
   Future<void> persist({bool finished = false}) async {
-    if (!_ready || _persisting || _library == null || track == null) return;
+    if (!_ready ||
+        _restoringPosition ||
+        _persisting ||
+        _library == null ||
+        track == null) {
+      return;
+    }
+    final playerPosition = _player.state.position;
+    if (playerPosition > Duration.zero || _position == Duration.zero) {
+      _position = playerPosition;
+    }
     _persisting = true;
     try {
       final current = track!;
@@ -169,6 +200,15 @@ final class FundusVideoPlayerController extends ChangeNotifier {
         finished: finished,
       );
       _lastPersistedAt = DateTime.now();
+      unawaited(
+        FundusDiagnostics.instance.record('video.progress_saved', {
+          'work_id': _work!.id,
+          'file_id': current.fileId,
+          'position_ms': _position.inMilliseconds,
+          'duration_ms': _duration.inMilliseconds,
+          'finished': finished,
+        }),
+      );
     } finally {
       _persisting = false;
     }
@@ -194,6 +234,29 @@ final class FundusVideoPlayerController extends ChangeNotifier {
     await persist();
     await _player.pause();
     _ready = false;
+  }
+
+  Future<Duration> _seekAndVerify(Duration target) async {
+    var actual = _player.state.position;
+    for (var attempt = 1; attempt <= 6; attempt++) {
+      await _player.seek(target);
+      await Future<void>.delayed(Duration(milliseconds: 100 * attempt));
+      actual = _player.state.position;
+      unawaited(
+        FundusDiagnostics.instance.record('video.resume_seek_attempt', {
+          'work_id': _work?.id,
+          'file_id': track?.fileId,
+          'attempt': attempt,
+          'target_ms': target.inMilliseconds,
+          'actual_ms': actual.inMilliseconds,
+          'duration_ms': _player.state.duration.inMilliseconds,
+        }),
+      );
+      if ((actual - target).abs() <= const Duration(seconds: 2)) return actual;
+    }
+    throw StateError(
+      'Fortsetzungsposition konnte nach sechs Versuchen nicht gesetzt werden.',
+    );
   }
 
   @override
