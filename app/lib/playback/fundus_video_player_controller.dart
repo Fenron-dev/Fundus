@@ -6,6 +6,7 @@ import 'package:media_kit/media_kit.dart';
 
 import '../diagnostics/fundus_diagnostics.dart';
 import 'playback_autosave_settings.dart';
+import 'video_track_preferences.dart';
 
 /// Local video playback kept separate from the audiobook controller.
 ///
@@ -141,6 +142,11 @@ final class FundusVideoPlayerController extends ChangeNotifier {
                       .round(),
                 )
               : Duration.zero);
+      final trackPreference = await VideoTrackPreferences.load(
+        kind: work.kind,
+        workId: work.id,
+        fileId: track?.fileId,
+      );
       unawaited(
         FundusDiagnostics.instance.record('video.resume_loaded', {
           'work_id': work.id,
@@ -154,6 +160,7 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       // without applying it to the decoder. Start decoding first and keep
       // progress persistence suppressed until the saved position is verified.
       await _player.play();
+      await _applyTrackPreference(trackPreference);
       if (resume > Duration.zero) {
         _position = await _seekAndVerify(resume);
         notifyListeners();
@@ -250,6 +257,46 @@ final class FundusVideoPlayerController extends ChangeNotifier {
     );
   }
 
+  Future<void> rememberAudioLanguage(String? language) async {
+    final work = _work;
+    final current = track;
+    if (work == null || current == null) return;
+    final preference = await VideoTrackPreferences.load(
+      kind: work.kind,
+      workId: work.id,
+      fileId: current.fileId,
+    );
+    await VideoTrackPreferences.save(
+      kind: work.kind,
+      workId: work.id,
+      fileId: current.fileId,
+      preference: preference.copyWith(audioLanguage: language),
+    );
+  }
+
+  Future<void> rememberSubtitlePreference({
+    required bool enabled,
+    String? language,
+  }) async {
+    final work = _work;
+    final current = track;
+    if (work == null || current == null) return;
+    final preference = await VideoTrackPreferences.load(
+      kind: work.kind,
+      workId: work.id,
+      fileId: current.fileId,
+    );
+    await VideoTrackPreferences.save(
+      kind: work.kind,
+      workId: work.id,
+      fileId: current.fileId,
+      preference: preference.copyWith(
+        subtitlesEnabled: enabled,
+        subtitleLanguage: language,
+      ),
+    );
+  }
+
   Future<void> close() async {
     if (_closed) return;
     await persist();
@@ -278,6 +325,53 @@ final class FundusVideoPlayerController extends ChangeNotifier {
     throw StateError(
       'Fortsetzungsposition konnte nach sechs Versuchen nicht gesetzt werden.',
     );
+  }
+
+  Future<void> _applyTrackPreference(VideoTrackPreference preference) async {
+    // Track metadata is populated asynchronously by media-kit after opening
+    // the container. Give it a short window before applying the persisted
+    // selection, while leaving the player's automatic choice as fallback.
+    for (var attempt = 0; attempt < 8; attempt++) {
+      final tracks = _player.state.tracks;
+      final audio = _findAudioLanguage(tracks.audio, preference.audioLanguage);
+      final subtitles = _findSubtitleLanguage(
+        tracks.subtitle,
+        preference.subtitleLanguage,
+      );
+      if (audio != null) await _player.setAudioTrack(audio);
+      if (!preference.subtitlesEnabled) {
+        await _player.setSubtitleTrack(SubtitleTrack.no());
+      } else if (subtitles != null) {
+        await _player.setSubtitleTrack(subtitles);
+      }
+      if (audio != null || subtitles != null || tracks.subtitle.isNotEmpty) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+  }
+
+  AudioTrack? _findAudioLanguage(List<AudioTrack> tracks, String? language) {
+    if (language == null || language.isEmpty) return null;
+    final normalized = language.toLowerCase().split('-').first;
+    for (final item in tracks) {
+      final value = (item.language ?? '').toLowerCase().split('-').first;
+      if (value == normalized) return item;
+    }
+    return null;
+  }
+
+  SubtitleTrack? _findSubtitleLanguage(
+    List<SubtitleTrack> tracks,
+    String? language,
+  ) {
+    if (language == null || language.isEmpty) return null;
+    final normalized = language.toLowerCase().split('-').first;
+    for (final item in tracks) {
+      final value = (item.language ?? '').toLowerCase().split('-').first;
+      if (value == normalized) return item;
+    }
+    return null;
   }
 
   @override

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -54,15 +55,25 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
   void initState() {
     super.initState();
     final wasPlaying = widget.player.state.playing;
+    final initialPosition = widget.player.state.position;
     _videoController = VideoController(widget.player);
     // Attach the video texture before resuming a player that was opened at a
     // saved position; otherwise audio may play while the picture is black.
     if (wasPlaying) {
-      widget.player.pause();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) widget.player.play();
-      });
+      unawaited(_resumeAfterTexture(initialPosition));
     }
+  }
+
+  Future<void> _resumeAfterTexture(Duration position) async {
+    await widget.player.pause();
+    await WidgetsBinding.instance.endOfFrame;
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    if (!mounted) return;
+    // Re-apply the position after the video texture is attached. This avoids
+    // the media-kit decoder keeping audio at the saved time while its first
+    // video frame remains black.
+    if (position > Duration.zero) await widget.player.seek(position);
+    await widget.player.play();
   }
 
   @override
@@ -115,6 +126,9 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
                   subtitle: Text(track.language ?? ''),
                   onTap: () async {
                     await widget.player.setAudioTrack(track);
+                    await widget.fundusController?.rememberAudioLanguage(
+                      track.language,
+                    );
                     if (context.mounted) Navigator.pop(context);
                   },
                 ),
@@ -126,6 +140,9 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
                 title: const Text('Aus'),
                 onTap: () async {
                   await widget.player.setSubtitleTrack(SubtitleTrack.no());
+                  await widget.fundusController?.rememberSubtitlePreference(
+                    enabled: false,
+                  );
                   if (context.mounted) Navigator.pop(context);
                 },
               ),
@@ -136,6 +153,10 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
                   subtitle: Text(track.language ?? ''),
                   onTap: () async {
                     await widget.player.setSubtitleTrack(track);
+                    await widget.fundusController?.rememberSubtitlePreference(
+                      enabled: true,
+                      language: track.language,
+                    );
                     if (context.mounted) Navigator.pop(context);
                   },
                 ),

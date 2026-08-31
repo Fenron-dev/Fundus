@@ -4450,7 +4450,9 @@ class _DocumentFilesPanelState extends State<_DocumentFilesPanel> {
             number: episode?.episode ?? widget.files.indexOf(file) + 1,
             readState: _readState(file),
             availability: widget.availability,
-            subtitle: Text(file.relativePath),
+            subtitle: widget.isVideo
+                ? _VideoFileTechnicalSubtitle(file: file)
+                : Text(file.relativePath),
           ),
           onTap: () => widget.onOpen(file),
         ),
@@ -4460,48 +4462,32 @@ class _DocumentFilesPanelState extends State<_DocumentFilesPanel> {
   }
 }
 
-class _VideoTechnicalInfo extends StatelessWidget {
-  const _VideoTechnicalInfo({required this.files});
+final class _VideoFileTechnicalSubtitle extends StatelessWidget {
+  const _VideoFileTechnicalSubtitle({required this.file});
 
-  final List<LibraryPlaybackTrack> files;
+  final LibraryPlaybackTrack file;
 
   @override
-  Widget build(BuildContext context) => Card(
-    child: ExpansionTile(
-      initiallyExpanded: true,
-      leading: const Icon(Icons.info_outline),
-      title: const Text('Technische Informationen'),
-      subtitle: const Text('Container, Dateigröße und verfügbare Spuren'),
-      children: [
-        for (final file in files)
-          FutureBuilder<int>(
-            future: File(file.absolutePath).length(),
-            builder: (context, snapshot) {
-              final size = snapshot.data;
-              final extension = p
-                  .extension(file.title)
-                  .replaceFirst('.', '')
-                  .toUpperCase();
-              final sizeLabel = size == null
-                  ? 'wird geladen …'
-                  : _formatBytes(size);
-              return ListTile(
-                dense: true,
-                leading: const Icon(Icons.movie_outlined),
-                title: Text(file.title),
-                subtitle: Text('$extension · $sizeLabel\n${file.relativePath}'),
-                isThreeLine: true,
-              );
-            },
-          ),
-      ],
-    ),
+  Widget build(BuildContext context) => FutureBuilder<int>(
+    future: File(file.absolutePath).length(),
+    builder: (context, snapshot) {
+      final extension = p
+          .extension(file.title)
+          .replaceFirst('.', '')
+          .toUpperCase();
+      final size = snapshot.data;
+      final sizeLabel = size == null
+          ? 'Größe wird geladen …'
+          : _formatBytes(size);
+      return Text('$extension · $sizeLabel · ${file.relativePath}');
+    },
   );
 
   static String _formatBytes(int bytes) {
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024)
+    if (bytes < 1024 * 1024 * 1024) {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 }
@@ -4909,10 +4895,6 @@ class _DetailPanelState extends State<_DetailPanel> {
                   : WorkContentAvailability.local,
               onOpen: _openDocument,
             ),
-            if (_isVideoWorkKind(selectedWork.kind)) ...[
-              const SizedBox(height: 12),
-              _VideoTechnicalInfo(files: workFiles),
-            ],
           ],
         ],
         if (selectedWork.kind == 'audiobook' &&
