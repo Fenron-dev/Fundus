@@ -4157,32 +4157,51 @@ class _DocumentFilesPanelState extends State<_DocumentFilesPanel> {
         ],
         icon: const Icon(Icons.sort),
       ),
-      children: [
-        for (final file in _files)
-          Builder(
-            builder: (context) {
-              final episode = widget.isVideo
-                  ? parseVideoEpisode(file.title)
-                  : null;
-              final title = episode == null
-                  ? file.title
-                  : '${episode.label} · ${episode.title}';
-              return WorkContentListTile(
-                item: WorkContentItemViewModel(
-                  id: file.fileId,
-                  title: title,
-                  number: episode?.episode ?? widget.files.indexOf(file) + 1,
-                  readState: _readState(file),
-                  availability: widget.availability,
-                  subtitle: Text(file.relativePath),
-                ),
-                onTap: () => widget.onOpen(file),
-              );
-            },
-          ),
-      ],
+      children: [..._fileRows()],
     ),
   );
+
+  List<Widget> _fileRows() {
+    final rows = <Widget>[];
+    int? currentSeason;
+    for (final file in _files) {
+      final episode = widget.isVideo ? parseVideoEpisode(file.title) : null;
+      if (widget.isVideo &&
+          episode != null &&
+          episode.season != currentSeason) {
+        currentSeason = episode.season;
+        rows.add(
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.video_library_outlined),
+            title: Text(
+              episode.season == 0
+                  ? 'Specials / Staffel 00'
+                  : 'Staffel ${episode.season}',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+        );
+      }
+      final title = episode == null
+          ? file.title
+          : '${episode.label} · ${episode.title}';
+      rows.add(
+        WorkContentListTile(
+          item: WorkContentItemViewModel(
+            id: file.fileId,
+            title: title,
+            number: episode?.episode ?? widget.files.indexOf(file) + 1,
+            readState: _readState(file),
+            availability: widget.availability,
+            subtitle: Text(file.relativePath),
+          ),
+          onTap: () => widget.onOpen(file),
+        ),
+      );
+    }
+    return rows;
+  }
 }
 
 class _AudioCompatibilityPanel extends StatelessWidget {
