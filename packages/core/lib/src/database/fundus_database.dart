@@ -552,6 +552,47 @@ final class FundusDatabase {
     }
   }
 
+  /// Changes the user-facing media classification without rescanning files.
+  /// This is intentionally separate from metadata provider updates so a
+  /// manual choice (for example Serie -> Anime-Serie) is not overwritten by
+  /// the next online metadata refresh.
+  void updateWorkKind({
+    required String workId,
+    required String kind,
+    String? contentStyle,
+  }) {
+    const supported = {
+      'movie',
+      'tv',
+      'video',
+      'audiobook',
+      'webnovel',
+      'manga',
+      'book',
+      'document',
+      'image',
+      'podcast',
+    };
+    if (!supported.contains(kind)) {
+      throw ArgumentError.value(kind, 'kind', 'Nicht unterstützter Medientyp.');
+    }
+    final rows = _database.select(
+      'SELECT metadata_json FROM works WHERE id = ?',
+      [workId],
+    );
+    if (rows.isEmpty) throw StateError('Werk wurde nicht gefunden.');
+    final metadata = jsonDecode(rows.first['metadata_json'] as String) as Map;
+    if (contentStyle == null) {
+      metadata.remove('content_style');
+    } else {
+      metadata['content_style'] = contentStyle;
+    }
+    _database.execute(
+      'UPDATE works SET kind = ?, metadata_json = ? WHERE id = ?',
+      [kind, jsonEncode(metadata), workId],
+    );
+  }
+
   List<LibraryWorkSummary> listWorks({bool includeMissing = false}) {
     final rows = _database.select('''
       SELECT w.id, w.kind, w.title, w.series_name, w.series_sequence, w.added_at,

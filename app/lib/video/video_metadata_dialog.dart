@@ -5,6 +5,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'video_metadata_provider.dart';
 
 const _tmdbKeyStorageKey = 'fundus.video.tmdb_api_key';
+const _metadataLanguageStorageKey = 'fundus.video.metadata_language';
 const _secureStorage = FlutterSecureStorage();
 
 /// Searches provider-neutral video metadata and returns the candidate selected
@@ -44,6 +45,7 @@ final class _VideoMetadataDialogState extends State<_VideoMetadataDialog> {
   final _apiKey = TextEditingController();
   late _VideoProviderChoice _provider;
   bool _loading = false;
+  String _language = 'de-DE';
   String? _error;
   List<VideoProviderMatch> _matches = const [];
 
@@ -57,6 +59,8 @@ final class _VideoMetadataDialogState extends State<_VideoMetadataDialog> {
 
   Future<void> _loadKey() async {
     _apiKey.text = await _secureStorage.read(key: _tmdbKeyStorageKey) ?? '';
+    _language =
+        await _secureStorage.read(key: _metadataLanguageStorageKey) ?? 'de-DE';
     if (mounted) setState(() {});
   }
 
@@ -83,7 +87,7 @@ final class _VideoMetadataDialogState extends State<_VideoMetadataDialog> {
     try {
       final results = await VideoMetadataService([
         provider,
-      ]).search(query, language: 'de-DE');
+      ]).search(query, language: _language);
       if (!mounted) return;
       setState(() {
         _matches = results;
@@ -122,6 +126,32 @@ final class _VideoMetadataDialogState extends State<_VideoMetadataDialog> {
             onSelectionChanged: _loading
                 ? null
                 : (value) => setState(() => _provider = value.first),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: _language,
+            decoration: const InputDecoration(
+              labelText: 'Metadatensprache',
+              prefixIcon: Icon(Icons.translate),
+            ),
+            items: const [
+              DropdownMenuItem(value: 'de-DE', child: Text('Deutsch')),
+              DropdownMenuItem(value: 'en-US', child: Text('English')),
+              DropdownMenuItem(
+                value: 'ja-JP',
+                child: Text('Original / Japanisch'),
+              ),
+            ],
+            onChanged: _loading
+                ? null
+                : (value) async {
+                    if (value == null) return;
+                    setState(() => _language = value);
+                    await _secureStorage.write(
+                      key: _metadataLanguageStorageKey,
+                      value: value,
+                    );
+                  },
           ),
           const SizedBox(height: 12),
           TextField(

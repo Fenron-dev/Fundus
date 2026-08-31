@@ -124,7 +124,7 @@ query ($search: String!, $perPage: Int!) {
     final candidates = <VideoProviderCandidate>[];
     for (final value in media) {
       if (value is! Map) continue;
-      final candidate = _candidate(value);
+      final candidate = _candidate(value, language: language);
       if (candidate != null) candidates.add(candidate);
     }
     return candidates;
@@ -140,15 +140,15 @@ query ($search: String!, $perPage: Int!) {
     }
   }
 
-  VideoProviderCandidate? _candidate(Map value) {
+  VideoProviderCandidate? _candidate(Map value, {String? language}) {
     final id = value['id'];
     final titles = value['title'];
     if (id is! num || titles is! Map) return null;
-    final title = _firstString([
-      titles['english'],
-      titles['romaji'],
-      titles['native'],
-    ]);
+    final title = _firstString(
+      language?.toLowerCase().startsWith('ja') == true
+          ? [titles['native'], titles['romaji'], titles['english']]
+          : [titles['english'], titles['romaji'], titles['native']],
+    );
     if (title == null) return null;
     final alternateTitles = <String>{
       for (final candidate in [

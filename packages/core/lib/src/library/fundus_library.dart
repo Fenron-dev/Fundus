@@ -535,6 +535,23 @@ final class FundusLibrary {
     ).firstWhere((work) => work.id == workId);
   }
 
+  Future<LibraryWorkSummary> updateWorkKind({
+    required String workId,
+    required String kind,
+    String? contentStyle,
+  }) async {
+    _ensureWritable();
+    _database.updateWorkKind(
+      workId: workId,
+      kind: kind,
+      contentStyle: contentStyle,
+    );
+    await _writeMetadataSidecar(workId);
+    return listWorks(
+      includeMissing: true,
+    ).firstWhere((work) => work.id == workId);
+  }
+
   Future<WorkAnnotations> replaceWorkTags(
     String workId,
     Iterable<String> tags,

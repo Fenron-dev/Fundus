@@ -229,6 +229,27 @@ final class FundusVideoPlayerController extends ChangeNotifier {
 
   Future<void> previous() => _player.previous();
 
+  /// Adds a timestamp bookmark for the currently playing episode. This is
+  /// also used by the video screenshot action so the captured frame can be
+  /// revisited from the work details.
+  Future<WorkAnnotations?> addBookmarkAtCurrent({
+    String? label,
+    String? note,
+  }) async {
+    final library = _library;
+    final work = _work;
+    final current = track;
+    if (library == null || work == null || current == null || !_ready)
+      return null;
+    return library.addBookmark(
+      workId: work.id,
+      fileId: current.fileId,
+      position: _position,
+      label: label,
+      note: note,
+    );
+  }
+
   Future<void> close() async {
     if (_closed) return;
     await persist();

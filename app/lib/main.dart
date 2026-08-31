@@ -1371,7 +1371,7 @@ class _LibraryShellState extends State<LibraryShell> {
   bool _playerExpanded = false;
   LibraryWorkSummary? _inlineDetailWork;
   double _leftPaneWidth = 236;
-  double _detailPaneWidth = 368;
+  double _detailPaneWidth = 480;
   String? _playlistTypeFilter;
   List<LibrarySavedView> _savedViews = const [];
   String? _lastTappedWorkId;
@@ -1567,9 +1567,9 @@ class _LibraryShellState extends State<LibraryShell> {
                     _ResizeHandle(
                       onDrag: (delta) => setState(
                         () => _detailPaneWidth = (_detailPaneWidth - delta)
-                            .clamp(280, 680),
+                            .clamp(420, 760),
                       ),
-                      onReset: () => setState(() => _detailPaneWidth = 368),
+                      onReset: () => setState(() => _detailPaneWidth = 480),
                     ),
                     SizedBox(
                       width: _detailPaneWidth,
@@ -4183,12 +4183,14 @@ class _VideoHero extends StatelessWidget {
     required this.directoryPath,
     required this.onOpen,
     required this.onLoadMetadata,
+    this.onChangeType,
   });
 
   final LibraryWorkSummary work;
   final String? directoryPath;
   final VoidCallback? onOpen;
   final VoidCallback? onLoadMetadata;
+  final VoidCallback? onChangeType;
 
   @override
   Widget build(BuildContext context) {
@@ -4248,7 +4250,9 @@ class _VideoHero extends StatelessWidget {
             ],
           ),
         ],
-        if (onOpen != null || onLoadMetadata != null) ...[
+        if (onOpen != null ||
+            onLoadMetadata != null ||
+            onChangeType != null) ...[
           const SizedBox(height: 16),
           Wrap(
             spacing: 10,
@@ -4273,6 +4277,12 @@ class _VideoHero extends StatelessWidget {
                   onPressed: onLoadMetadata,
                   icon: const Icon(Icons.cloud_download_outlined),
                   label: const Text('Details laden'),
+                ),
+              if (onChangeType != null)
+                OutlinedButton.icon(
+                  onPressed: onChangeType,
+                  icon: const Icon(Icons.category_outlined),
+                  label: const Text('Typ zuweisen'),
                 ),
             ],
           ),
@@ -4447,6 +4457,52 @@ class _DocumentFilesPanelState extends State<_DocumentFilesPanel> {
       );
     }
     return rows;
+  }
+}
+
+class _VideoTechnicalInfo extends StatelessWidget {
+  const _VideoTechnicalInfo({required this.files});
+
+  final List<LibraryPlaybackTrack> files;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: ExpansionTile(
+      initiallyExpanded: true,
+      leading: const Icon(Icons.info_outline),
+      title: const Text('Technische Informationen'),
+      subtitle: const Text('Container, Dateigröße und verfügbare Spuren'),
+      children: [
+        for (final file in files)
+          FutureBuilder<int>(
+            future: File(file.absolutePath).length(),
+            builder: (context, snapshot) {
+              final size = snapshot.data;
+              final extension = p
+                  .extension(file.title)
+                  .replaceFirst('.', '')
+                  .toUpperCase();
+              final sizeLabel = size == null
+                  ? 'wird geladen …'
+                  : _formatBytes(size);
+              return ListTile(
+                dense: true,
+                leading: const Icon(Icons.movie_outlined),
+                title: Text(file.title),
+                subtitle: Text('$extension · $sizeLabel\n${file.relativePath}'),
+                isThreeLine: true,
+              );
+            },
+          ),
+      ],
+    ),
+  );
+
+  static String _formatBytes(int bytes) {
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024)
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 }
 
@@ -4740,6 +4796,10 @@ class _DetailPanelState extends State<_DetailPanel> {
                 widget.library == null || widget.library!.isReadOnly || _saving
                 ? null
                 : () => _loadVideoMetadata(selectedWork),
+            onChangeType:
+                widget.library == null || widget.library!.isReadOnly || _saving
+                ? null
+                : () => _changeVideoType(selectedWork),
           )
         else
           _DocumentHero(work: selectedWork, directoryPath: directoryPath),
@@ -4849,6 +4909,10 @@ class _DetailPanelState extends State<_DetailPanel> {
                   : WorkContentAvailability.local,
               onOpen: _openDocument,
             ),
+            if (_isVideoWorkKind(selectedWork.kind)) ...[
+              const SizedBox(height: 12),
+              _VideoTechnicalInfo(files: workFiles),
+            ],
           ],
         ],
         if (selectedWork.kind == 'audiobook' &&
@@ -6406,6 +6470,76 @@ class _DetailPanelState extends State<_DetailPanel> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+
+  Future<void> _changeVideoType(LibraryWorkSummary work) async {
+    final result = await showDialog<(String, String?)>(
+      context: context,
+      builder: (context) {
+        var selected = work.kind == 'movie' && work.contentStyle == 'anime'
+            ? 'anime_movie'
+            : work.kind == 'tv' && work.contentStyle == 'anime'
+            ? 'anime_tv'
+            : work.kind == 'movie'
+            ? 'movie'
+            : 'tv';
+        return StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: const Text('Videotyp zuweisen'),
+            content: DropdownButtonFormField<String>(
+              value: selected,
+              decoration: const InputDecoration(labelText: 'Typ'),
+              items: const [
+                DropdownMenuItem(value: 'movie', child: Text('Film')),
+                DropdownMenuItem(value: 'tv', child: Text('Serie')),
+                DropdownMenuItem(
+                  value: 'anime_movie',
+                  child: Text('Anime-Film'),
+                ),
+                DropdownMenuItem(value: 'anime_tv', child: Text('Anime-Serie')),
+              ],
+              onChanged: (value) =>
+                  setState(() => selected = value ?? selected),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Abbrechen'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, (
+                  selected.endsWith('_movie')
+                      ? 'movie'
+                      : selected.endsWith('_tv')
+                      ? 'tv'
+                      : selected,
+                  selected.startsWith('anime_') ? 'anime' : null,
+                )),
+                child: const Text('Speichern'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (result == null || widget.library == null || !mounted) return;
+    try {
+      final updated = await widget.library!.updateWorkKind(
+        workId: work.id,
+        kind: result.$1,
+        contentStyle: result.$2,
+      );
+      if (!mounted) return;
+      setState(() => _editedWork = updated);
+      widget.onMetadataChanged?.call(updated);
+    } on Object catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Typ konnte nicht gespeichert werden: $error'),
+          ),
+        );
     }
   }
 
