@@ -1,9 +1,10 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fundus_core/fundus_core.dart';
 import 'package:http/http.dart' as http;
 
-import '../lib/video/video_metadata_provider.dart';
+import 'package:fundus/video/video_metadata_provider.dart';
 
 void main() {
   test('AniList maps alternate titles and adult sensitivity', () async {
@@ -100,6 +101,24 @@ void main() {
       ),
     );
   });
+
+  test('metadata service ranks results across optional providers', () async {
+    final service = VideoMetadataService([
+      _StaticProvider([
+        const VideoProviderCandidate(
+          provider: 'anilist',
+          providerId: '1',
+          title: 'My Anime',
+        ),
+      ]),
+      _FailingProvider(),
+    ]);
+
+    final matches = await service.search('my anime');
+    expect(matches, hasLength(1));
+    expect(matches.single.candidate.providerId, '1');
+    expect(matches.single.score, 1);
+  });
 }
 
 final class _StubClient extends http.BaseClient {
@@ -118,4 +137,32 @@ final class _StubClient extends http.BaseClient {
       headers: const {'content-type': 'application/json'},
     );
   }
+}
+
+final class _StaticProvider implements VideoMetadataProvider {
+  const _StaticProvider(this.values);
+
+  final List<VideoProviderCandidate> values;
+
+  @override
+  String get provider => 'static';
+
+  @override
+  Future<List<VideoProviderCandidate>> search(
+    String query, {
+    int limit = 10,
+    String? language,
+  }) async => values;
+}
+
+final class _FailingProvider implements VideoMetadataProvider {
+  @override
+  String get provider => 'failing';
+
+  @override
+  Future<List<VideoProviderCandidate>> search(
+    String query, {
+    int limit = 10,
+    String? language,
+  }) => throw const VideoProviderException('failing', 'offline');
 }

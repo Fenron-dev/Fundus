@@ -25,6 +25,42 @@ abstract interface class VideoMetadataProvider {
   });
 }
 
+/// Combines configured providers and applies the same local ranking rules to
+/// all results. A failing optional provider never hides results from others.
+final class VideoMetadataService {
+  const VideoMetadataService(this.providers);
+
+  final List<VideoMetadataProvider> providers;
+
+  Future<List<VideoProviderMatch>> search(
+    String query, {
+    int limitPerProvider = 10,
+    String? language,
+  }) async {
+    final responses = await Future.wait([
+      for (final provider in providers)
+        _safeSearch(provider, query, limitPerProvider, language),
+    ]);
+    return rankVideoProviderMatches(
+      query,
+      responses.expand((candidates) => candidates),
+    );
+  }
+
+  Future<List<VideoProviderCandidate>> _safeSearch(
+    VideoMetadataProvider provider,
+    String query,
+    int limit,
+    String? language,
+  ) async {
+    try {
+      return await provider.search(query, limit: limit, language: language);
+    } on Object {
+      return const [];
+    }
+  }
+}
+
 /// Public AniList GraphQL search. No account or API key is required.
 final class AniListVideoProvider implements VideoMetadataProvider {
   AniListVideoProvider({http.Client? client, this.endpoint = _defaultEndpoint})
