@@ -28,6 +28,7 @@ void main() {
       Directory('${temporary.path}/Filme und mehr'),
       title: 'Zweites Werk',
       bytes: [10, 11, 12],
+      contentSensitivity: 'adult_explicit',
     );
     work = firstLibrary.listWorks().single;
     track = firstLibrary.playbackTracks(work.id).single;
@@ -208,6 +209,51 @@ void main() {
     );
     expect(source, isNot(contains(temporary.path)));
   });
+
+  test(
+    'paired devices cannot browse HHH works without explicit permission',
+    () async {
+      const deviceToken = 'device-token';
+      final authority = FundusPairingAuthority(
+        devices: [
+          FundusPairedDevice(
+            id: 'phone-1',
+            name: 'Telefon',
+            tokenHash: FundusPairingAuthority.tokenDigest(deviceToken),
+            pairedAt: DateTime.utc(2026, 1, 1),
+          ),
+        ],
+      );
+      final pairedServer = FundusServerHandler(
+        token: 'secret',
+        serverId: 'server-test',
+        registry: registry,
+        pairingAuthority: authority,
+      );
+      final libraryId = secondLibrary.manifest.libraryId;
+      final workId = secondLibrary.listWorks().single.id;
+      final request = (String path) => Request(
+        'GET',
+        Uri.parse('http://localhost$path'),
+        headers: {'authorization': 'Bearer $deviceToken'},
+      );
+
+      final hidden = await pairedServer.handler(
+        request('/v1/libraries/$libraryId/works'),
+      );
+      expect((await _json(hidden))['works'], isEmpty);
+      final hiddenProgress = await pairedServer.handler(
+        request('/v1/libraries/$libraryId/progress/$workId'),
+      );
+      expect(hiddenProgress.statusCode, 404);
+
+      await authority.setAdultExplicitAllowed('phone-1', true);
+      final visible = await pairedServer.handler(
+        request('/v1/libraries/$libraryId/works'),
+      );
+      expect((await _json(visible))['works'], hasLength(1));
+    },
+  );
 
   test('returns work details and opaque file IDs', () async {
     final libraryId = firstLibrary.manifest.libraryId;
@@ -646,6 +692,7 @@ Future<FundusLibrary> _library(
   required String title,
   required List<int> bytes,
   bool withCover = false,
+  String? contentSensitivity,
 }) async {
   final work = Directory('${root.path}/Audiobooks/Autor/Serie/01 - $title');
   await work.create(recursive: true);
@@ -655,6 +702,23 @@ Future<FundusLibrary> _library(
   }
   final library = await FundusLibrary.create(root);
   await library.index().drain<void>();
+  if (contentSensitivity != null) {
+    final indexed = library.listWorks().single;
+    await library.updateWorkMetadata(
+      workId: indexed.id,
+      title: indexed.title,
+      authors: indexed.authors,
+      subtitle: indexed.subtitle,
+      series: indexed.series,
+      seriesSequence: indexed.seriesSequence,
+      narrators: indexed.narrators,
+      language: indexed.language,
+      description: indexed.description,
+      publisher: indexed.publisher,
+      publishedYear: indexed.publishedYear,
+      contentSensitivity: contentSensitivity,
+    );
+  }
   return library;
 }
 
