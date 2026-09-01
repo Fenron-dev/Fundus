@@ -145,6 +145,34 @@ void main() {
     );
   });
 
+  test('continuous reader treats its physical end as the final page', () {
+    expect(
+      comicContinuousReachedEnd(
+        pixels: 998.5,
+        minScrollExtent: 0,
+        maxScrollExtent: 1000,
+      ),
+      isTrue,
+    );
+    expect(
+      comicContinuousReachedEnd(
+        pixels: 995,
+        minScrollExtent: 0,
+        maxScrollExtent: 1000,
+      ),
+      isFalse,
+    );
+    expect(
+      comicContinuousReachedEnd(
+        pixels: 1,
+        minScrollExtent: 0,
+        maxScrollExtent: 1000,
+        reverse: true,
+      ),
+      isTrue,
+    );
+  });
+
   test('overall progress combines chapter and page positions', () {
     expect(comicOverallProgress(page: 4, pageCount: 10), .5);
     expect(

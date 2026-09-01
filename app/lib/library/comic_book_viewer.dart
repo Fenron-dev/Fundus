@@ -296,6 +296,16 @@ ComicReaderTapZone comicReaderTapZoneAtPoint(
   );
 }
 
+bool comicContinuousReachedEnd({
+  required double pixels,
+  required double minScrollExtent,
+  required double maxScrollExtent,
+  bool reverse = false,
+  double tolerance = 2,
+}) => reverse
+    ? pixels <= minScrollExtent + tolerance
+    : pixels >= maxScrollExtent - tolerance;
+
 Future<ComicBookViewerResult?> showComicBookViewer(
   BuildContext context, {
   required ComicPageSource pageSource,
@@ -688,6 +698,12 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
   }
 
   void _next(int pageCount) {
+    if (_continuous &&
+        _continuousReachedNextBoundary &&
+        widget.hasNextChapter) {
+      _requestChapterTransition(ComicBookViewerResult.nextChapter);
+      return;
+    }
     final groups = comicPageGroups(
       pageCount,
       layout: _profile.layout,
@@ -1391,6 +1407,10 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
         !(_continuousController?.hasClients ?? false)) {
       return;
     }
+    if (_continuousReachedNextBoundary) {
+      _selectPage(pages.length - 1, pages, scrollOffset: 1);
+      return;
+    }
     final viewportBox = _continuousViewportKey.currentContext
         ?.findRenderObject();
     if (viewportBox is! RenderBox || !viewportBox.attached) return;
@@ -1422,6 +1442,18 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
     if (closestPage != null) {
       _selectPage(closestPage, pages, scrollOffset: closestOffset);
     }
+  }
+
+  bool get _continuousReachedNextBoundary {
+    final controller = _continuousController;
+    if (controller == null || !controller.hasClients) return false;
+    final position = controller.position;
+    return comicContinuousReachedEnd(
+      pixels: position.pixels,
+      minScrollExtent: position.minScrollExtent,
+      maxScrollExtent: position.maxScrollExtent,
+      reverse: _continuousHorizontal && _rightToLeft,
+    );
   }
 
   Widget _buildPagedReader(List<ComicPage> pages, List<List<int>> groups) =>
