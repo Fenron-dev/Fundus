@@ -666,6 +666,21 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
 
   void _goRight(int pageCount) => _rightToLeft ? _previous() : _next(pageCount);
 
+  /// Keep a normal arrow press precise (one page/group), but make it possible
+  /// to skip a chapter without first scrolling through every page. This is
+  /// especially useful for long webtoons and for quickly jumping ahead while
+  /// browsing. The direction follows the reader direction, so the left arrow
+  /// is still "forward" in RTL mode.
+  void _skipChapterFromArrow({required bool forward}) {
+    final canSkip = forward ? widget.hasNextChapter : widget.hasPreviousChapter;
+    if (!canSkip) return;
+    _requestChapterTransition(
+      forward
+          ? ComicBookViewerResult.nextChapter
+          : ComicBookViewerResult.previousChapter,
+    );
+  }
+
   bool _canGoLeft(int pageCount) => _rightToLeft
       ? _currentPage + 1 < pageCount || widget.hasNextChapter
       : _currentPage > 0 || widget.hasPreviousChapter;
@@ -2326,9 +2341,17 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
                                       onPressed: _canGoLeft(pages.length)
                                           ? () => _goLeft(pages.length)
                                           : null,
+                                      onLongPress:
+                                          (_rightToLeft
+                                              ? widget.hasNextChapter
+                                              : widget.hasPreviousChapter)
+                                          ? () => _skipChapterFromArrow(
+                                              forward: _rightToLeft,
+                                            )
+                                          : null,
                                       tooltip: _rightToLeft
-                                          ? 'Nächste Seite'
-                                          : 'Vorherige Seite',
+                                          ? 'Nächste Seite · lange drücken: Kapitel überspringen'
+                                          : 'Vorherige Seite · lange drücken: Kapitel überspringen',
                                       icon: const Icon(Icons.chevron_left),
                                     ),
                                     IconButton(
@@ -2374,9 +2397,17 @@ class _ComicBookDialogState extends State<_ComicBookDialog> {
                                       onPressed: _canGoRight(pages.length)
                                           ? () => _goRight(pages.length)
                                           : null,
+                                      onLongPress:
+                                          (_rightToLeft
+                                              ? widget.hasPreviousChapter
+                                              : widget.hasNextChapter)
+                                          ? () => _skipChapterFromArrow(
+                                              forward: !_rightToLeft,
+                                            )
+                                          : null,
                                       tooltip: _rightToLeft
-                                          ? 'Vorherige Seite'
-                                          : 'Nächste Seite',
+                                          ? 'Vorherige Seite · lange drücken: Kapitel überspringen'
+                                          : 'Nächste Seite · lange drücken: Kapitel überspringen',
                                       icon: const Icon(Icons.chevron_right),
                                     ),
                                   ],
