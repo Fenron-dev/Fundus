@@ -513,6 +513,12 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       } else if (resumeIndex >= 0) {
         _currentIndex = resumeIndex;
       }
+      final resumePosition = startPosition ?? progress?.position;
+      final useNativeVideoResume =
+          _isVideoWork(work) &&
+          resumePosition != null &&
+          !(progress?.finished ?? false) &&
+          resumePosition > Duration.zero;
       final List<Media> media;
       if (offlineWork == null) {
         final proxy = await FundusRemoteStreamProxy.start(
@@ -523,9 +529,25 @@ final class FundusRemotePlayerController extends ChangeNotifier {
           client: _client,
         );
         _proxy = proxy;
-        media = proxy.urls.map((uri) => Media(uri.toString())).toList();
+        media = [
+          for (var index = 0; index < proxy.urls.length; index++)
+            Media(
+              proxy.urls[index].toString(),
+              start: useNativeVideoResume && index == _currentIndex
+                  ? resumePosition
+                  : null,
+            ),
+        ];
       } else {
-        media = offlineWork.tracks.map((track) => Media(track.path)).toList();
+        media = [
+          for (var index = 0; index < offlineWork.tracks.length; index++)
+            Media(
+              offlineWork.tracks[index].path,
+              start: useNativeVideoResume && index == _currentIndex
+                  ? resumePosition
+                  : null,
+            ),
+        ];
       }
       await _player.open(Playlist(media, index: _currentIndex), play: false);
       playerReadyMs = openStarted.elapsedMilliseconds;
@@ -533,7 +555,6 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       _loading = false;
       _lastPersistedAt = DateTime.now();
       notifyListeners();
-      await _player.play();
       if (_isVideoWork(work)) {
         final preference = await VideoTrackPreferences.load(
           kind: work.kind,
@@ -542,20 +563,28 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         );
         await _applyVideoTrackPreference(preference);
       }
-      final resumePosition = startPosition ?? progress?.position;
+      if (useNativeVideoResume) {
+        _position = resumePosition;
+        notifyListeners();
+      }
+      await _player.play();
       if (resumePosition != null &&
+          !useNativeVideoResume &&
           !(progress?.finished ?? false) &&
           resumePosition > Duration.zero) {
         _position = await _seekAndVerify(resumePosition);
         notifyListeners();
+      }
+      if (resumePosition != null &&
+          !(progress?.finished ?? false) &&
+          resumePosition > Duration.zero) {
         unawaited(
-          FundusDiagnostics.instance.record('remote.resume_applied', {
-            'work_id': work.id,
-            'file_id': track?.id,
-            'position_ms': resumePosition.inMilliseconds,
-            'player_position_ms': _position.inMilliseconds,
-            'offline': offlineWork != null,
-          }),
+          _recordRemoteResume(
+            workId: work.id,
+            target: resumePosition,
+            offline: offlineWork != null,
+            nativeStart: useNativeVideoResume,
+          ),
         );
       }
       _syncSystemMediaSession();
@@ -1164,6 +1193,27 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       if ((actual - target).abs() <= const Duration(seconds: 2)) return actual;
     }
     throw StateError('Fortsetzungsposition konnte nicht gesetzt werden.');
+  }
+
+  Future<void> _recordRemoteResume({
+    required String workId,
+    required Duration target,
+    required bool offline,
+    required bool nativeStart,
+  }) async {
+    if (nativeStart) {
+      await Future<void>.delayed(const Duration(milliseconds: 750));
+    }
+    if (_closed || _work?.id != workId) return;
+    await FundusDiagnostics.instance.record('remote.resume_applied', {
+      'work_id': workId,
+      'file_id': track?.id,
+      'position_ms': target.inMilliseconds,
+      'player_position_ms': _player.state.position.inMilliseconds,
+      'offline': offline,
+      'native_start': nativeStart,
+      'buffering': _player.state.buffering,
+    });
   }
 
   Future<void> rememberVideoAudioTrack(AudioTrack selected) async {

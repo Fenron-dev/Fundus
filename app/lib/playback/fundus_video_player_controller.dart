@@ -61,6 +61,31 @@ final class FundusVideoPlayerController extends ChangeNotifier {
         _error = value;
         notifyListeners();
       }),
+      _player.stream.buffering.listen((value) {
+        if (!_ready) return;
+        unawaited(
+          FundusDiagnostics.instance.record('video.buffering_changed', {
+            'work_id': _work?.id,
+            'file_id': track?.fileId,
+            'buffering': value,
+            'position_ms': _player.state.position.inMilliseconds,
+            'buffer_ms': _player.state.buffer.inMilliseconds,
+          }),
+        );
+      }),
+      _player.stream.videoParams.listen((value) {
+        if (!_ready || value.w == null || value.h == null) return;
+        unawaited(
+          FundusDiagnostics.instance.record('video.output_changed', {
+            'work_id': _work?.id,
+            'file_id': track?.fileId,
+            'width': value.w,
+            'height': value.h,
+            'pixel_format': value.pixelformat,
+            'hardware_pixel_format': value.hwPixelformat,
+          }),
+        );
+      }),
     ]);
   }
 
@@ -128,11 +153,26 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    final resume =
+        startPosition ??
+        (progress?.position.kind == MediaPositionKind.time &&
+                progress?.fileId == _tracks[_currentIndex].fileId
+            ? Duration(
+                milliseconds: ((progress?.position.numericValue ?? 0) * 1000)
+                    .round(),
+              )
+            : Duration.zero);
     try {
       _restoringPosition = true;
       await _player.open(
         Playlist([
-          for (final item in _tracks) Media(item.absolutePath),
+          for (var index = 0; index < _tracks.length; index++)
+            Media(
+              _tracks[index].absolutePath,
+              start: index == _currentIndex && resume > Duration.zero
+                  ? resume
+                  : null,
+            ),
         ], index: _currentIndex),
         play: false,
       );
@@ -140,15 +180,6 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       _loading = false;
       _lastPersistedAt = DateTime.now();
       notifyListeners();
-      final resume =
-          startPosition ??
-          (progress?.position.kind == MediaPositionKind.time &&
-                  progress?.fileId == _tracks[_currentIndex].fileId
-              ? Duration(
-                  milliseconds: ((progress?.position.numericValue ?? 0) * 1000)
-                      .round(),
-                )
-              : Duration.zero);
       final trackPreference = await VideoTrackPreferences.load(
         kind: work.kind,
         workId: work.id,
@@ -163,17 +194,16 @@ final class FundusVideoPlayerController extends ChangeNotifier {
           'revision': progress?.revision,
         }),
       );
-      // media-kit can acknowledge a seek before the first video frame exists
-      // without applying it to the decoder. Start decoding first and keep
-      // progress persistence suppressed until the saved position is verified.
-      await _player.play();
+      // Apply stream selection while playback is still paused. Reconfiguring
+      // the audio/subtitle decoder and seeking an already running MKV can
+      // leave the native video output stalled while audio keeps advancing.
       await _applyTrackPreference(trackPreference);
-      if (resume > Duration.zero) {
-        _position = await _seekAndVerify(resume);
-        notifyListeners();
-      }
+      _position = resume;
+      notifyListeners();
+      await _player.play();
       _restoringPosition = false;
       _lastPersistedAt = DateTime.now();
+      unawaited(_recordNativeResume(resume));
     } catch (error) {
       _restoringPosition = false;
       _loading = false;
@@ -320,27 +350,18 @@ final class FundusVideoPlayerController extends ChangeNotifier {
     _ready = false;
   }
 
-  Future<Duration> _seekAndVerify(Duration target) async {
-    var actual = _player.state.position;
-    for (var attempt = 1; attempt <= 6; attempt++) {
-      await _player.seek(target);
-      await Future<void>.delayed(Duration(milliseconds: 100 * attempt));
-      actual = _player.state.position;
-      unawaited(
-        FundusDiagnostics.instance.record('video.resume_seek_attempt', {
-          'work_id': _work?.id,
-          'file_id': track?.fileId,
-          'attempt': attempt,
-          'target_ms': target.inMilliseconds,
-          'actual_ms': actual.inMilliseconds,
-          'duration_ms': _player.state.duration.inMilliseconds,
-        }),
-      );
-      if ((actual - target).abs() <= const Duration(seconds: 2)) return actual;
-    }
-    throw StateError(
-      'Fortsetzungsposition konnte nach sechs Versuchen nicht gesetzt werden.',
-    );
+  Future<void> _recordNativeResume(Duration target) async {
+    if (target <= Duration.zero) return;
+    await Future<void>.delayed(const Duration(milliseconds: 750));
+    if (_closed || track == null) return;
+    await FundusDiagnostics.instance.record('video.resume_started', {
+      'work_id': _work?.id,
+      'file_id': track?.fileId,
+      'target_ms': target.inMilliseconds,
+      'actual_ms': _player.state.position.inMilliseconds,
+      'duration_ms': _player.state.duration.inMilliseconds,
+      'buffering': _player.state.buffering,
+    });
   }
 
   Future<void> _applyTrackPreference(VideoTrackPreference preference) async {
