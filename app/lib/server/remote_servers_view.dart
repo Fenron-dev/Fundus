@@ -45,7 +45,12 @@ enum _RemoteGrouping { books, authors, series, narrators }
 
 enum _RemoteLibrarySection { media, playlists }
 
-enum _DocumentTrackSort { oldestFirst, newestFirst, titleAscending }
+enum _DocumentTrackSort {
+  oldestFirst,
+  newestFirst,
+  seasonEpisode,
+  titleAscending,
+}
 
 enum _ChapterSelectionMode { range, individual }
 
@@ -86,6 +91,28 @@ List<({FundusRemoteTrack track, int originalIndex})> _orderedRemoteTracks(
       result.sort(
         (left, right) => right.track.position.compareTo(left.track.position),
       );
+    case _DocumentTrackSort.seasonEpisode:
+      result.sort((left, right) {
+        final leftEpisode =
+            left.track.episode ?? parseVideoEpisode(left.track.title);
+        final rightEpisode =
+            right.track.episode ?? parseVideoEpisode(right.track.title);
+        if (leftEpisode == null && rightEpisode == null) {
+          return left.track.position.compareTo(right.track.position);
+        }
+        if (leftEpisode == null) return 1;
+        if (rightEpisode == null) return -1;
+        final season = leftEpisode.season.compareTo(rightEpisode.season);
+        if (season != 0) return season;
+        final episode = leftEpisode.episode.compareTo(rightEpisode.episode);
+        if (episode != 0) return episode;
+        final end = (leftEpisode.episodeEnd ?? leftEpisode.episode).compareTo(
+          rightEpisode.episodeEnd ?? rightEpisode.episode,
+        );
+        return end != 0
+            ? end
+            : left.track.position.compareTo(right.track.position);
+      });
     case _DocumentTrackSort.titleAscending:
       result.sort(
         (left, right) => left.track.title.toLowerCase().compareTo(
@@ -2404,6 +2431,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                             PopupMenuItem(
                               value: _DocumentTrackSort.newestFirst,
                               child: Text('Neueste Kapitel zuerst'),
+                            ),
+                            PopupMenuItem(
+                              value: _DocumentTrackSort.seasonEpisode,
+                              child: Text('Staffel/Folge'),
                             ),
                             PopupMenuItem(
                               value: _DocumentTrackSort.titleAscending,
@@ -5243,15 +5274,35 @@ class _MobileRemotePublicationDetailsState
 
   Widget _trackList(
     List<({FundusRemoteTrack track, int originalIndex})> entries,
-  ) => ListView(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-    children: [
-      for (final entry in entries)
+  ) {
+    final rows = <Widget>[];
+    int? currentSeason;
+    for (final entry in entries) {
+      final episode =
+          entry.track.episode ?? parseVideoEpisode(entry.track.title);
+      if (episode != null &&
+          _sort != _DocumentTrackSort.titleAscending &&
+          episode.season != currentSeason) {
+        currentSeason = episode.season;
+        rows.add(
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.video_library_outlined),
+            title: Text(
+              episode.season == 0
+                  ? 'Specials / Staffel 00'
+                  : 'Staffel ${episode.season}',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+        );
+      }
+      rows.add(
         WorkContentListTile(
           item: WorkContentItemViewModel(
             id: entry.track.id,
             title: _remoteTrackLabel(entry.track),
-            number: entry.track.episode?.episode ?? entry.originalIndex + 1,
+            number: episode?.episode ?? entry.originalIndex + 1,
             readState: documentChapterReadState(
               chapterIndex: entry.originalIndex,
               currentChapterIndex: widget.progressIndex,
@@ -5265,8 +5316,13 @@ class _MobileRemotePublicationDetailsState
           ),
           onTap: () => Navigator.pop(context, 'open:${entry.originalIndex}'),
         ),
-    ],
-  );
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      children: rows,
+    );
+  }
 
   Widget _chapterList() {
     final loader = widget.epubPublicationLoader;
@@ -5511,6 +5567,10 @@ class _MobileRemotePublicationDetailsState
                       DropdownMenuItem(
                         value: _DocumentTrackSort.newestFirst,
                         child: Text('Neueste zuerst'),
+                      ),
+                      DropdownMenuItem(
+                        value: _DocumentTrackSort.seasonEpisode,
+                        child: Text('Staffel/Folge'),
                       ),
                       DropdownMenuItem(
                         value: _DocumentTrackSort.titleAscending,

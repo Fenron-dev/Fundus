@@ -4485,7 +4485,12 @@ class _VideoHero extends StatelessWidget {
   }
 }
 
-enum _DocumentFileSort { oldestFirst, newestFirst, titleAscending }
+enum _DocumentFileSort {
+  oldestFirst,
+  newestFirst,
+  seasonEpisode,
+  titleAscending,
+}
 
 class _DocumentFilesPanel extends StatefulWidget {
   const _DocumentFilesPanel({
@@ -4516,6 +4521,24 @@ class _DocumentFilesPanelState extends State<_DocumentFilesPanel> {
         result.sort((left, right) => left.index.compareTo(right.index));
       case _DocumentFileSort.newestFirst:
         result.sort((left, right) => right.index.compareTo(left.index));
+      case _DocumentFileSort.seasonEpisode:
+        result.sort((left, right) {
+          final leftEpisode = left.episode ?? parseVideoEpisode(left.title);
+          final rightEpisode = right.episode ?? parseVideoEpisode(right.title);
+          if (leftEpisode == null && rightEpisode == null) {
+            return left.index.compareTo(right.index);
+          }
+          if (leftEpisode == null) return 1;
+          if (rightEpisode == null) return -1;
+          final season = leftEpisode.season.compareTo(rightEpisode.season);
+          if (season != 0) return season;
+          final episode = leftEpisode.episode.compareTo(rightEpisode.episode);
+          if (episode != 0) return episode;
+          final end = (leftEpisode.episodeEnd ?? leftEpisode.episode).compareTo(
+            rightEpisode.episodeEnd ?? rightEpisode.episode,
+          );
+          return end != 0 ? end : left.index.compareTo(right.index);
+        });
       case _DocumentFileSort.titleAscending:
         result.sort(
           (left, right) =>
@@ -4560,6 +4583,10 @@ class _DocumentFilesPanelState extends State<_DocumentFilesPanel> {
             child: Text('Neueste Kapitel zuerst'),
           ),
           PopupMenuItem(
+            value: _DocumentFileSort.seasonEpisode,
+            child: Text('Staffel/Folge'),
+          ),
+          PopupMenuItem(
             value: _DocumentFileSort.titleAscending,
             child: Text('Name A–Z'),
           ),
@@ -4578,6 +4605,7 @@ class _DocumentFilesPanelState extends State<_DocumentFilesPanel> {
           ? (file.episode ?? parseVideoEpisode(file.title))
           : null;
       if (widget.isVideo &&
+          _sort != _DocumentFileSort.titleAscending &&
           episode != null &&
           episode.season != currentSeason) {
         currentSeason = episode.season;
