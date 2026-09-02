@@ -1406,6 +1406,7 @@ class _LibraryShellState extends State<LibraryShell> {
   double _detailPaneWidth = 480;
   double _gridTileExtent = 220;
   String? _playlistTypeFilter;
+  FundusCatalogSourceKind? _sourceFilter;
   List<LibrarySavedView> _savedViews = const [];
   String? _lastTappedWorkId;
   DateTime? _lastWorkTapAt;
@@ -1433,7 +1434,13 @@ class _LibraryShellState extends State<LibraryShell> {
   };
 
   List<LibraryWorkSummary> get _allWorks =>
-      (widget.catalog?.works ??
+      (widget.catalog?.entries
+                  .where(
+                    (entry) =>
+                        _sourceFilter == null ||
+                        entry.source.kind == _sourceFilter,
+                  )
+                  .map((entry) => entry.work) ??
               [
                 ...widget.works,
                 for (final work in widget.offlineWorks)
@@ -2607,6 +2614,17 @@ class _LibraryShellState extends State<LibraryShell> {
             _selectedIndex = 0;
           }),
         ),
+        if (widget.catalog != null &&
+            (widget.library != null || widget.offlineWorks.isNotEmpty)) ...[
+          const SizedBox(width: 4),
+          _CatalogSourceFilterButton(
+            value: _sourceFilter,
+            onChanged: (value) => setState(() {
+              _sourceFilter = value;
+              _selectedIndex = 0;
+            }),
+          ),
+        ],
         IconButton(
           onPressed: () => setState(() {
             final tags = {..._query.tags};
@@ -3885,6 +3903,46 @@ class _AdvancedFilterButton extends StatelessWidget {
     );
     if (result != null) onChanged(result);
   }
+}
+
+class _CatalogSourceFilterButton extends StatelessWidget {
+  const _CatalogSourceFilterButton({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final FundusCatalogSourceKind? value;
+  final ValueChanged<FundusCatalogSourceKind?> onChanged;
+
+  @override
+  Widget build(BuildContext context) =>
+      PopupMenuButton<FundusCatalogSourceKind?>(
+        tooltip: 'Quelle filtern',
+        initialValue: value,
+        onSelected: onChanged,
+        itemBuilder: (context) => const [
+          PopupMenuItem<FundusCatalogSourceKind?>(
+            value: null,
+            child: Text('Alle Quellen'),
+          ),
+          PopupMenuItem(
+            value: FundusCatalogSourceKind.local,
+            child: Text('Auf diesem Gerät'),
+          ),
+          PopupMenuItem(
+            value: FundusCatalogSourceKind.remote,
+            child: Text('Remote'),
+          ),
+          PopupMenuItem(
+            value: FundusCatalogSourceKind.offline,
+            child: Text('Offline-Downloads'),
+          ),
+        ],
+        icon: Badge(
+          isLabelVisible: value != null,
+          child: const Icon(Icons.cloud_queue_outlined),
+        ),
+      );
 }
 
 class _MediaFilterButton extends StatelessWidget {
