@@ -102,6 +102,7 @@ List<ZipArchiveEntry> comicPageEntries(ZipArchiveSnapshot snapshot) {
       .where(
         (entry) =>
             !entry.isDirectory &&
+            !isArchiveMetadataPath(entry.path) &&
             _comicImageExtensions.contains(
               p.extension(entry.path).toLowerCase(),
             ),

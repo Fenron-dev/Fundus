@@ -33,6 +33,18 @@ void main() {
           isDirectory: false,
           size: 10,
         ),
+        ZipArchiveEntry(
+          path: '__MACOSX/._pages/1.webp',
+          archiveName: '__MACOSX/._pages/1.webp',
+          isDirectory: false,
+          size: 10,
+        ),
+        ZipArchiveEntry(
+          path: 'pages/._2.webp',
+          archiveName: 'pages/._2.webp',
+          isDirectory: false,
+          size: 10,
+        ),
       ],
     );
 

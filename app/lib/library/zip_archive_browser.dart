@@ -93,6 +93,10 @@ final class ZipArchiveService {
       final entries = <String, ZipArchiveEntry>{};
       for (final file in archive) {
         final canonical = _canonicalPath(file.name);
+        // macOS stores Finder metadata in AppleDouble sidecar entries. They
+        // are not user media and must never become visible archive children
+        // (in particular, `._cover.png` must not be treated as a comic page).
+        if (isArchiveMetadataPath(canonical)) continue;
         if (file.isSymbolicLink) {
           throw const ZipArchiveException(
             'ZIP-Archive mit symbolischen Verknüpfungen werden nicht geöffnet.',
@@ -268,6 +272,20 @@ final class ZipArchiveService {
       }
     }
   }
+}
+
+/// Platform metadata entries commonly introduced when archives are created
+/// or copied on macOS. Kept top-level so CBZ page selection can apply the same
+/// rule without depending on the archive service implementation.
+bool isArchiveMetadataPath(String path) {
+  final components = p.posix.split(path);
+  return components.any(
+    (component) =>
+        component == '__MACOSX' ||
+        component == '.DS_Store' ||
+        component == 'Thumbs.db' ||
+        component.startsWith('._'),
+  );
 }
 
 final class ZipArchiveException implements Exception {
