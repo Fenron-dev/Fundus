@@ -30,6 +30,7 @@ import 'library/work_detail_sections.dart';
 import 'library/work_content_list.dart';
 import 'library/work_annotation_list.dart';
 import 'library/fundus_breadcrumbs.dart';
+import 'library/fundus_library_catalog.dart';
 import 'library/media_content_schema.dart';
 import 'library/video_player_page.dart';
 import 'library/zip_archive_browser.dart';
@@ -231,6 +232,30 @@ class _FundusAppState extends State<FundusApp> {
             )
           : LibraryShell(
               works: _works!,
+              catalog: FundusLibraryCatalog([
+                ..._works!.map(
+                  (work) => FundusCatalogEntry(
+                    work: work,
+                    source: FundusLibraryCatalog.localSource(
+                      _library?.root.path.split(Platform.pathSeparator).last ??
+                          'Lokale Bibliothek',
+                    ),
+                  ),
+                ),
+                ..._offlineWorks.map(
+                  (offline) => FundusCatalogEntry(
+                    work: _offlineLibrarySummary(offline),
+                    source: FundusLibraryCatalog.offlineSource(
+                      serverId: offline.serverId,
+                      libraryId: offline.libraryId,
+                      displayName:
+                          offline.sourceLibraryName ??
+                          offline.sourceServerName ??
+                          'Offline',
+                    ),
+                  ),
+                ),
+              ]),
               library: _library,
               libraryName: _library?.root.path
                   .split(Platform.pathSeparator)
@@ -1306,6 +1331,7 @@ class LibraryShell extends StatefulWidget {
   const LibraryShell({
     super.key,
     required this.works,
+    this.catalog,
     required this.onToggleTheme,
     this.themeMode = ThemeMode.dark,
     this.onThemeModeChanged,
@@ -1331,6 +1357,7 @@ class LibraryShell extends StatefulWidget {
   });
 
   final List<LibraryWorkSummary> works;
+  final FundusLibraryCatalog? catalog;
   final FundusLibrary? library;
   final VoidCallback onToggleTheme;
   final ThemeMode themeMode;
@@ -1370,6 +1397,9 @@ class _LibraryShellState extends State<LibraryShell> {
   String? _selectedNarrator;
   String? _selectedSeries;
   bool _detailPaneVisible = true;
+  bool _sidebarCollapsed = false;
+  bool _selectionMode = false;
+  final Set<String> _selectedWorkIds = {};
   bool _playerExpanded = false;
   LibraryWorkSummary? _inlineDetailWork;
   double _leftPaneWidth = 236;
@@ -1402,10 +1432,15 @@ class _LibraryShellState extends State<LibraryShell> {
     for (final work in widget.offlineWorks) _offlineSummaryId(work): work,
   };
 
-  List<LibraryWorkSummary> get _allWorks => [
-    ...widget.works,
-    for (final work in widget.offlineWorks) _offlineLibrarySummary(work),
-  ].where((work) => widget.showHhh || !work.isHhh).toList(growable: false);
+  List<LibraryWorkSummary> get _allWorks =>
+      (widget.catalog?.works ??
+              [
+                ...widget.works,
+                for (final work in widget.offlineWorks)
+                  _offlineLibrarySummary(work),
+              ])
+          .where((work) => widget.showHhh || !work.isHhh)
+          .toList(growable: false);
 
   List<_LibrarySection> get _availableSections => _LibrarySection.values
       .where((section) => !section.isHhhSection || widget.showHhh)
@@ -1559,10 +1594,14 @@ class _LibraryShellState extends State<LibraryShell> {
               child: Row(
                 children: [
                   SizedBox(
-                    width: _leftPaneWidth,
+                    width: _sidebarCollapsed ? 76 : _leftPaneWidth,
                     child: _Sidebar(
                       selectedSection: _section,
                       showHhh: widget.showHhh,
+                      collapsed: _sidebarCollapsed,
+                      onToggleCollapsed: () => setState(
+                        () => _sidebarCollapsed = !_sidebarCollapsed,
+                      ),
                       onSelectSection: (section) => setState(() {
                         _section = section;
                         if (section.isDocumentSection) {
@@ -1583,7 +1622,10 @@ class _LibraryShellState extends State<LibraryShell> {
                         420,
                       ),
                     ),
-                    onReset: () => setState(() => _leftPaneWidth = 236),
+                    onReset: () => setState(() {
+                      _leftPaneWidth = 236;
+                      _sidebarCollapsed = false;
+                    }),
                   ),
                   Expanded(
                     child: _playerExpanded && widget.player != null
@@ -2428,6 +2470,8 @@ class _LibraryShellState extends State<LibraryShell> {
                   searchActive:
                       _query.text.isNotEmpty || _query.kinds.isNotEmpty,
                 )
+              : _layout == _LibraryLayout.folder
+              ? _folderBrowser(works, detailAsDialog: detailAsDialog)
               : _layout == _LibraryLayout.grid
               ? GridView.builder(
                   padding: const EdgeInsets.all(16),
@@ -2444,12 +2488,72 @@ class _LibraryShellState extends State<LibraryShell> {
                       work: work,
                       player: widget.player,
                       selected: !detailAsDialog && index == _selectedIndex,
+                      selectionMode: _selectionMode,
+                      checked: _selectedWorkIds.contains(work.id),
+                      onToggleSelected: (value) => setState(() {
+                        value
+                            ? _selectedWorkIds.add(work.id)
+                            : _selectedWorkIds.remove(work.id);
+                      }),
                       onTap: () => _handleWorkTap(work, index, detailAsDialog),
                     );
                   },
                 )
               : _workTable(works, detailAsDialog: detailAsDialog),
         ),
+      ],
+    );
+  }
+
+  Widget _folderBrowser(
+    List<LibraryWorkSummary> works, {
+    required bool detailAsDialog,
+  }) {
+    final folders = <String, List<LibraryWorkSummary>>{};
+    for (final work in works) {
+      final folder = (work.series?.trim().isNotEmpty ?? false)
+          ? work.series!.trim()
+          : switch (work.kind) {
+              'audiobook' => 'Hörbücher',
+              'movie' || 'tv' || 'video' => 'Filme & Serien',
+              'manga' => 'Manga & Comics',
+              'webnovel' => 'Webnovels',
+              'ebook' => 'Bücher & E-Books',
+              'document' => 'Dokumente',
+              'image' => 'Fotos & Bilder',
+              'archive' => 'Archive',
+              _ => 'Sonstige',
+            };
+      folders.putIfAbsent(folder, () => []).add(work);
+    }
+    final sorted = folders.keys.toList()..sort();
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+      children: [
+        for (final folder in sorted)
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: ExpansionTile(
+              initiallyExpanded: true,
+              leading: const Icon(Icons.folder_outlined),
+              title: Text(folder),
+              subtitle: Text('${folders[folder]!.length} Werk(e)'),
+              children: [
+                for (var index = 0; index < folders[folder]!.length; index++)
+                  ListTile(
+                    leading: const Icon(Icons.insert_drive_file_outlined),
+                    title: Text(folders[folder]![index].title),
+                    subtitle: Text(folders[folder]![index].kind),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => _handleWorkTap(
+                      folders[folder]![index],
+                      _displayedWorks.indexOf(folders[folder]![index]),
+                      detailAsDialog,
+                    ),
+                  ),
+              ],
+            ),
+          ),
       ],
     );
   }
@@ -2517,6 +2621,30 @@ class _LibraryShellState extends State<LibraryShell> {
               : 'Nur Favoriten',
           icon: Icon(
             _query.tags.contains(_favoriteTag) ? Icons.star : Icons.star_border,
+          ),
+        ),
+        IconButton(
+          onPressed: () {
+            if (_selectionMode && _selectedWorkIds.isNotEmpty) {
+              unawaited(_openBulkEdit());
+              return;
+            }
+            setState(() {
+              _selectionMode = !_selectionMode;
+              if (!_selectionMode) _selectedWorkIds.clear();
+            });
+          },
+          tooltip: _selectionMode
+              ? (_selectedWorkIds.isEmpty
+                    ? 'Mehrfachauswahl schließen'
+                    : 'Auswahl bearbeiten')
+              : 'Mehrere Werke auswählen',
+          icon: Badge(
+            isLabelVisible: _selectedWorkIds.isNotEmpty,
+            label: Text('${_selectedWorkIds.length}'),
+            child: Icon(
+              _selectionMode ? Icons.edit_note_outlined : Icons.checklist,
+            ),
           ),
         ),
         const SizedBox(width: 4),
@@ -2590,6 +2718,11 @@ class _LibraryShellState extends State<LibraryShell> {
               value: _LibraryLayout.table,
               icon: Icon(Icons.table_rows_outlined),
               tooltip: 'Tabelle',
+            ),
+            ButtonSegment(
+              value: _LibraryLayout.folder,
+              icon: Icon(Icons.folder_outlined),
+              tooltip: 'Virtuelle Ordner',
             ),
           ],
           selected: {_layout},
@@ -2665,6 +2798,64 @@ class _LibraryShellState extends State<LibraryShell> {
     );
     if (!mounted || result == null) return;
     setState(() => _gridTileExtent = result);
+  }
+
+  Future<void> _openBulkEdit() async {
+    final library = widget.library;
+    if (library == null || _selectedWorkIds.isEmpty) return;
+    final selected = _allWorks
+        .where((work) => _selectedWorkIds.contains(work.id))
+        .toList(growable: false);
+    if (selected.isEmpty) return;
+    final controller = TextEditingController();
+    final tags = await showDialog<Set<String>>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('${selected.length} Werk(e) bearbeiten'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Tags',
+            hintText: 'z. B. Fantasy, Favorit',
+            helperText: 'Kommagetrennt; ersetzt die Tags der Auswahl.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(
+              dialogContext,
+              controller.text
+                  .split(',')
+                  .map((tag) => tag.trim())
+                  .where((tag) => tag.isNotEmpty)
+                  .toSet(),
+            ),
+            child: const Text('Speichern'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (!mounted || tags == null) return;
+    for (final work in selected) {
+      await library.replaceWorkTags(work.id, tags);
+      final refreshed = library
+          .listWorks(includeMissing: true)
+          .where((candidate) => candidate.id == work.id)
+          .firstOrNull;
+      if (refreshed != null) widget.onMetadataChanged?.call(refreshed);
+    }
+    if (mounted) {
+      setState(() {
+        _selectionMode = false;
+        _selectedWorkIds.clear();
+      });
+    }
   }
 
   String get _browserTitle {
@@ -3331,7 +3522,7 @@ extension on _LibrarySection {
   };
 }
 
-enum _LibraryLayout { grid, table }
+enum _LibraryLayout { grid, table, folder }
 
 enum _LibraryGrouping { books, authors, series, narrators }
 
@@ -3762,18 +3953,31 @@ class _Sidebar extends StatelessWidget {
     required this.onSelectSection,
     this.showHhh = false,
     this.onOpenSettings,
+    this.collapsed = false,
+    this.onToggleCollapsed,
   });
 
   final _LibrarySection selectedSection;
   final ValueChanged<_LibrarySection> onSelectSection;
   final bool showHhh;
   final VoidCallback? onOpenSettings;
+  final bool collapsed;
+  final VoidCallback? onToggleCollapsed;
 
   @override
   Widget build(BuildContext context) {
+    if (collapsed) return _buildCollapsed(context);
     return ListView(
       padding: const EdgeInsets.all(10),
       children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: IconButton(
+            tooltip: 'Seitenleiste minimieren',
+            onPressed: onToggleCollapsed,
+            icon: const Icon(Icons.view_sidebar_outlined),
+          ),
+        ),
         const _SectionLabel('Bibliothek'),
         ListTile(
           leading: const Icon(Icons.headphones),
@@ -3863,6 +4067,56 @@ class _Sidebar extends StatelessWidget {
       ],
     );
   }
+
+  Widget _buildCollapsed(BuildContext context) {
+    final sections = <_LibrarySection>[
+      _LibrarySection.library,
+      _LibrarySection.videos,
+      _LibrarySection.manga,
+      _LibrarySection.ttrpg,
+      _LibrarySection.webnovels,
+      _LibrarySection.books,
+      _LibrarySection.documents,
+      _LibrarySection.images,
+      _LibrarySection.archives,
+      _LibrarySection.playlists,
+    ];
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+      children: [
+        Tooltip(
+          message: 'Seitenleiste erweitern',
+          child: IconButton(
+            onPressed: onToggleCollapsed,
+            icon: const Icon(Icons.view_sidebar_outlined),
+          ),
+        ),
+        const Divider(height: 20),
+        for (final section in sections)
+          if (!section.isHhhSection || showHhh)
+            Tooltip(
+              message: section.label,
+              child: IconButton(
+                isSelected: selectedSection == section,
+                onPressed: () => onSelectSection(section),
+                icon: Icon(
+                  selectedSection == section
+                      ? section.selectedIcon
+                      : section.icon,
+                ),
+              ),
+            ),
+        const Divider(height: 20),
+        Tooltip(
+          message: 'Server & Freigaben',
+          child: IconButton(
+            onPressed: onOpenSettings,
+            icon: const Icon(Icons.lan_outlined),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _SectionLabel extends StatelessWidget {
@@ -3906,12 +4160,18 @@ class _WorkCard extends StatelessWidget {
     required this.selected,
     required this.onTap,
     this.player,
+    this.selectionMode = false,
+    this.checked = false,
+    this.onToggleSelected,
   });
 
   final LibraryWorkSummary work;
   final bool selected;
   final VoidCallback onTap;
   final FundusPlayerController? player;
+  final bool selectionMode;
+  final bool checked;
+  final ValueChanged<bool>? onToggleSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -3927,7 +4187,12 @@ class _WorkCard extends StatelessWidget {
             : null,
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: onTap,
+          onTap: selectionMode && onToggleSelected != null
+              ? () => onToggleSelected!(!checked)
+              : onTap,
+          onLongPress: selectionMode && onToggleSelected != null
+              ? () => onToggleSelected!(!checked)
+              : null,
           child: Padding(
             padding: const EdgeInsets.all(10),
             child: Column(
@@ -3950,6 +4215,16 @@ class _WorkCard extends StatelessWidget {
                       fit: StackFit.expand,
                       children: [
                         _WorkCover(work: work, iconSize: 42, player: player),
+                        if (selectionMode)
+                          Positioned(
+                            right: 8,
+                            top: 8,
+                            child: Checkbox(
+                              value: checked,
+                              onChanged: (value) =>
+                                  onToggleSelected?.call(value ?? false),
+                            ),
+                          ),
                         if (work.seriesSequence case final sequence?)
                           Positioned(
                             left: 8,
@@ -4513,6 +4788,8 @@ class _DocumentFilesPanel extends StatefulWidget {
 
 class _DocumentFilesPanelState extends State<_DocumentFilesPanel> {
   _DocumentFileSort _sort = _DocumentFileSort.oldestFirst;
+  bool _selectionMode = false;
+  final Set<String> _selectedFileIds = {};
 
   List<LibraryPlaybackTrack> get _files {
     final result = widget.files.toList();
@@ -4569,29 +4846,49 @@ class _DocumentFilesPanelState extends State<_DocumentFilesPanel> {
       leading: const Icon(Icons.folder_copy_outlined),
       title: const Text('Enthaltene Dateien'),
       subtitle: Text('${widget.files.length} Datei(en) in diesem Werk'),
-      trailing: PopupMenuButton<_DocumentFileSort>(
-        tooltip: 'Dateien sortieren',
-        initialValue: _sort,
-        onSelected: (value) => setState(() => _sort = value),
-        itemBuilder: (context) => const [
-          PopupMenuItem(
-            value: _DocumentFileSort.oldestFirst,
-            child: Text('Älteste Kapitel zuerst'),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_selectionMode)
+            TextButton(
+              onPressed: () => setState(() => _selectedFileIds.clear()),
+              child: Text('${_selectedFileIds.length} ausgewählt'),
+            ),
+          IconButton(
+            tooltip: _selectionMode
+                ? 'Mehrfachauswahl schließen'
+                : 'Mehrere Dateien auswählen',
+            onPressed: () => setState(() {
+              _selectionMode = !_selectionMode;
+              if (!_selectionMode) _selectedFileIds.clear();
+            }),
+            icon: Icon(_selectionMode ? Icons.close : Icons.checklist_outlined),
           ),
-          PopupMenuItem(
-            value: _DocumentFileSort.newestFirst,
-            child: Text('Neueste Kapitel zuerst'),
-          ),
-          PopupMenuItem(
-            value: _DocumentFileSort.seasonEpisode,
-            child: Text('Staffel/Folge'),
-          ),
-          PopupMenuItem(
-            value: _DocumentFileSort.titleAscending,
-            child: Text('Name A–Z'),
+          PopupMenuButton<_DocumentFileSort>(
+            tooltip: 'Dateien sortieren',
+            initialValue: _sort,
+            onSelected: (value) => setState(() => _sort = value),
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: _DocumentFileSort.oldestFirst,
+                child: Text('Älteste Kapitel zuerst'),
+              ),
+              PopupMenuItem(
+                value: _DocumentFileSort.newestFirst,
+                child: Text('Neueste Kapitel zuerst'),
+              ),
+              PopupMenuItem(
+                value: _DocumentFileSort.seasonEpisode,
+                child: Text('Staffel/Folge'),
+              ),
+              PopupMenuItem(
+                value: _DocumentFileSort.titleAscending,
+                child: Text('Name A–Z'),
+              ),
+            ],
+            icon: const Icon(Icons.sort),
           ),
         ],
-        icon: const Icon(Icons.sort),
       ),
       children: [..._fileRows()],
     ),
@@ -4638,6 +4935,14 @@ class _DocumentFilesPanelState extends State<_DocumentFilesPanel> {
                 : Text(file.relativePath),
           ),
           onTap: () => widget.onOpen(file),
+          selected: _selectedFileIds.contains(file.fileId),
+          onSelectionToggle: _selectionMode
+              ? (value) => setState(() {
+                  value
+                      ? _selectedFileIds.add(file.fileId)
+                      : _selectedFileIds.remove(file.fileId);
+                })
+              : null,
         ),
       );
     }

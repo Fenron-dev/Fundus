@@ -48,11 +48,15 @@ class WorkContentListTile extends StatelessWidget {
     required this.item,
     required this.onTap,
     this.contentPadding,
+    this.selected = false,
+    this.onSelectionToggle,
   });
 
   final WorkContentItemViewModel item;
   final VoidCallback? onTap;
   final EdgeInsetsGeometry? contentPadding;
+  final bool selected;
+  final ValueChanged<bool>? onSelectionToggle;
 
   @override
   Widget build(BuildContext context) => ListTile(
@@ -67,6 +71,11 @@ class WorkContentListTile extends StatelessWidget {
     trailing: Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (onSelectionToggle != null)
+          Checkbox(
+            value: selected,
+            onChanged: (value) => onSelectionToggle!(value ?? false),
+          ),
         _AvailabilityIcon(availability: item.availability),
         if (onTap != null) ...[
           const SizedBox(width: 4),
@@ -74,7 +83,12 @@ class WorkContentListTile extends StatelessWidget {
         ],
       ],
     ),
-    onTap: onTap,
+    onTap: onSelectionToggle == null
+        ? onTap
+        : () => onSelectionToggle!(!selected),
+    onLongPress: onSelectionToggle == null
+        ? null
+        : () => onSelectionToggle!(!selected),
   );
 }
 
