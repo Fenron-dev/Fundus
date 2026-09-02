@@ -2256,275 +2256,297 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         isScrollControlled: true,
         showDragHandle: true,
         builder: (context) => StatefulBuilder(
-          builder: (context, setSheetState) => SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SizedBox(
-                        width: 120,
-                        height: 170,
-                        child: work.hasCover
-                            ? _remoteCover(
-                                server,
-                                library,
-                                work,
-                                borderRadius: BorderRadius.circular(10),
-                              )
-                            : const Icon(Icons.audiotrack, size: 72),
-                      ),
-                      const SizedBox(width: 18),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              work.title,
-                              style: Theme.of(context).textTheme.headlineSmall,
-                            ),
-                            const SizedBox(height: 6),
-                            Text(work.authors.join(', ')),
-                            if (work.subtitle case final subtitle?) ...[
-                              const SizedBox(height: 4),
-                              Text(subtitle),
-                            ],
-                            if (work.series case final series?) ...[
-                              const SizedBox(height: 6),
+          builder: (context, setSheetState) {
+            final orderedTracks = _orderedRemoteTracks(detailTracks, trackSort);
+            final trackRows = <Widget>[];
+            int? lastSeason;
+            for (final entry in orderedTracks) {
+              final episode =
+                  entry.track.episode ?? parseVideoEpisode(entry.track.title);
+              if (trackSort == _DocumentTrackSort.seasonEpisode &&
+                  episode != null &&
+                  episode.season != lastSeason) {
+                lastSeason = episode.season;
+                trackRows.add(
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8, bottom: 2),
+                    child: Text(
+                      episode.special
+                          ? 'Specials'
+                          : 'Staffel ${episode.season}',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                );
+              }
+              final readState = documentChapterReadState(
+                chapterIndex: entry.originalIndex,
+                currentChapterIndex: documentProgressIndex,
+                workFinished: work.progressFinished,
+                currentPosition: documentPosition,
+              );
+              trackRows.add(
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: documentChapterLeading(
+                    context,
+                    entry.originalIndex + 1,
+                    readState,
+                  ),
+                  title: Text(
+                    _remoteTrackLabel(entry.track),
+                    style: documentChapterTitleStyle(context, readState),
+                  ),
+                  subtitle: _remoteTechnicalSubtitle(entry.track),
+                  trailing: isDocument
+                      ? const Icon(Icons.open_in_new)
+                      : entry.track.duration == null
+                      ? null
+                      : Text(_formatRemoteDuration(entry.track.duration!)),
+                  onTap: isDocument
+                      ? () => Navigator.pop(
+                          context,
+                          'open:${entry.originalIndex}',
+                        )
+                      : null,
+                ),
+              );
+            }
+            return SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 120,
+                          height: 170,
+                          child: work.hasCover
+                              ? _remoteCover(
+                                  server,
+                                  library,
+                                  work,
+                                  borderRadius: BorderRadius.circular(10),
+                                )
+                              : const Icon(Icons.audiotrack, size: 72),
+                        ),
+                        const SizedBox(width: 18),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
                               Text(
-                                work.seriesSequence == null
-                                    ? series
-                                    : '$series · Band '
-                                          '${_formatRemoteSequence(work.seriesSequence!)}',
+                                work.title,
+                                style: Theme.of(
+                                  context,
+                                ).textTheme.headlineSmall,
                               ),
-                            ],
-                            const SizedBox(height: 10),
-                            Wrap(
-                              spacing: 6,
-                              runSpacing: 6,
-                              children: [
-                                for (final narrator in work.narrators)
-                                  Chip(
-                                    avatar: const Icon(
-                                      Icons.mic_none,
-                                      size: 16,
-                                    ),
-                                    label: Text(narrator),
-                                  ),
-                                if (work.language case final language?)
-                                  Chip(label: Text(_remoteLanguage(language))),
-                                if (work.publisher case final publisher?)
-                                  Chip(
-                                    label: Text(
-                                      work.publishedYear == null
-                                          ? publisher
-                                          : '$publisher · ${work.publishedYear}',
-                                    ),
-                                  )
-                                else if (work.publishedYear case final year?)
-                                  Chip(label: Text('$year')),
-                                Chip(
-                                  label: Text('${work.fileCount} Datei(en)'),
+                              const SizedBox(height: 6),
+                              Text(work.authors.join(', ')),
+                              if (work.subtitle case final subtitle?) ...[
+                                const SizedBox(height: 4),
+                                Text(subtitle),
+                              ],
+                              if (work.series case final series?) ...[
+                                const SizedBox(height: 6),
+                                Text(
+                                  work.seriesSequence == null
+                                      ? series
+                                      : '$series · Band '
+                                            '${_formatRemoteSequence(work.seriesSequence!)}',
                                 ),
                               ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (work.progressPosition case final position?) ...[
-                    const SizedBox(height: 16),
-                    Text(
-                      work.progressDuration == null
-                          ? 'Fortsetzen bei ${_formatRemoteDuration(position)}'
-                          : '${_formatRemoteDuration(position)} / '
-                                '${_formatRemoteDuration(work.progressDuration!)}',
-                      style: Theme.of(context).textTheme.labelLarge,
-                    ),
-                  ],
-                  if (isDocument && detailTracks.isNotEmpty) ...[
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: FilledButton.icon(
-                            onPressed: () =>
-                                Navigator.pop(context, 'open:resume'),
-                            icon: const Icon(Icons.menu_book_outlined),
-                            label: Text(
-                              documentPosition == null ? 'Lesen' : 'Fortsetzen',
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        if (isOffline)
-                          PopupMenuButton<String>(
-                            tooltip: 'Offline-Kopie verwalten',
-                            icon: const Icon(Icons.download_done),
-                            onSelected: (value) =>
-                                Navigator.pop(context, value),
-                            itemBuilder: (context) => const [
-                              PopupMenuItem(
-                                value: 'download',
-                                child: ListTile(
-                                  leading: Icon(Icons.add_to_photos_outlined),
-                                  title: Text('Weitere Kapitel laden'),
-                                ),
-                              ),
-                              PopupMenuItem(
-                                value: 'remove_download',
-                                child: ListTile(
-                                  leading: Icon(Icons.delete_outline),
-                                  title: Text('Offline-Kopie löschen'),
-                                ),
+                              const SizedBox(height: 10),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: [
+                                  for (final narrator in work.narrators)
+                                    Chip(
+                                      avatar: const Icon(
+                                        Icons.mic_none,
+                                        size: 16,
+                                      ),
+                                      label: Text(narrator),
+                                    ),
+                                  if (work.language case final language?)
+                                    Chip(
+                                      label: Text(_remoteLanguage(language)),
+                                    ),
+                                  if (work.publisher case final publisher?)
+                                    Chip(
+                                      label: Text(
+                                        work.publishedYear == null
+                                            ? publisher
+                                            : '$publisher · ${work.publishedYear}',
+                                      ),
+                                    )
+                                  else if (work.publishedYear case final year?)
+                                    Chip(label: Text('$year')),
+                                  Chip(
+                                    label: Text('${work.fileCount} Datei(en)'),
+                                  ),
+                                ],
                               ),
                             ],
-                          )
-                        else
-                          IconButton.filledTonal(
-                            onPressed: () => Navigator.pop(context, 'download'),
-                            tooltip: 'Kapitel offline speichern',
-                            icon: const Icon(Icons.download_outlined),
                           ),
+                        ),
                       ],
                     ),
-                    if (!forceOffline) ...[
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton.icon(
-                          onPressed: () =>
-                              Navigator.pop(context, 'progress_history'),
-                          icon: const Icon(Icons.history),
-                          label: const Text('Gerätestände'),
-                        ),
+                    if (work.progressPosition case final position?) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        work.progressDuration == null
+                            ? 'Fortsetzen bei ${_formatRemoteDuration(position)}'
+                            : '${_formatRemoteDuration(position)} / '
+                                  '${_formatRemoteDuration(work.progressDuration!)}',
+                        style: Theme.of(context).textTheme.labelLarge,
                       ),
                     ],
-                  ],
-                  if (work.description case final description?) ...[
-                    const SizedBox(height: 20),
-                    Text(description),
-                  ],
-                  if (detailTracks.isNotEmpty) ...[
-                    const SizedBox(height: 20),
+                    if (isDocument && detailTracks.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: () =>
+                                  Navigator.pop(context, 'open:resume'),
+                              icon: const Icon(Icons.menu_book_outlined),
+                              label: Text(
+                                documentPosition == null
+                                    ? 'Lesen'
+                                    : 'Fortsetzen',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          if (isOffline)
+                            PopupMenuButton<String>(
+                              tooltip: 'Offline-Kopie verwalten',
+                              icon: const Icon(Icons.download_done),
+                              onSelected: (value) =>
+                                  Navigator.pop(context, value),
+                              itemBuilder: (context) => const [
+                                PopupMenuItem(
+                                  value: 'download',
+                                  child: ListTile(
+                                    leading: Icon(Icons.add_to_photos_outlined),
+                                    title: Text('Weitere Kapitel laden'),
+                                  ),
+                                ),
+                                PopupMenuItem(
+                                  value: 'remove_download',
+                                  child: ListTile(
+                                    leading: Icon(Icons.delete_outline),
+                                    title: Text('Offline-Kopie löschen'),
+                                  ),
+                                ),
+                              ],
+                            )
+                          else
+                            IconButton.filledTonal(
+                              onPressed: () =>
+                                  Navigator.pop(context, 'download'),
+                              tooltip: 'Kapitel offline speichern',
+                              icon: const Icon(Icons.download_outlined),
+                            ),
+                        ],
+                      ),
+                      if (!forceOffline) ...[
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            onPressed: () =>
+                                Navigator.pop(context, 'progress_history'),
+                            icon: const Icon(Icons.history),
+                            label: const Text('Gerätestände'),
+                          ),
+                        ),
+                      ],
+                    ],
+                    if (work.description case final description?) ...[
+                      const SizedBox(height: 20),
+                      Text(description),
+                    ],
+                    if (detailTracks.isNotEmpty) ...[
+                      const SizedBox(height: 20),
+                      Row(
+                        children: [
+                          Text(
+                            'Dateien',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const Spacer(),
+                          PopupMenuButton<_DocumentTrackSort>(
+                            tooltip: 'Dateien sortieren',
+                            initialValue: trackSort,
+                            onSelected: (value) =>
+                                setSheetState(() => trackSort = value),
+                            itemBuilder: (context) => const [
+                              PopupMenuItem(
+                                value: _DocumentTrackSort.oldestFirst,
+                                child: Text('Älteste Kapitel zuerst'),
+                              ),
+                              PopupMenuItem(
+                                value: _DocumentTrackSort.newestFirst,
+                                child: Text('Neueste Kapitel zuerst'),
+                              ),
+                              PopupMenuItem(
+                                value: _DocumentTrackSort.seasonEpisode,
+                                child: Text('Staffel/Folge'),
+                              ),
+                              PopupMenuItem(
+                                value: _DocumentTrackSort.titleAscending,
+                                child: Text('Name A–Z'),
+                              ),
+                            ],
+                            icon: const Icon(Icons.sort),
+                          ),
+                        ],
+                      ),
+                      ...trackRows,
+                    ],
+                    const SizedBox(height: 24),
                     Row(
                       children: [
-                        Text(
-                          'Dateien',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const Spacer(),
-                        PopupMenuButton<_DocumentTrackSort>(
-                          tooltip: 'Dateien sortieren',
-                          initialValue: trackSort,
-                          onSelected: (value) =>
-                              setSheetState(() => trackSort = value),
-                          itemBuilder: (context) => const [
-                            PopupMenuItem(
-                              value: _DocumentTrackSort.oldestFirst,
-                              child: Text('Älteste Kapitel zuerst'),
+                        if (!isDocument) ...[
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: detailTracks.isEmpty
+                                  ? null
+                                  : () => Navigator.pop(context, 'play'),
+                              icon: const Icon(Icons.play_arrow),
+                              label: const Text('Abspielen / fortsetzen'),
                             ),
-                            PopupMenuItem(
-                              value: _DocumentTrackSort.newestFirst,
-                              child: Text('Neueste Kapitel zuerst'),
+                          ),
+                          const SizedBox(width: 10),
+                        ],
+                        if (!isDocument)
+                          IconButton.filledTonal(
+                            onPressed: () => Navigator.pop(
+                              context,
+                              isOffline ? 'remove_download' : 'download',
                             ),
-                            PopupMenuItem(
-                              value: _DocumentTrackSort.seasonEpisode,
-                              child: Text('Staffel/Folge'),
+                            tooltip: isOffline
+                                ? 'Offline-Kopie löschen'
+                                : 'Offline speichern',
+                            icon: Icon(
+                              isOffline
+                                  ? Icons.download_done
+                                  : Icons.download_outlined,
                             ),
-                            PopupMenuItem(
-                              value: _DocumentTrackSort.titleAscending,
-                              child: Text('Name A–Z'),
-                            ),
-                          ],
-                          icon: const Icon(Icons.sort),
-                        ),
+                          ),
                       ],
                     ),
-                    for (final entry in _orderedRemoteTracks(
-                      detailTracks,
-                      trackSort,
-                    ))
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: documentChapterLeading(
-                          context,
-                          entry.originalIndex + 1,
-                          documentChapterReadState(
-                            chapterIndex: entry.originalIndex,
-                            currentChapterIndex: documentProgressIndex,
-                            workFinished: work.progressFinished,
-                            currentPosition: documentPosition,
-                          ),
-                        ),
-                        title: Text(
-                          _remoteTrackLabel(entry.track),
-                          style: documentChapterTitleStyle(
-                            context,
-                            documentChapterReadState(
-                              chapterIndex: entry.originalIndex,
-                              currentChapterIndex: documentProgressIndex,
-                              workFinished: work.progressFinished,
-                              currentPosition: documentPosition,
-                            ),
-                          ),
-                        ),
-                        subtitle: _remoteTechnicalSubtitle(entry.track),
-                        trailing: isDocument
-                            ? const Icon(Icons.open_in_new)
-                            : entry.track.duration == null
-                            ? null
-                            : Text(
-                                _formatRemoteDuration(entry.track.duration!),
-                              ),
-                        onTap: isDocument
-                            ? () => Navigator.pop(
-                                context,
-                                'open:${entry.originalIndex}',
-                              )
-                            : null,
-                      ),
                   ],
-                  const SizedBox(height: 24),
-                  Row(
-                    children: [
-                      if (!isDocument) ...[
-                        Expanded(
-                          child: FilledButton.icon(
-                            onPressed: detailTracks.isEmpty
-                                ? null
-                                : () => Navigator.pop(context, 'play'),
-                            icon: const Icon(Icons.play_arrow),
-                            label: const Text('Abspielen / fortsetzen'),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                      ],
-                      if (!isDocument)
-                        IconButton.filledTonal(
-                          onPressed: () => Navigator.pop(
-                            context,
-                            isOffline ? 'remove_download' : 'download',
-                          ),
-                          tooltip: isOffline
-                              ? 'Offline-Kopie löschen'
-                              : 'Offline speichern',
-                          icon: Icon(
-                            isOffline
-                                ? Icons.download_done
-                                : Icons.download_outlined,
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         ),
       );
     }
