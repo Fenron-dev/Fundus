@@ -29,6 +29,7 @@ import 'library/work_detail_header.dart';
 import 'library/work_detail_sections.dart';
 import 'library/work_content_list.dart';
 import 'library/work_annotation_list.dart';
+import 'library/fundus_breadcrumbs.dart';
 import 'library/video_player_page.dart';
 import 'library/zip_archive_browser.dart';
 import 'settings/hhh_content_settings.dart';
@@ -1372,6 +1373,7 @@ class _LibraryShellState extends State<LibraryShell> {
   LibraryWorkSummary? _inlineDetailWork;
   double _leftPaneWidth = 236;
   double _detailPaneWidth = 480;
+  double _gridTileExtent = 220;
   String? _playlistTypeFilter;
   List<LibrarySavedView> _savedViews = const [];
   String? _lastTappedWorkId;
@@ -1462,6 +1464,44 @@ class _LibraryShellState extends State<LibraryShell> {
     return works;
   }
 
+  List<FundusBreadcrumb> get _breadcrumbs {
+    final items = <FundusBreadcrumb>[
+      FundusBreadcrumb(
+        label: widget.libraryName ?? 'Bibliothek',
+        icon: Icons.storage_outlined,
+        onTap: () => setState(() {
+          _section = _LibrarySection.library;
+          _selectedAuthor = null;
+          _selectedNarrator = null;
+          _selectedSeries = null;
+          _inlineDetailWork = null;
+        }),
+      ),
+      FundusBreadcrumb(
+        label: _section.label,
+        icon: _section.icon,
+        onTap: () => setState(() {
+          _selectedAuthor = null;
+          _selectedNarrator = null;
+          _selectedSeries = null;
+          _inlineDetailWork = null;
+        }),
+      ),
+    ];
+    if (_selectedAuthor != null) {
+      items.add(FundusBreadcrumb(label: _selectedAuthor!));
+    } else if (_selectedNarrator != null) {
+      items.add(FundusBreadcrumb(label: _selectedNarrator!));
+    }
+    if (_selectedSeries != null) {
+      items.add(FundusBreadcrumb(label: _selectedSeries!));
+    }
+    if (_inlineDetailWork case final work?) {
+      items.add(FundusBreadcrumb(label: work.title));
+    }
+    return items;
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -1508,6 +1548,7 @@ class _LibraryShellState extends State<LibraryShell> {
               peerServer: widget.peerServer,
               connectedServerCount: widget.connectedServerCount,
               detailPaneVisible: _detailPaneVisible,
+              breadcrumbs: _breadcrumbs,
               onToggleDetails: () => setState(() {
                 _detailPaneVisible = !_detailPaneVisible;
                 if (_detailPaneVisible) _inlineDetailWork = null;
@@ -1619,6 +1660,7 @@ class _LibraryShellState extends State<LibraryShell> {
                   : () => _openServerSettings(context),
               peerServer: widget.peerServer,
               connectedServerCount: widget.connectedServerCount,
+              breadcrumbs: _breadcrumbs,
             ),
             Expanded(
               child: Row(
@@ -1706,6 +1748,31 @@ class _LibraryShellState extends State<LibraryShell> {
       ),
     ];
     return Scaffold(
+      drawer: Drawer(
+        child: SafeArea(
+          child: _Sidebar(
+            selectedSection: _section,
+            showHhh: widget.showHhh,
+            onSelectSection: (section) {
+              setState(() {
+                _section = section;
+                if (section.isDocumentSection) {
+                  _grouping = _LibraryGrouping.books;
+                }
+                _inlineDetailWork = null;
+                _playerExpanded = false;
+              });
+              Navigator.of(context).pop();
+            },
+            onOpenSettings: widget.peerServer == null
+                ? null
+                : () {
+                    Navigator.of(context).pop();
+                    unawaited(_openServerSettings(context));
+                  },
+          ),
+        ),
+      ),
       appBar: AppBar(
         title: Text(
           _playerExpanded
@@ -2302,8 +2369,19 @@ class _LibraryShellState extends State<LibraryShell> {
     bool showSearch = false,
   }) {
     final works = _displayedWorks;
+    final showCompactBreadcrumbs =
+        MediaQuery.sizeOf(context).width < 1050 && _breadcrumbs.length > 1;
     return Column(
       children: [
+        if (showCompactBreadcrumbs)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: FundusBreadcrumbs(
+              items: _breadcrumbs,
+              compact: true,
+              onBack: _canNavigateUp ? _navigateUp : null,
+            ),
+          ),
         if (showSearch)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -2352,8 +2430,8 @@ class _LibraryShellState extends State<LibraryShell> {
               : _layout == _LibraryLayout.grid
               ? GridView.builder(
                   padding: const EdgeInsets.all(16),
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 220,
+                  gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: _gridTileExtent,
                     childAspectRatio: .72,
                     mainAxisSpacing: 14,
                     crossAxisSpacing: 14,
@@ -2516,6 +2594,11 @@ class _LibraryShellState extends State<LibraryShell> {
           selected: {_layout},
           onSelectionChanged: (value) => setState(() => _layout = value.single),
         ),
+        IconButton(
+          onPressed: () => _showGridSizeDialog(),
+          tooltip: 'Rastergröße anpassen',
+          icon: const Icon(Icons.photo_size_select_large_outlined),
+        ),
         if (!mobile) const SizedBox(width: 8),
         if (!mobile)
           MenuAnchor(
@@ -2537,6 +2620,50 @@ class _LibraryShellState extends State<LibraryShell> {
           ),
       ],
     );
+  }
+
+  Future<void> _showGridSizeDialog() async {
+    var value = _gridTileExtent;
+    final result = await showDialog<double>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Rastergröße'),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('${value.round()} px pro Kachel'),
+                Slider(
+                  min: 140,
+                  max: 360,
+                  divisions: 11,
+                  value: value,
+                  label: '${value.round()} px',
+                  onChanged: (next) => setDialogState(() => value = next),
+                ),
+                const Text(
+                  'Die Einstellung gilt für die Kachelansicht dieser Sitzung. Eine dauerhafte Gerätepräferenz wird im Ansichtsprofil gespeichert.',
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, value),
+              child: const Text('Übernehmen'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || result == null) return;
+    setState(() => _gridTileExtent = result);
   }
 
   String get _browserTitle {
@@ -2939,6 +3066,11 @@ class _LibraryShellState extends State<LibraryShell> {
     }
   });
 
+  bool get _canNavigateUp =>
+      _selectedAuthor != null ||
+      _selectedNarrator != null ||
+      _selectedSeries != null;
+
   void _setGrouping(_LibraryGrouping value) => setState(() {
     _grouping = value;
     _selectedAuthor = null;
@@ -3235,6 +3367,7 @@ class _TopBar extends StatelessWidget {
     this.onOpenSettings,
     this.peerServer,
     this.connectedServerCount = 0,
+    this.breadcrumbs = const [],
   });
 
   final VoidCallback onToggleTheme;
@@ -3250,6 +3383,7 @@ class _TopBar extends StatelessWidget {
   final VoidCallback? onOpenSettings;
   final FundusPeerServerController? peerServer;
   final int connectedServerCount;
+  final List<FundusBreadcrumb> breadcrumbs;
 
   @override
   Widget build(BuildContext context) {
@@ -3263,7 +3397,12 @@ class _TopBar extends StatelessWidget {
             child: Row(
               children: [
                 Text('Fundus', style: Theme.of(context).textTheme.titleMedium),
-                if (!compact) ...[
+                if (!compact && breadcrumbs.isNotEmpty) ...[
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: FundusBreadcrumbs(items: breadcrumbs, compact: true),
+                  ),
+                ] else if (!compact) ...[
                   const SizedBox(width: 14),
                   Text(
                     '${libraryName ?? 'Entwicklung'} · Hörbücher',
@@ -3278,7 +3417,7 @@ class _TopBar extends StatelessWidget {
                     icon: const Icon(Icons.home_outlined),
                   ),
                 ],
-                const Spacer(),
+                if (breadcrumbs.isEmpty || compact) const Spacer(),
                 SizedBox(
                   width: compact ? 200 : 320,
                   child: SearchBar(
