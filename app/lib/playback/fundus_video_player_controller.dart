@@ -125,6 +125,7 @@ final class FundusVideoPlayerController extends ChangeNotifier {
     LibraryWorkSummary work, {
     String? startFileId,
     Duration? startPosition,
+    bool autoPlay = true,
   }) async {
     if (_closed) return;
     await persist();
@@ -208,9 +209,9 @@ final class FundusVideoPlayerController extends ChangeNotifier {
         _position = Duration.zero;
       }
       notifyListeners();
-      await _player.play();
       _restoringPosition = false;
       _lastPersistedAt = DateTime.now();
+      if (autoPlay) await _player.play();
       unawaited(_recordNativeResume(resume));
     } catch (error) {
       _restoringPosition = false;

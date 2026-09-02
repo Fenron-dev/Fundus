@@ -4710,150 +4710,157 @@ class _VideoHero extends StatelessWidget {
   final VoidCallback? onChangeType;
 
   @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final wide = MediaQuery.sizeOf(context).width >= 720;
-    final mediaType = FundusMediaTypeRegistry.forWork(
-      kind: work.kind,
-      contentStyle: work.contentStyle,
-      contentSensitivity: work.contentSensitivity,
-    );
-    final facts = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(work.title, style: Theme.of(context).textTheme.headlineMedium),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 6,
-          children: [
-            Chip(
-              avatar: const Icon(Icons.movie_outlined, size: 18),
-              label: Text(
-                mediaType?.label ?? (work.kind == 'movie' ? 'Film' : 'Serie'),
-              ),
-            ),
-            if (work.contentStyle case final style?) Chip(label: Text(style)),
-            if (work.publishedYear case final year?) Chip(label: Text('$year')),
-            Chip(label: Text('${work.fileCount} Datei(en)')),
-          ],
-        ),
-        if (work.authors.isNotEmpty || work.author != 'Unbekannt') ...[
-          const SizedBox(height: 12),
-          Text(
-            work.authors.isEmpty ? work.author : work.authors.join(', '),
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-        ],
-        if (work.genres.isNotEmpty) ...[
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final scheme = Theme.of(context).colorScheme;
+      // Use the hero's actual panel width instead of the window width. On the
+      // desktop detail sidebar the window can be wide while the panel is only
+      // a few hundred pixels; keeping the two-column layout there squeezes the
+      // metadata into one-character-wide columns.
+      final wide = constraints.maxWidth >= 720;
+      final mediaType = FundusMediaTypeRegistry.forWork(
+        kind: work.kind,
+        contentStyle: work.contentStyle,
+        contentSensitivity: work.contentSensitivity,
+      );
+      final facts = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(work.title, style: Theme.of(context).textTheme.headlineMedium),
           const SizedBox(height: 8),
           Wrap(
-            spacing: 6,
-            runSpacing: 4,
+            spacing: 8,
+            runSpacing: 6,
             children: [
-              for (final genre in work.genres) Chip(label: Text(genre)),
+              Chip(
+                avatar: const Icon(Icons.movie_outlined, size: 18),
+                label: Text(
+                  mediaType?.label ?? (work.kind == 'movie' ? 'Film' : 'Serie'),
+                ),
+              ),
+              if (work.contentStyle case final style?) Chip(label: Text(style)),
+              if (work.publishedYear case final year?)
+                Chip(label: Text('$year')),
+              Chip(label: Text('${work.fileCount} Datei(en)')),
             ],
           ),
-        ],
-        if (work.description case final description?) ...[
-          const SizedBox(height: 14),
-          Text(
-            description,
-            maxLines: wide ? 8 : 5,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-        if (directoryPath case final path?) ...[
-          const SizedBox(height: 14),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Icon(Icons.folder_outlined, size: 18),
-              const SizedBox(width: 7),
-              Expanded(child: SelectableText(path)),
-            ],
-          ),
-        ],
-        if (onOpen != null ||
-            onLoadMetadata != null ||
-            onChangeType != null) ...[
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 10,
-            runSpacing: 8,
-            children: [
-              if (onOpen != null)
-                SizedBox(
-                  width: wide ? 280 : double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: onOpen,
-                    icon: const Icon(Icons.play_arrow),
-                    label: Text(
-                      work.progressPosition != null &&
-                              work.progressPosition! > Duration.zero
-                          ? 'Fortsetzen'
-                          : 'Abspielen',
+          if (work.authors.isNotEmpty || work.author != 'Unbekannt') ...[
+            const SizedBox(height: 12),
+            Text(
+              work.authors.isEmpty ? work.author : work.authors.join(', '),
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ],
+          if (work.genres.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                for (final genre in work.genres) Chip(label: Text(genre)),
+              ],
+            ),
+          ],
+          if (work.description case final description?) ...[
+            const SizedBox(height: 14),
+            Text(
+              description,
+              maxLines: wide ? 8 : 5,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+          if (directoryPath case final path?) ...[
+            const SizedBox(height: 14),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.folder_outlined, size: 18),
+                const SizedBox(width: 7),
+                Expanded(child: SelectableText(path)),
+              ],
+            ),
+          ],
+          if (onOpen != null ||
+              onLoadMetadata != null ||
+              onChangeType != null) ...[
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                if (onOpen != null)
+                  SizedBox(
+                    width: wide ? 280 : double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: onOpen,
+                      icon: const Icon(Icons.play_arrow),
+                      label: Text(
+                        work.progressPosition != null &&
+                                work.progressPosition! > Duration.zero
+                            ? 'Fortsetzen'
+                            : 'Abspielen',
+                      ),
                     ),
                   ),
-                ),
-              if (onLoadMetadata != null)
-                OutlinedButton.icon(
-                  onPressed: onLoadMetadata,
-                  icon: const Icon(Icons.cloud_download_outlined),
-                  label: const Text('Details laden'),
-                ),
-              if (onChangeType != null)
-                OutlinedButton.icon(
-                  onPressed: onChangeType,
-                  icon: const Icon(Icons.category_outlined),
-                  label: const Text('Typ zuweisen'),
-                ),
+                if (onLoadMetadata != null)
+                  OutlinedButton.icon(
+                    onPressed: onLoadMetadata,
+                    icon: const Icon(Icons.cloud_download_outlined),
+                    label: const Text('Details laden'),
+                  ),
+                if (onChangeType != null)
+                  OutlinedButton.icon(
+                    onPressed: onChangeType,
+                    icon: const Icon(Icons.category_outlined),
+                    label: const Text('Typ zuweisen'),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      );
+      final cover = AspectRatio(
+        aspectRatio: .68,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: _WorkCover(work: work, iconSize: 84),
+        ),
+      );
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              scheme.secondaryContainer.withValues(alpha: .42),
+              scheme.surfaceContainer.withValues(alpha: .55),
             ],
           ),
-        ],
-      ],
-    );
-    final cover = AspectRatio(
-      aspectRatio: .68,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: _WorkCover(work: work, iconSize: 84),
-      ),
-    );
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            scheme.secondaryContainer.withValues(alpha: .42),
-            scheme.surfaceContainer.withValues(alpha: .55),
-          ],
+          border: Border.all(color: scheme.outlineVariant),
         ),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: wide
-            ? Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(width: 230, child: cover),
-                  const SizedBox(width: 28),
-                  Expanded(child: facts),
-                ],
-              )
-            : Column(
-                children: [
-                  SizedBox(width: 190, child: cover),
-                  const SizedBox(height: 18),
-                  facts,
-                ],
-              ),
-      ),
-    );
-  }
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: wide
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(width: 230, child: cover),
+                    const SizedBox(width: 28),
+                    Expanded(child: facts),
+                  ],
+                )
+              : Column(
+                  children: [
+                    SizedBox(width: 190, child: cover),
+                    const SizedBox(height: 18),
+                    facts,
+                  ],
+                ),
+        ),
+      );
+    },
+  );
 }
 
 enum _DocumentFileSort {
@@ -6275,6 +6282,10 @@ class _DetailPanelState extends State<_DetailPanel> {
         work,
         startFileId: startFileId,
         startPosition: startPosition,
+        // Let the fullscreen route attach the native video texture before
+        // playback starts. Starting a resumed file before the Video widget is
+        // mounted can leave audio running against a black/stale texture.
+        autoPlay: false,
       );
       if (!mounted) return;
       if (controller.error case final error?) {

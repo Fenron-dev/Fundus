@@ -17,6 +17,7 @@ Future<void> showFundusVideoPlayer(
   videoController: controller.videoController,
   fundusController: controller,
   title: controller.work?.title ?? 'Video',
+  resumePlayback: true,
 );
 
 Future<void> showFundusVideoPlayerForPlayer(
@@ -25,6 +26,7 @@ Future<void> showFundusVideoPlayerForPlayer(
   required VideoController videoController,
   required String title,
   FundusVideoPlayerController? fundusController,
+  bool resumePlayback = true,
   Future<void> Function(AudioTrack track)? onAudioTrackSelected,
   Future<void> Function(bool enabled, SubtitleTrack? track)?
   onSubtitleTrackSelected,
@@ -36,6 +38,7 @@ Future<void> showFundusVideoPlayerForPlayer(
       videoController: videoController,
       title: title,
       fundusController: fundusController,
+      resumePlayback: resumePlayback,
       onAudioTrackSelected: onAudioTrackSelected,
       onSubtitleTrackSelected: onSubtitleTrackSelected,
     ),
@@ -48,6 +51,7 @@ final class _FundusVideoPlayerPage extends StatefulWidget {
     required this.videoController,
     required this.title,
     this.fundusController,
+    required this.resumePlayback,
     this.onAudioTrackSelected,
     this.onSubtitleTrackSelected,
   });
@@ -55,6 +59,7 @@ final class _FundusVideoPlayerPage extends StatefulWidget {
   final VideoController videoController;
   final String title;
   final FundusVideoPlayerController? fundusController;
+  final bool resumePlayback;
   final Future<void> Function(AudioTrack track)? onAudioTrackSelected;
   final Future<void> Function(bool enabled, SubtitleTrack? track)?
   onSubtitleTrackSelected;
@@ -63,6 +68,25 @@ final class _FundusVideoPlayerPage extends StatefulWidget {
 }
 
 final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
+  @override
+  void initState() {
+    super.initState();
+    // The player may have been opened (and even started) before this route
+    // existed. Re-prime the native texture after the first frame so resumed
+    // videos render their picture as reliably as freshly opened videos.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || !widget.resumePlayback) return;
+      try {
+        if (widget.player.state.playing) {
+          await widget.player.pause();
+        }
+        if (mounted) await widget.player.play();
+      } catch (_) {
+        // Playback errors are surfaced by media_kit's error stream/controls.
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: Colors.black,
