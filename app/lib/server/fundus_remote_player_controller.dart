@@ -550,6 +550,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
           kind: work.kind,
           workId: work.id,
           fileId: track?.id,
+          season: track?.episode?.season,
         );
         await _applyVideoTrackPreference(preference);
       }
@@ -1218,11 +1219,13 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       kind: work.kind,
       workId: work.id,
       fileId: current.id,
+      season: current.episode?.season,
     );
     await VideoTrackPreferences.save(
       kind: work.kind,
       workId: work.id,
       fileId: current.id,
+      season: current.episode?.season,
       preference: preference.copyWith(
         audioLanguage: selected.language,
         audioTrackId: selected.id,
@@ -1242,11 +1245,13 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       kind: work.kind,
       workId: work.id,
       fileId: current.id,
+      season: current.episode?.season,
     );
     await VideoTrackPreferences.save(
       kind: work.kind,
       workId: work.id,
       fileId: current.id,
+      season: current.episode?.season,
       preference: preference.copyWith(
         subtitlesEnabled: enabled,
         subtitleLanguage: selected?.language,
@@ -1264,9 +1269,9 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       final audio = _findAudioTrack(tracks.audio, preference);
       final subtitle = _findSubtitleTrack(tracks.subtitle, preference);
       if (audio != null) await _player.setAudioTrack(audio);
-      if (!preference.subtitlesEnabled) {
+      if (preference.subtitlesEnabled == false) {
         await _player.setSubtitleTrack(SubtitleTrack.no());
-      } else if (subtitle != null) {
+      } else if (preference.subtitlesEnabled == true && subtitle != null) {
         await _player.setSubtitleTrack(subtitle);
       }
       final needsAudio =
@@ -1274,7 +1279,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
           preference.audioTrackTitle != null ||
           preference.audioLanguage != null;
       final needsSubtitle =
-          preference.subtitlesEnabled &&
+          preference.subtitlesEnabled == true &&
           (preference.subtitleTrackId != null ||
               preference.subtitleTrackTitle != null ||
               preference.subtitleLanguage != null);

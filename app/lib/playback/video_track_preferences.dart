@@ -16,7 +16,7 @@ final class VideoTrackPreference {
     this.subtitleLanguage,
     this.subtitleTrackId,
     this.subtitleTrackTitle,
-    this.subtitlesEnabled = false,
+    this.subtitlesEnabled,
   });
 
   final String? audioLanguage;
@@ -25,7 +25,11 @@ final class VideoTrackPreference {
   final String? subtitleLanguage;
   final String? subtitleTrackId;
   final String? subtitleTrackTitle;
-  final bool subtitlesEnabled;
+
+  /// `null` means that this level does not override the parent level.
+  /// Keeping the unset state is important for the type → work → season →
+  /// episode preference hierarchy.
+  final bool? subtitlesEnabled;
 
   VideoTrackPreference copyWith({
     String? audioLanguage,
@@ -37,6 +41,7 @@ final class VideoTrackPreference {
     bool? subtitlesEnabled,
     bool clearAudio = false,
     bool clearSubtitleLanguage = false,
+    bool clearSubtitlesEnabled = false,
   }) => VideoTrackPreference(
     audioLanguage: clearAudio ? null : audioLanguage ?? this.audioLanguage,
     audioTrackId: clearAudio ? null : audioTrackId ?? this.audioTrackId,
@@ -52,7 +57,9 @@ final class VideoTrackPreference {
     subtitleTrackTitle: clearSubtitleLanguage
         ? null
         : subtitleTrackTitle ?? this.subtitleTrackTitle,
-    subtitlesEnabled: subtitlesEnabled ?? this.subtitlesEnabled,
+    subtitlesEnabled: clearSubtitlesEnabled
+        ? null
+        : subtitlesEnabled ?? this.subtitlesEnabled,
   );
 
   Map<String, Object?> toJson() => {
@@ -62,7 +69,7 @@ final class VideoTrackPreference {
     if (subtitleLanguage != null) 'subtitle_language': subtitleLanguage,
     if (subtitleTrackId != null) 'subtitle_track_id': subtitleTrackId,
     if (subtitleTrackTitle != null) 'subtitle_track_title': subtitleTrackTitle,
-    'subtitles_enabled': subtitlesEnabled,
+    if (subtitlesEnabled != null) 'subtitles_enabled': subtitlesEnabled,
   };
 
   factory VideoTrackPreference.fromJson(Object? value) {
@@ -74,7 +81,9 @@ final class VideoTrackPreference {
       subtitleLanguage: value['subtitle_language'] as String?,
       subtitleTrackId: value['subtitle_track_id'] as String?,
       subtitleTrackTitle: value['subtitle_track_title'] as String?,
-      subtitlesEnabled: value['subtitles_enabled'] == true,
+      subtitlesEnabled: value.containsKey('subtitles_enabled')
+          ? value['subtitles_enabled'] == true
+          : null,
     );
   }
 }
@@ -88,10 +97,16 @@ abstract final class VideoTrackPreferences {
     required String kind,
     String? workId,
     String? fileId,
+    int? season,
   }) async {
     final keys = <String>[_key(_baseKind(kind))];
     if (workId != null) keys.add(_key(_baseKind(kind), workId));
-    if (fileId != null) keys.add(_key(_baseKind(kind), workId, fileId));
+    if (season != null && workId != null) {
+      keys.add(_key(_baseKind(kind), workId, 'season-$season'));
+    }
+    if (fileId != null) {
+      keys.add(_key(_baseKind(kind), workId, fileId));
+    }
     var result = const VideoTrackPreference();
     for (final key in keys) {
       final preference = await _read(key);
@@ -105,7 +120,8 @@ abstract final class VideoTrackPreferences {
         subtitleTrackId: preference.subtitleTrackId ?? result.subtitleTrackId,
         subtitleTrackTitle:
             preference.subtitleTrackTitle ?? result.subtitleTrackTitle,
-        subtitlesEnabled: preference.subtitlesEnabled,
+        subtitlesEnabled:
+            preference.subtitlesEnabled ?? result.subtitlesEnabled,
       );
     }
     return result;
@@ -115,8 +131,16 @@ abstract final class VideoTrackPreferences {
     required String kind,
     String? workId,
     String? fileId,
+    int? season,
     required VideoTrackPreference preference,
-  }) => _write(_key(_baseKind(kind), workId, fileId), preference);
+  }) => _write(
+    _key(
+      _baseKind(kind),
+      workId,
+      fileId ?? (season == null ? null : 'season-$season'),
+    ),
+    preference,
+  );
 
   static Future<VideoTrackPreference?> _read(String key) async {
     if (_cache.containsKey(key)) return _cache[key];
@@ -218,7 +242,11 @@ final class _VideoTrackPreferenceSettingTileState
       title: Text(label),
       subtitle: Text(
         'Ton: ${value.audioLanguage ?? 'Automatisch'} · Untertitel: '
-        '${value.subtitlesEnabled ? value.subtitleLanguage ?? 'Automatisch' : 'Aus'}',
+        '${value.subtitlesEnabled == null
+            ? 'Automatisch'
+            : value.subtitlesEnabled == true
+            ? value.subtitleLanguage ?? 'Automatisch'
+            : 'Aus'}',
       ),
       trailing: PopupMenuButton<String>(
         tooltip: 'Voreinstellung ändern',
@@ -228,9 +256,13 @@ final class _VideoTrackPreferenceSettingTileState
             'en' => value.copyWith(audioLanguage: 'en', subtitleLanguage: 'en'),
             'ja' => value.copyWith(audioLanguage: 'ja', subtitleLanguage: 'ja'),
             'subtitles' => value.copyWith(
-              subtitlesEnabled: !value.subtitlesEnabled,
+              subtitlesEnabled: value.subtitlesEnabled != true,
             ),
-            _ => value.copyWith(clearAudio: true, clearSubtitleLanguage: true),
+            _ => value.copyWith(
+              clearAudio: true,
+              clearSubtitleLanguage: true,
+              clearSubtitlesEnabled: true,
+            ),
           };
           await VideoTrackPreferences.save(kind: kind, preference: updated);
           if (mounted) setState(() => _values[kind] = updated);
@@ -246,7 +278,7 @@ final class _VideoTrackPreferenceSettingTileState
           PopupMenuItem(
             value: 'subtitles',
             child: Text(
-              value.subtitlesEnabled
+              value.subtitlesEnabled == true
                   ? 'Untertitel ausschalten'
                   : 'Untertitel einschalten',
             ),
