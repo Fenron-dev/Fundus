@@ -6616,10 +6616,15 @@ class _DetailPanelState extends State<_DetailPanel> {
   }
 
   Future<void> _changeVideoType(LibraryWorkSummary work) async {
-    final result = await showDialog<(String, String?)>(
+    final result = await showDialog<(String, String?, String?)>(
       context: context,
       builder: (context) {
-        var selected = work.kind == 'movie' && work.contentStyle == 'anime'
+        final adult = work.contentSensitivity == 'adult_explicit';
+        var selected = adult
+            ? work.kind == 'movie'
+                  ? 'hhh_movie'
+                  : 'hhh_tv'
+            : work.kind == 'movie' && work.contentStyle == 'anime'
             ? 'anime_movie'
             : work.kind == 'tv' && work.contentStyle == 'anime'
             ? 'anime_tv'
@@ -6640,6 +6645,8 @@ class _DetailPanelState extends State<_DetailPanel> {
                   child: Text('Anime-Film'),
                 ),
                 DropdownMenuItem(value: 'anime_tv', child: Text('Anime-Serie')),
+                DropdownMenuItem(value: 'hhh_movie', child: Text('HHH-Film')),
+                DropdownMenuItem(value: 'hhh_tv', child: Text('HHH-Serie')),
               ],
               onChanged: (value) =>
                   setState(() => selected = value ?? selected),
@@ -6657,6 +6664,7 @@ class _DetailPanelState extends State<_DetailPanel> {
                       ? 'tv'
                       : selected,
                   selected.startsWith('anime_') ? 'anime' : null,
+                  selected.startsWith('hhh_') ? 'adult_explicit' : null,
                 )),
                 child: const Text('Speichern'),
               ),
@@ -6671,6 +6679,7 @@ class _DetailPanelState extends State<_DetailPanel> {
         workId: work.id,
         kind: result.$1,
         contentStyle: result.$2,
+        contentSensitivity: result.$3,
       );
       if (!mounted) return;
       setState(() => _editedWork = updated);

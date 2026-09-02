@@ -539,12 +539,14 @@ final class FundusLibrary {
     required String workId,
     required String kind,
     String? contentStyle,
+    String? contentSensitivity,
   }) async {
     _ensureWritable();
     _database.updateWorkKind(
       workId: workId,
       kind: kind,
       contentStyle: contentStyle,
+      contentSensitivity: contentSensitivity,
     );
     await _writeMetadataSidecar(workId);
     return listWorks(

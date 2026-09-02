@@ -467,6 +467,50 @@ void main() {
     },
   );
 
+  test(
+    'manual video classification can enable and clear HHH visibility',
+    () async {
+      final root = await Directory.systemTemp.createTemp('fundus-video-kind-');
+      addTearDown(() => root.delete(recursive: true));
+      final episode = Directory('${root.path}/Serien/Chainsaw Man/Season 1');
+      await episode.create(recursive: true);
+      await File('${episode.path}/S01E01 - Pilot.mkv').writeAsBytes([1, 2, 3]);
+
+      final library = await FundusLibrary.create(root);
+      addTearDown(library.close);
+      await library.index().drain<void>();
+      final original = library.listWorks().single;
+
+      final hhh = await library.updateWorkKind(
+        workId: original.id,
+        kind: 'tv',
+        contentSensitivity: 'adult_explicit',
+      );
+      expect(hhh.isHhh, isTrue);
+      expect(hhh.contentSensitivity, 'adult_explicit');
+      final sidecars = <String>[];
+      await for (final entity in Directory(root.path).list(recursive: true)) {
+        if (entity is File && entity.path.endsWith('meta.yaml')) {
+          sidecars.add(await entity.readAsString());
+        }
+      }
+      expect(
+        sidecars.any(
+          (sidecar) =>
+              sidecar.contains('"content_sensitivity": "adult_explicit"'),
+        ),
+        isTrue,
+      );
+
+      final regular = await library.updateWorkKind(
+        workId: original.id,
+        kind: 'tv',
+      );
+      expect(regular.isHhh, isFalse);
+      expect(regular.contentSensitivity, isNull);
+    },
+  );
+
   test('restores tags notes and bookmarks from portable sidecars', () async {
     final root = await Directory.systemTemp.createTemp('fundus-sidecars-');
     addTearDown(() => root.delete(recursive: true));

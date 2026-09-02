@@ -560,6 +560,7 @@ final class FundusDatabase {
     required String workId,
     required String kind,
     String? contentStyle,
+    String? contentSensitivity,
   }) {
     const supported = {
       'movie',
@@ -576,6 +577,16 @@ final class FundusDatabase {
     if (!supported.contains(kind)) {
       throw ArgumentError.value(kind, 'kind', 'Nicht unterstützter Medientyp.');
     }
+    final normalizedSensitivity = contentSensitivity?.trim();
+    if (normalizedSensitivity != null &&
+        normalizedSensitivity.isNotEmpty &&
+        !supportedContentSensitivities.contains(normalizedSensitivity)) {
+      throw ArgumentError.value(
+        contentSensitivity,
+        'contentSensitivity',
+        'Erwartet general, mature, adult_explicit oder unknown.',
+      );
+    }
     final rows = _database.select(
       'SELECT metadata_json FROM works WHERE id = ?',
       [workId],
@@ -586,6 +597,11 @@ final class FundusDatabase {
       metadata.remove('content_style');
     } else {
       metadata['content_style'] = contentStyle;
+    }
+    if (normalizedSensitivity == null || normalizedSensitivity.isEmpty) {
+      metadata.remove('content_sensitivity');
+    } else {
+      metadata['content_sensitivity'] = normalizedSensitivity;
     }
     _database.execute(
       'UPDATE works SET kind = ?, metadata_json = ? WHERE id = ?',
