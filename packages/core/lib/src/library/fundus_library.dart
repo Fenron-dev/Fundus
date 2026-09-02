@@ -236,6 +236,7 @@ final class FundusLibrary {
                 ? null
                 : Duration(milliseconds: track.durationMs!),
             audioMetadata: track.audioMetadata,
+            episode: track.episode,
           );
         })
         .toList(growable: false);

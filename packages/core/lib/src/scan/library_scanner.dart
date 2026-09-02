@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import 'audio_technical_metadata.dart';
+import '../video/video_metadata.dart';
 
 enum ScanEventKind { started, file, skipped, error, completed, cancelled }
 
@@ -17,6 +18,7 @@ final class ScannedFile {
     required this.modifiedAt,
     required this.mimeType,
     this.audioMetadata,
+    this.videoEpisode,
   });
 
   final String absolutePath;
@@ -27,6 +29,7 @@ final class ScannedFile {
   final DateTime modifiedAt;
   final String? mimeType;
   final AudioTechnicalMetadata? audioMetadata;
+  final VideoEpisodeIdentity? videoEpisode;
 }
 
 final class ScanEvent {
@@ -163,6 +166,9 @@ final class LibraryScanner {
                 size: stat.size,
                 modifiedAt: stat.modified,
                 mimeType: _mimeTypes[extension],
+                videoEpisode: _videoExtensions.contains(extension)
+                    ? parseVideoEpisode(name)
+                    : null,
                 audioMetadata: await AudioTechnicalMetadataProbe.inspect(
                   entity,
                   extension,
@@ -227,4 +233,17 @@ const _mimeTypes = <String, String>{
   'jpeg': 'image/jpeg',
   'png': 'image/png',
   'webp': 'image/webp',
+};
+
+const _videoExtensions = {
+  'mp4',
+  'm4v',
+  'mkv',
+  'webm',
+  'mov',
+  'avi',
+  'wmv',
+  'flv',
+  'ts',
+  'm2ts',
 };

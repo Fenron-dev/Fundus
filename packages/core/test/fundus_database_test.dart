@@ -16,6 +16,7 @@ void main() {
     expect(database.columnExists('playback_sessions', 'revision'), isTrue);
     expect(database.columnExists('files', 'audio_codec'), isTrue);
     expect(database.columnExists('files', 'sample_rate_hz'), isTrue);
+    expect(database.columnExists('files', 'video_episode_json'), isTrue);
     expect(
       database.columnExists('progress', 'position_schema_version'),
       isTrue,
@@ -103,5 +104,20 @@ void main() {
     expect(migrated.columnExists('progress', 'chapter_id'), isTrue);
     expect(migrated.columnExists('progress', 'element_id'), isTrue);
     expect(migrated.columnExists('progress', 'scroll_offset'), isTrue);
+  });
+
+  test('schema v6 is migrated with persisted video episode identity', () async {
+    final directory = await Directory.systemTemp.createTemp('fundus-db-v6-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/index.db');
+    final legacy = sqlite3.open(file.path);
+    legacy.execute('CREATE TABLE files (id TEXT PRIMARY KEY)');
+    legacy.userVersion = 6;
+    legacy.close();
+
+    final migrated = FundusDatabase.openFile(file);
+    addTearDown(migrated.close);
+    expect(migrated.userVersion, FundusDatabase.schemaVersion);
+    expect(migrated.columnExists('files', 'video_episode_json'), isTrue);
   });
 }

@@ -1,5 +1,6 @@
 import '../model/media_position.dart';
 import '../scan/audio_technical_metadata.dart';
+import '../video/video_metadata.dart';
 
 final class LibraryPlaybackTrack {
   const LibraryPlaybackTrack({
@@ -10,6 +11,7 @@ final class LibraryPlaybackTrack {
     required this.index,
     this.duration,
     this.audioMetadata,
+    this.episode,
   });
 
   final String fileId;
@@ -19,6 +21,7 @@ final class LibraryPlaybackTrack {
   final int index;
   final Duration? duration;
   final AudioTechnicalMetadata? audioMetadata;
+  final VideoEpisodeIdentity? episode;
 }
 
 final class LibraryPlaybackChapter {

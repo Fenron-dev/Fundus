@@ -13,6 +13,7 @@ import '../model/playback_session.dart';
 import '../playback/library_playback.dart';
 import '../scan/library_scanner.dart';
 import '../scan/audio_technical_metadata.dart';
+import '../video/video_metadata.dart';
 
 final class LibraryWorkSummary {
   const LibraryWorkSummary({
@@ -108,7 +109,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 6;
+  static const schemaVersion = 7;
   static const supportedContentSensitivities = {
     'general',
     'mature',
@@ -179,8 +180,8 @@ final class FundusDatabase {
       INSERT INTO files (
         id, path, filename, extension, size, mime_type, file_modified_at,
         indexed_at, status, container, audio_codec, codec_profile,
-        audio_channels, sample_rate_hz
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?, ?, ?, ?)
+        audio_channels, sample_rate_hz, video_episode_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?, ?, ?, ?, ?)
       ON CONFLICT(path) DO UPDATE SET
         filename = excluded.filename,
         extension = excluded.extension,
@@ -191,6 +192,7 @@ final class FundusDatabase {
         codec_profile = excluded.codec_profile,
         audio_channels = excluded.audio_channels,
         sample_rate_hz = excluded.sample_rate_hz,
+        video_episode_json = excluded.video_episode_json,
         file_modified_at = excluded.file_modified_at,
         indexed_at = excluded.indexed_at,
         status = 'available'
@@ -209,6 +211,9 @@ final class FundusDatabase {
         file.audioMetadata?.profile,
         file.audioMetadata?.channels,
         file.audioMetadata?.sampleRateHz,
+        file.videoEpisode == null
+            ? null
+            : jsonEncode(videoEpisodeToJson(file.videoEpisode!)),
       ],
     );
     return id;
@@ -784,6 +789,7 @@ final class FundusDatabase {
       int position,
       int? durationMs,
       AudioTechnicalMetadata? audioMetadata,
+      VideoEpisodeIdentity? episode,
     })
   >
   playbackTracks(String workId) {
@@ -791,7 +797,8 @@ final class FundusDatabase {
       '''
       SELECT f.id, f.path, f.filename, wf.position, f.duration_ms,
              f.container, f.audio_codec, f.codec_profile,
-             f.audio_channels, f.sample_rate_hz
+             f.audio_channels, f.sample_rate_hz,
+             ${columnExists('files', 'video_episode_json') ? 'f.video_episode_json' : 'NULL'} AS video_episode_json
       FROM work_files wf
       JOIN files f ON f.id = wf.file_id
       WHERE wf.work_id = ? AND wf.role = 'content' AND f.status = 'available'
@@ -818,9 +825,19 @@ final class FundusDatabase {
                     channels: row['audio_channels'] as int?,
                     sampleRateHz: row['sample_rate_hz'] as int?,
                   ),
+            episode: _decodeVideoEpisode(row['video_episode_json']),
           ),
         )
         .toList(growable: false);
+  }
+
+  static VideoEpisodeIdentity? _decodeVideoEpisode(Object? value) {
+    if (value is! String || value.isEmpty) return null;
+    try {
+      return videoEpisodeFromJson(jsonDecode(value));
+    } on FormatException {
+      return null;
+    }
   }
 
   LibraryPlaybackProgress? loadProgress(String workId) {
@@ -1968,6 +1985,7 @@ final class FundusDatabase {
     if (_database.userVersion == 3 && !readOnly) _migrateToVersion4();
     if (_database.userVersion == 4 && !readOnly) _migrateToVersion5();
     if (_database.userVersion == 5 && !readOnly) _migrateToVersion6();
+    if (_database.userVersion == 6 && !readOnly) _migrateToVersion7();
   }
 
   void _migrateToVersion1() {
@@ -2084,6 +2102,23 @@ final class FundusDatabase {
       rethrow;
     }
   }
+
+  void _migrateToVersion7() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      if (tableExists('files') &&
+          !columnExists('files', 'video_episode_json')) {
+        _database.execute(
+          'ALTER TABLE files ADD COLUMN video_episode_json TEXT',
+        );
+      }
+      _database.userVersion = 7;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
 }
 
 const _version1Statements = <String>[
@@ -2100,6 +2135,7 @@ const _version1Statements = <String>[
     width INTEGER,
     height INTEGER,
     duration_ms INTEGER,
+    video_episode_json TEXT,
     file_modified_at INTEGER NOT NULL,
     indexed_at INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'available'

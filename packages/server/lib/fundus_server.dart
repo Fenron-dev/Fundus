@@ -1395,7 +1395,7 @@ final class FundusServerHandler {
   };
 
   static Map<String, Object?> _trackJson(LibraryPlaybackTrack track) {
-    final episode = parseVideoEpisode(track.title);
+    final episode = track.episode ?? parseVideoEpisode(track.title);
     return {
       'id': track.fileId,
       'title': track.title,

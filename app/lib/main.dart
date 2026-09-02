@@ -4574,7 +4574,9 @@ class _DocumentFilesPanelState extends State<_DocumentFilesPanel> {
     final rows = <Widget>[];
     int? currentSeason;
     for (final file in _files) {
-      final episode = widget.isVideo ? parseVideoEpisode(file.title) : null;
+      final episode = widget.isVideo
+          ? (file.episode ?? parseVideoEpisode(file.title))
+          : null;
       if (widget.isVideo &&
           episode != null &&
           episode.season != currentSeason) {
