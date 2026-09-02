@@ -531,22 +531,12 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         _proxy = proxy;
         media = [
           for (var index = 0; index < proxy.urls.length; index++)
-            Media(
-              proxy.urls[index].toString(),
-              start: useNativeVideoResume && index == _currentIndex
-                  ? resumePosition
-                  : null,
-            ),
+            Media(proxy.urls[index].toString()),
         ];
       } else {
         media = [
           for (var index = 0; index < offlineWork.tracks.length; index++)
-            Media(
-              offlineWork.tracks[index].path,
-              start: useNativeVideoResume && index == _currentIndex
-                  ? resumePosition
-                  : null,
-            ),
+            Media(offlineWork.tracks[index].path),
         ];
       }
       await _player.open(Playlist(media, index: _currentIndex), play: false);
@@ -564,7 +554,11 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         await _applyVideoTrackPreference(preference);
       }
       if (useNativeVideoResume) {
-        _position = resumePosition;
+        // Apply the resume after stream selection while the player is still
+        // paused. Supplying Media.start can advance audio without priming the
+        // video texture, especially for an already visited MKV/MP4. An
+        // explicit verified seek keeps remote and offline playback aligned.
+        _position = await _seekAndVerify(resumePosition);
         notifyListeners();
       }
       await _player.play();
