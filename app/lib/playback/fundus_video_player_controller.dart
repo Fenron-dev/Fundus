@@ -167,12 +167,7 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       await _player.open(
         Playlist([
           for (var index = 0; index < _tracks.length; index++)
-            Media(
-              _tracks[index].absolutePath,
-              start: index == _currentIndex && resume > Duration.zero
-                  ? resume
-                  : null,
-            ),
+            Media(_tracks[index].absolutePath),
         ], index: _currentIndex),
         play: false,
       );
@@ -198,7 +193,20 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       // the audio/subtitle decoder and seeking an already running MKV can
       // leave the native video output stalled while audio keeps advancing.
       await _applyTrackPreference(trackPreference);
-      _position = resume;
+      // Seek only after the container and its selected streams are ready. The
+      // Media.start hint is intentionally avoided here: on resumed files it
+      // can position the audio decoder while leaving the video texture on a
+      // black frame. An explicit paused seek primes both decoders reliably.
+      if (resume > Duration.zero) {
+        final nativeDuration = _player.state.duration;
+        final target = nativeDuration > Duration.zero && resume > nativeDuration
+            ? nativeDuration
+            : resume;
+        await _player.seek(target);
+        _position = target;
+      } else {
+        _position = Duration.zero;
+      }
       notifyListeners();
       await _player.play();
       _restoringPosition = false;
