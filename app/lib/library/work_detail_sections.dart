@@ -12,10 +12,12 @@ class WorkDetailSectionSelector extends StatelessWidget {
     super.key,
     required this.selected,
     required this.onChanged,
+    this.contentLabel = 'Kapitel',
   });
 
   final WorkDetailSection selected;
   final ValueChanged<WorkDetailSection> onChanged;
+  final String contentLabel;
 
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
@@ -23,12 +25,12 @@ class WorkDetailSectionSelector extends StatelessWidget {
     child: SegmentedButton<WorkDetailSection>(
       key: const ValueKey('work-detail-section-selector'),
       showSelectedIcon: false,
-      segments: const [
+      segments: [
         ButtonSegment(value: WorkDetailSection.info, label: Text('Info')),
         ButtonSegment(value: WorkDetailSection.files, label: Text('Dateien')),
         ButtonSegment(
           value: WorkDetailSection.chapters,
-          label: Text('Kapitel'),
+          label: Text(contentLabel),
         ),
         ButtonSegment(value: WorkDetailSection.notes, label: Text('Notizen')),
         ButtonSegment(value: WorkDetailSection.similar, label: Text('Ähnlich')),

@@ -30,6 +30,7 @@ import 'library/work_detail_sections.dart';
 import 'library/work_content_list.dart';
 import 'library/work_annotation_list.dart';
 import 'library/fundus_breadcrumbs.dart';
+import 'library/media_content_schema.dart';
 import 'library/video_player_page.dart';
 import 'library/zip_archive_browser.dart';
 import 'settings/hhh_content_settings.dart';
@@ -3999,7 +4000,7 @@ class _WorkCard extends StatelessWidget {
                 Text(work.title, maxLines: 2, overflow: TextOverflow.ellipsis),
                 Text(
                   work.kind != 'audiobook'
-                      ? '${_workKindLabel(work.kind)} · ${work.fileCount} Datei(en)'
+                      ? '${_workKindLabel(work.kind, contentStyle: work.contentStyle, contentSensitivity: work.contentSensitivity)} · ${work.fileCount} Datei(en)'
                       : work.series == null
                       ? work.author
                       : '${work.author} · ${work.series}'
@@ -4259,7 +4260,13 @@ class _DocumentHero extends StatelessWidget {
           children: [
             Chip(
               avatar: Icon(_workKindIcon(work.kind), size: 18),
-              label: Text(_workKindLabel(work.kind)),
+              label: Text(
+                _workKindLabel(
+                  work.kind,
+                  contentStyle: work.contentStyle,
+                  contentSensitivity: work.contentSensitivity,
+                ),
+              ),
             ),
             Chip(label: Text('${work.fileCount} Datei(en)')),
             if (!work.available) const Chip(label: Text('Dateien fehlen')),
@@ -4335,6 +4342,11 @@ class _VideoHero extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final wide = MediaQuery.sizeOf(context).width >= 720;
+    final mediaType = FundusMediaTypeRegistry.forWork(
+      kind: work.kind,
+      contentStyle: work.contentStyle,
+      contentSensitivity: work.contentSensitivity,
+    );
     final facts = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -4346,7 +4358,9 @@ class _VideoHero extends StatelessWidget {
           children: [
             Chip(
               avatar: const Icon(Icons.movie_outlined, size: 18),
-              label: Text(work.kind == 'movie' ? 'Film' : 'Serie'),
+              label: Text(
+                mediaType?.label ?? (work.kind == 'movie' ? 'Film' : 'Serie'),
+              ),
             ),
             if (work.contentStyle case final style?) Chip(label: Text(style)),
             if (work.publishedYear case final year?) Chip(label: Text('$year')),
@@ -5277,6 +5291,13 @@ class _DetailPanelState extends State<_DetailPanel> {
               const SizedBox(height: 12),
               WorkDetailSectionSelector(
                 selected: _mobileDetailTab,
+                contentLabel:
+                    FundusMediaTypeRegistry.forWork(
+                      kind: work.kind,
+                      contentStyle: work.contentStyle,
+                      contentSensitivity: work.contentSensitivity,
+                    )?.contentTabLabel ??
+                    'Kapitel',
                 onChanged: (value) => setState(() => _mobileDetailTab = value),
               ),
             ],
@@ -7467,7 +7488,11 @@ class _MobileDashboardCard extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 0, 8, 7),
               child: Text(
-                _workKindLabel(work.kind),
+                _workKindLabel(
+                  work.kind,
+                  contentStyle: work.contentStyle,
+                  contentSensitivity: work.contentSensitivity,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.labelSmall,
@@ -7563,19 +7588,29 @@ class _WorkCover extends StatelessWidget {
       Center(child: Icon(_workKindIcon(work.kind), size: iconSize));
 }
 
-String _workKindLabel(String kind) => switch (kind) {
-  'audiobook' => 'Hörbuch',
-  'movie' => 'Film',
-  'tv' || 'video' => 'Serie',
-  'ebook' => 'E-Book/PDF',
-  'webnovel' => 'Webnovel',
-  'manga' => 'Manga/Comic',
-  'image' => 'Bildsammlung',
-  'document' => 'Dokument',
-  'ttrpg_product' => 'TTRPG-Produkt',
-  'archive' => 'Archiv',
-  _ => kind,
-};
+String _workKindLabel(
+  String kind, {
+  String? contentStyle,
+  String? contentSensitivity,
+}) =>
+    FundusMediaTypeRegistry.forWork(
+      kind: kind,
+      contentStyle: contentStyle,
+      contentSensitivity: contentSensitivity,
+    )?.label ??
+    switch (kind) {
+      'audiobook' => 'Hörbuch',
+      'movie' => 'Film',
+      'tv' || 'video' => 'Serie',
+      'ebook' => 'E-Book/PDF',
+      'webnovel' => 'Webnovel',
+      'manga' => 'Manga/Comic',
+      'image' => 'Bildsammlung',
+      'document' => 'Dokument',
+      'ttrpg_product' => 'TTRPG-Produkt',
+      'archive' => 'Archiv',
+      _ => kind,
+    };
 
 bool _isVideoWorkKind(String kind) =>
     kind == 'movie' || kind == 'tv' || kind == 'video';

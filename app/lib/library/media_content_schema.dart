@@ -360,7 +360,7 @@ abstract final class FundusMediaTypes {
 
   static const ttrpg = FundusMediaTypeDefinition(
     id: 'ttrpg',
-    label: 'TTRPG',
+    label: 'TTRPG-Produkt',
     pluralLabel: 'TTRPG',
     iconKey: 'casino',
     primaryActionLabel: 'Öffnen',
@@ -456,5 +456,60 @@ abstract final class FundusMediaTypeRegistry {
       if (definition.id == id) return definition;
     }
     return null;
+  }
+
+  /// Resolves the persisted library fields to one shared definition.  The
+  /// resolver keeps provider-specific values (`movie`, `tv`, `ttrpg_product`,
+  /// …) at the boundary so the UI can work with one vocabulary.
+  static FundusMediaTypeDefinition? forWork({
+    required String kind,
+    String? contentStyle,
+    String? contentSensitivity,
+  }) {
+    final normalizedKind = kind.trim().toLowerCase();
+    final style = contentStyle?.trim().toLowerCase();
+    final adult =
+        contentSensitivity == 'adult_explicit' || contentSensitivity == 'adult';
+    final anime =
+        style == 'anime' || style == 'anime_series' || style == 'anime_film';
+    switch (normalizedKind) {
+      case 'movie':
+        return adult
+            ? FundusMediaTypes.hhhFilm
+            : (anime ? FundusMediaTypes.animeFilm : FundusMediaTypes.film);
+      case 'tv':
+      case 'video':
+        return adult
+            ? FundusMediaTypes.hhhSeries
+            : (anime ? FundusMediaTypes.animeSeries : FundusMediaTypes.series);
+      case 'audiobook':
+        return FundusMediaTypes.audiobook;
+      case 'manga':
+      case 'comic':
+        return FundusMediaTypes.manga;
+      case 'webnovel':
+        return FundusMediaTypes.webnovel;
+      case 'music':
+      case 'album':
+        return FundusMediaTypes.music;
+      case 'podcast':
+        return FundusMediaTypes.podcast;
+      case 'ebook':
+      case 'book':
+        return FundusMediaTypes.book;
+      case 'pdf':
+      case 'document':
+        return FundusMediaTypes.pdf;
+      case 'ttrpg':
+      case 'ttrpg_product':
+        return FundusMediaTypes.ttrpg;
+      case 'image':
+      case 'photo':
+        return FundusMediaTypes.photo;
+      case 'archive':
+        return FundusMediaTypes.archive;
+      default:
+        return null;
+    }
   }
 }

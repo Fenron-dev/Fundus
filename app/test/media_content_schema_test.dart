@@ -9,6 +9,28 @@ void main() {
     expect(FundusMediaTypes.series.hasLevel('episode'), isTrue);
   });
 
+  test('work resolver maps provider kinds and style/sensitivity facets', () {
+    expect(
+      FundusMediaTypeRegistry.forWork(kind: 'movie'),
+      same(FundusMediaTypes.film),
+    );
+    expect(
+      FundusMediaTypeRegistry.forWork(kind: 'tv', contentStyle: 'anime'),
+      same(FundusMediaTypes.animeSeries),
+    );
+    expect(
+      FundusMediaTypeRegistry.forWork(
+        kind: 'video',
+        contentSensitivity: 'adult_explicit',
+      ),
+      same(FundusMediaTypes.hhhSeries),
+    );
+    expect(
+      FundusMediaTypeRegistry.forWork(kind: 'ttrpg_product')?.contentTabLabel,
+      'Dateien',
+    );
+  });
+
   test('manga arcs are optional while chapters and pages remain stable', () {
     final arc = FundusMediaTypes.manga.level('arc');
     expect(arc, isNotNull);
