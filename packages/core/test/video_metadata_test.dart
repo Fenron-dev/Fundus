@@ -20,18 +20,46 @@ void main() {
     expect(episode?.episode, 7);
   });
 
+  test('parses multiple episodes and marks season zero specials', () {
+    final episode = parseVideoEpisode('Show - S00E01-E02 - Special.mkv');
+
+    expect(episode?.special, isTrue);
+    expect(episode?.episodeEnd, 2);
+    expect(episode?.label, 'S00E01-E02');
+  });
+
+  test('parses conservative absolute anime episode numbering', () {
+    final episode = parseVideoEpisode('Show - 001 - The Beginning.mkv');
+
+    expect(episode?.absoluteEpisode, 1);
+    expect(episode?.episode, 1);
+    expect(episode?.label, 'E001');
+    expect(episode?.title, 'Show - The Beginning');
+  });
+
+  test('parses explicit episode markers without classifying years', () {
+    expect(parseVideoEpisode('Show (2024) 1080p.mkv'), isNull);
+    final episode = parseVideoEpisode('Show Episode 12 - Finale.mkv');
+
+    expect(episode?.absoluteEpisode, 12);
+    expect(episode?.label, 'E012');
+  });
+
   test('does not classify movie filenames as episodes', () {
     expect(parseVideoEpisode('Star Wars Episode IV.mkv'), isNull);
   });
 
   test('serializes episode identity for remote clients', () {
-    final original = parseVideoEpisode('Firefly - S01E02 - The Train Job.mkv')!;
+    final original = parseVideoEpisode(
+      'Firefly - S01E02-E03 - The Train Job.mkv',
+    )!;
     final restored = videoEpisodeFromJson(videoEpisodeToJson(original));
 
     expect(restored?.season, original.season);
     expect(restored?.episode, original.episode);
     expect(restored?.label, original.label);
     expect(restored?.title, original.title);
+    expect(restored?.episodeEnd, 3);
   });
 
   test('ignores malformed episode identity payloads', () {
