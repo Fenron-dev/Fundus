@@ -12,6 +12,7 @@ import '../import/document_importer.dart';
 import '../import/embedded_cover.dart';
 import '../model/fundus_id.dart';
 import '../model/library_configuration.dart';
+import '../model/library_collection.dart';
 import '../model/library_manifest.dart';
 import '../model/library_playlist.dart';
 import '../model/library_saved_view.dart';
@@ -490,6 +491,35 @@ final class FundusLibrary {
   void deletePlaylist(String playlistId) {
     _ensureWritable();
     _database.deletePlaylist(playlistId);
+  }
+
+  List<LibraryCollection> listCollections() => _database.listCollections();
+
+  LibraryCollection? loadCollection(String collectionId) =>
+      _database.loadCollection(collectionId);
+
+  LibraryCollection saveCollection({
+    String? collectionId,
+    required String name,
+    String? parentId,
+    String kind = 'manual',
+    Map<String, Object?>? rules,
+    Iterable<String> workIds = const <String>[],
+  }) {
+    _ensureWritable();
+    return _database.saveCollection(
+      collectionId: collectionId,
+      name: name,
+      parentId: parentId,
+      kind: kind,
+      rules: rules,
+      workIds: workIds,
+    );
+  }
+
+  void deleteCollection(String collectionId) {
+    _ensureWritable();
+    _database.deleteCollection(collectionId);
   }
 
   WorkAnnotations loadAnnotations(String workId) =>

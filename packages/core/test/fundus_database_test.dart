@@ -27,6 +27,32 @@ void main() {
     expect(database.tableExists('search_index'), isTrue);
   });
 
+  test('collections persist names, rules and ordered work references', () {
+    final database = FundusDatabase.inMemory();
+    addTearDown(database.close);
+    final collection = database.saveCollection(
+      name: 'Star Wars',
+      kind: 'manual',
+      rules: {'genre': 'Science Fiction'},
+    );
+    expect(database.listCollections().single.name, 'Star Wars');
+    expect(database.loadCollection(collection.id)?.rules, {
+      'genre': 'Science Fiction',
+    });
+    final renamed = database.saveCollection(
+      collectionId: collection.id,
+      name: 'Star Wars Collection',
+      workIds: const [],
+    );
+    expect(renamed.id, collection.id);
+    expect(
+      database.loadCollection(collection.id)?.name,
+      'Star Wars Collection',
+    );
+    database.deleteCollection(collection.id);
+    expect(database.listCollections(), isEmpty);
+  });
+
   test('schema v1 is migrated to idempotent progress operations', () async {
     final directory = await Directory.systemTemp.createTemp('fundus-db-v1-');
     addTearDown(() => directory.delete(recursive: true));

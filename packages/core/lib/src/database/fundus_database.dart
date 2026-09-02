@@ -7,6 +7,7 @@ import '../import/abs_importer.dart';
 import '../import/document_importer.dart';
 import '../library/work_annotations.dart';
 import '../model/fundus_id.dart';
+import '../model/library_collection.dart';
 import '../model/library_playlist.dart';
 import '../model/media_position.dart';
 import '../model/playback_session.dart';
@@ -1261,6 +1262,96 @@ final class FundusDatabase {
 
   void deletePlaylist(String playlistId) {
     _database.execute('DELETE FROM playlists WHERE id = ?', [playlistId]);
+  }
+
+  List<LibraryCollection> listCollections() {
+    final rows = _database.select(
+      'SELECT * FROM collections ORDER BY name COLLATE NOCASE, created_at',
+    );
+    return rows.map(_collectionFromRow).toList(growable: false);
+  }
+
+  LibraryCollection? loadCollection(String collectionId) {
+    final rows = _database.select('SELECT * FROM collections WHERE id = ?', [
+      collectionId,
+    ]);
+    return rows.isEmpty ? null : _collectionFromRow(rows.first);
+  }
+
+  LibraryCollection saveCollection({
+    String? collectionId,
+    required String name,
+    String? parentId,
+    String kind = 'manual',
+    Map<String, Object?>? rules,
+    Iterable<String> workIds = const <String>[],
+  }) {
+    final normalizedName = name.trim();
+    if (normalizedName.isEmpty) {
+      throw ArgumentError.value(name, 'name', 'Sammlungsname ist leer.');
+    }
+    final id = collectionId ?? FundusId.generate();
+    return transaction(() {
+      final previous = _database.select(
+        'SELECT created_at FROM collections WHERE id = ?',
+        [id],
+      );
+      final createdAt = previous.isEmpty
+          ? DateTime.now().millisecondsSinceEpoch
+          : previous.first['created_at'] as int;
+      final encodedRules = rules == null ? null : jsonEncode(rules);
+      _database.execute(
+        '''
+        INSERT INTO collections (id, name, parent_id, kind, rules_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          parent_id = excluded.parent_id,
+          kind = excluded.kind,
+          rules_json = excluded.rules_json
+        ''',
+        [id, normalizedName, parentId, kind, encodedRules, createdAt],
+      );
+      _database.execute(
+        'DELETE FROM collection_works WHERE collection_id = ?',
+        [id],
+      );
+      var position = 0;
+      for (final workId in workIds) {
+        _database.execute(
+          '''INSERT INTO collection_works (collection_id, work_id, position)
+             VALUES (?, ?, ?)''',
+          [id, workId, position++],
+        );
+      }
+      return loadCollection(id)!;
+    });
+  }
+
+  void deleteCollection(String collectionId) {
+    _database.execute('DELETE FROM collections WHERE id = ?', [collectionId]);
+  }
+
+  LibraryCollection _collectionFromRow(Row row) {
+    final id = row['id'] as String;
+    final rulesJson = row['rules_json'] as String?;
+    final rules = rulesJson == null
+        ? null
+        : (jsonDecode(rulesJson) as Map).cast<String, Object?>();
+    final items = _database.select(
+      '''SELECT work_id FROM collection_works
+         WHERE collection_id = ? ORDER BY position, work_id''',
+      [id],
+    );
+    return LibraryCollection(
+      id: id,
+      name: row['name'] as String,
+      parentId: row['parent_id'] as String?,
+      kind: row['kind'] as String,
+      rules: rules,
+      workIds: items.map((item) => item['work_id'] as String).toList(),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
+    );
   }
 
   LibraryPlaylist _playlistFromRow(Row row) {

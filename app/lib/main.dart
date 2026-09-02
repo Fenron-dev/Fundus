@@ -1357,6 +1357,7 @@ class LibraryShell extends StatefulWidget {
     this.onOpenOfflineWork,
     this.showHhh = false,
     this.onHhhEnabledChanged,
+    this.onOpenCollections,
   });
 
   final List<LibraryWorkSummary> works;
@@ -1383,6 +1384,7 @@ class LibraryShell extends StatefulWidget {
   final OfflineWorkOpenCallback? onOpenOfflineWork;
   final bool showHhh;
   final ValueChanged<bool>? onHhhEnabledChanged;
+  final VoidCallback? onOpenCollections;
 
   @override
   State<LibraryShell> createState() => _LibraryShellState();
@@ -1410,6 +1412,7 @@ class _LibraryShellState extends State<LibraryShell> {
   double _gridTileExtent = 220;
   String? _playlistTypeFilter;
   String? _sourceFilter;
+  String? _activeCollectionId;
   List<LibrarySavedView> _savedViews = const [];
   String? _lastTappedWorkId;
   DateTime? _lastWorkTapAt;
@@ -1474,7 +1477,17 @@ class _LibraryShellState extends State<LibraryShell> {
       .toList(growable: false);
 
   List<LibraryWorkSummary> get _visibleWorks {
-    final works = LibraryWorkSearch.apply(_allWorks, _query);
+    final collectionId = _activeCollectionId;
+    final collection = collectionId == null || widget.library == null
+        ? null
+        : widget.library!.loadCollection(collectionId);
+    final collectionWorkIds = collection?.workIds.toSet();
+    final works = LibraryWorkSearch.apply(_allWorks, _query)
+        .where(
+          (work) =>
+              collectionWorkIds == null || collectionWorkIds.contains(work.id),
+        )
+        .toList(growable: false);
     final kinds = _section.workKinds;
     return works
         .where(
@@ -1538,6 +1551,7 @@ class _LibraryShellState extends State<LibraryShell> {
           _selectedNarrator = null;
           _selectedSeries = null;
           _inlineDetailWork = null;
+          _activeCollectionId = null;
         }),
       ),
       FundusBreadcrumb(
@@ -1548,6 +1562,7 @@ class _LibraryShellState extends State<LibraryShell> {
           _selectedNarrator = null;
           _selectedSeries = null;
           _inlineDetailWork = null;
+          _activeCollectionId = null;
         }),
       ),
     ];
@@ -1558,6 +1573,18 @@ class _LibraryShellState extends State<LibraryShell> {
     }
     if (_selectedSeries != null) {
       items.add(FundusBreadcrumb(label: _selectedSeries!));
+    }
+    if (_activeCollectionId case final collectionId?) {
+      final collection = widget.library?.loadCollection(collectionId);
+      if (collection != null) {
+        items.add(
+          FundusBreadcrumb(
+            label: collection.name,
+            icon: Icons.folder_special_outlined,
+            onTap: () => setState(() => _activeCollectionId = null),
+          ),
+        );
+      }
     }
     if (_inlineDetailWork case final work?) {
       items.add(FundusBreadcrumb(label: work.title));
@@ -1640,6 +1667,8 @@ class _LibraryShellState extends State<LibraryShell> {
                       onOpenSettings: widget.peerServer == null
                           ? null
                           : () => _openServerSettings(context),
+                      onOpenCollections:
+                          widget.onOpenCollections ?? _openCollections,
                     ),
                   ),
                   _ResizeHandle(
@@ -1840,6 +1869,7 @@ class _LibraryShellState extends State<LibraryShell> {
                     Navigator.of(context).pop();
                     unawaited(_openServerSettings(context));
                   },
+            onOpenCollections: widget.onOpenCollections ?? _openCollections,
           ),
         ),
       ),
@@ -3433,6 +3463,209 @@ class _LibraryShellState extends State<LibraryShell> {
     );
   }
 
+  Future<void> _openCollections() async {
+    final library = widget.library;
+    if (library == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Sammlungen sind nur lokal verfügbar.')),
+        );
+      }
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final collections = library.listCollections();
+          return AlertDialog(
+            title: const Text('Sammlungen'),
+            content: SizedBox(
+              width: 540,
+              height: 420,
+              child: collections.isEmpty
+                  ? const Center(child: Text('Noch keine Sammlungen angelegt.'))
+                  : ListView.builder(
+                      itemCount: collections.length,
+                      itemBuilder: (context, index) {
+                        final collection = collections[index];
+                        final selected = _activeCollectionId == collection.id;
+                        return ListTile(
+                          selected: selected,
+                          leading: Icon(
+                            selected
+                                ? Icons.folder_special
+                                : Icons.folder_outlined,
+                          ),
+                          title: Text(collection.name),
+                          subtitle: Text(
+                            '${collection.workIds.length} Werk(e)',
+                          ),
+                          onTap: () {
+                            setState(() {
+                              _activeCollectionId = selected
+                                  ? null
+                                  : collection.id;
+                              _selectedIndex = 0;
+                            });
+                            Navigator.pop(context);
+                          },
+                          trailing: Wrap(
+                            spacing: 2,
+                            children: [
+                              IconButton(
+                                tooltip: 'Werke zuordnen',
+                                icon: const Icon(Icons.playlist_add_check),
+                                onPressed: library.isReadOnly
+                                    ? null
+                                    : () async {
+                                        await _editCollectionWorks(collection);
+                                        setDialogState(() {});
+                                      },
+                              ),
+                              IconButton(
+                                tooltip: 'Sammlung löschen',
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: library.isReadOnly
+                                    ? null
+                                    : () {
+                                        library.deleteCollection(collection.id);
+                                        if (_activeCollectionId ==
+                                            collection.id) {
+                                          setState(
+                                            () => _activeCollectionId = null,
+                                          );
+                                        }
+                                        setDialogState(() {});
+                                      },
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            actions: [
+              TextButton.icon(
+                onPressed: library.isReadOnly
+                    ? null
+                    : () async {
+                        final controller = TextEditingController();
+                        final name = await showDialog<String>(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Neue Sammlung'),
+                            content: TextField(
+                              controller: controller,
+                              autofocus: true,
+                              decoration: const InputDecoration(
+                                labelText: 'Name',
+                              ),
+                              onSubmitted: (_) =>
+                                  Navigator.pop(context, controller.text),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text('Abbrechen'),
+                              ),
+                              FilledButton(
+                                onPressed: () =>
+                                    Navigator.pop(context, controller.text),
+                                child: const Text('Anlegen'),
+                              ),
+                            ],
+                          ),
+                        );
+                        controller.dispose();
+                        if (name?.trim().isNotEmpty == true) {
+                          final localWorkIds = widget.works
+                              .map((work) => work.id)
+                              .toSet();
+                          final collection = library.saveCollection(
+                            name: name!.trim(),
+                            workIds: _selectedWorkIds.where(
+                              localWorkIds.contains,
+                            ),
+                          );
+                          setState(() => _activeCollectionId = collection.id);
+                          setDialogState(() {});
+                        }
+                      },
+                icon: const Icon(Icons.create_new_folder_outlined),
+                label: const Text('Neue Sammlung'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Fertig'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _editCollectionWorks(LibraryCollection collection) async {
+    final selected = collection.workIds.toSet();
+    final works = _allWorks
+        .where((work) => widget.works.any((local) => local.id == work.id))
+        .toList(growable: false);
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('Werke in „${collection.name}“'),
+          content: SizedBox(
+            width: 620,
+            height: 520,
+            child: works.isEmpty
+                ? const Center(child: Text('Keine lokalen Werke verfügbar.'))
+                : ListView.builder(
+                    itemCount: works.length,
+                    itemBuilder: (context, index) {
+                      final work = works[index];
+                      return CheckboxListTile(
+                        value: selected.contains(work.id),
+                        title: Text(work.title),
+                        subtitle: Text(work.kind),
+                        onChanged: (value) => setDialogState(() {
+                          if (value == true) {
+                            selected.add(work.id);
+                          } else {
+                            selected.remove(work.id);
+                          }
+                        }),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () {
+                widget.library!.saveCollection(
+                  collectionId: collection.id,
+                  name: collection.name,
+                  parentId: collection.parentId,
+                  kind: collection.kind,
+                  rules: collection.rules,
+                  workIds: selected,
+                );
+                Navigator.pop(context);
+                if (mounted) setState(() {});
+              },
+              child: const Text('Speichern'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _setSort(LibraryWorkSort value) => setState(() {
     _selectedIndex = 0;
     _query = _query.copyWith(sort: value);
@@ -4051,6 +4284,7 @@ class _Sidebar extends StatelessWidget {
     this.onOpenSettings,
     this.collapsed = false,
     this.onToggleCollapsed,
+    this.onOpenCollections,
   });
 
   final _LibrarySection selectedSection;
@@ -4059,6 +4293,7 @@ class _Sidebar extends StatelessWidget {
   final VoidCallback? onOpenSettings;
   final bool collapsed;
   final VoidCallback? onToggleCollapsed;
+  final VoidCallback? onOpenCollections;
 
   @override
   Widget build(BuildContext context) {
@@ -4145,9 +4380,10 @@ class _Sidebar extends StatelessWidget {
           title: Text('Personen'),
         ),
         const ListTile(leading: Icon(Icons.tag), title: Text('Tags')),
-        const ListTile(
+        ListTile(
           leading: Icon(Icons.star_outline),
           title: Text('Sammlungen'),
+          onTap: onOpenCollections,
         ),
         const ListTile(
           leading: Icon(Icons.folder_outlined),
