@@ -26,3 +26,6 @@ secrets.json
 *.db
 *.db-shm
 *.db-wal
+
+# Private product concepts and UI mockups stay on the developer machine.
+Dokumentation/
