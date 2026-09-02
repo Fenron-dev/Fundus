@@ -51,6 +51,9 @@ import 'server/server_settings.dart';
 import 'video/video_metadata_dialog.dart';
 
 const _favoriteTag = 'Favorit';
+const _sourceFilterLocal = 'kind:local';
+const _sourceFilterRemote = 'kind:remote';
+const _sourceFilterOffline = 'kind:offline';
 
 typedef WorkPlaybackCallback =
     Future<void> Function(
@@ -1406,7 +1409,7 @@ class _LibraryShellState extends State<LibraryShell> {
   double _detailPaneWidth = 480;
   double _gridTileExtent = 220;
   String? _playlistTypeFilter;
-  FundusCatalogSourceKind? _sourceFilter;
+  String? _sourceFilter;
   List<LibrarySavedView> _savedViews = const [];
   String? _lastTappedWorkId;
   DateTime? _lastWorkTapAt;
@@ -1433,13 +1436,30 @@ class _LibraryShellState extends State<LibraryShell> {
     for (final work in widget.offlineWorks) _offlineSummaryId(work): work,
   };
 
+  List<FundusCatalogSource> get _catalogSources {
+    final sources = <String, FundusCatalogSource>{};
+    for (final entry in widget.catalog?.entries ?? const []) {
+      sources[entry.source.id] = entry.source;
+    }
+    return sources.values.toList(growable: false)..sort(
+      (left, right) => left.displayName.toLowerCase().compareTo(
+        right.displayName.toLowerCase(),
+      ),
+    );
+  }
+
+  bool _matchesSource(FundusCatalogEntry entry) {
+    final filter = _sourceFilter;
+    if (filter == null) return true;
+    if (filter == _sourceFilterLocal) return entry.source.isLocal;
+    if (filter == _sourceFilterRemote) return entry.source.isRemote;
+    if (filter == _sourceFilterOffline) return entry.source.isOffline;
+    return entry.source.id == filter;
+  }
+
   List<LibraryWorkSummary> get _allWorks =>
       (widget.catalog?.entries
-                  .where(
-                    (entry) =>
-                        _sourceFilter == null ||
-                        entry.source.kind == _sourceFilter,
-                  )
+                  .where(_matchesSource)
                   .map((entry) => entry.work) ??
               [
                 ...widget.works,
@@ -2619,6 +2639,7 @@ class _LibraryShellState extends State<LibraryShell> {
           const SizedBox(width: 4),
           _CatalogSourceFilterButton(
             value: _sourceFilter,
+            sources: _catalogSources,
             onChanged: (value) => setState(() {
               _sourceFilter = value;
               _selectedIndex = 0;
@@ -3908,41 +3929,58 @@ class _AdvancedFilterButton extends StatelessWidget {
 class _CatalogSourceFilterButton extends StatelessWidget {
   const _CatalogSourceFilterButton({
     required this.value,
+    required this.sources,
     required this.onChanged,
   });
 
-  final FundusCatalogSourceKind? value;
-  final ValueChanged<FundusCatalogSourceKind?> onChanged;
+  final String? value;
+  final List<FundusCatalogSource> sources;
+  final ValueChanged<String?> onChanged;
 
   @override
-  Widget build(BuildContext context) =>
-      PopupMenuButton<FundusCatalogSourceKind?>(
-        tooltip: 'Quelle filtern',
-        initialValue: value,
-        onSelected: onChanged,
-        itemBuilder: (context) => const [
-          PopupMenuItem<FundusCatalogSourceKind?>(
-            value: null,
-            child: Text('Alle Quellen'),
+  Widget build(BuildContext context) {
+    final items = <PopupMenuEntry<String?>>[
+      const PopupMenuItem<String?>(value: null, child: Text('Alle Quellen')),
+      const PopupMenuDivider(),
+      const PopupMenuItem<String?>(
+        value: _sourceFilterLocal,
+        child: Text('Auf diesem Gerät'),
+      ),
+      const PopupMenuItem<String?>(
+        value: _sourceFilterRemote,
+        child: Text('Remote'),
+      ),
+      const PopupMenuItem<String?>(
+        value: _sourceFilterOffline,
+        child: Text('Offline-Downloads'),
+      ),
+    ];
+    if (sources.isNotEmpty) {
+      items.add(const PopupMenuDivider());
+      items.addAll(
+        sources.map(
+          (source) => PopupMenuItem<String?>(
+            value: source.id,
+            child: Text(
+              source.displayName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
-          PopupMenuItem(
-            value: FundusCatalogSourceKind.local,
-            child: Text('Auf diesem Gerät'),
-          ),
-          PopupMenuItem(
-            value: FundusCatalogSourceKind.remote,
-            child: Text('Remote'),
-          ),
-          PopupMenuItem(
-            value: FundusCatalogSourceKind.offline,
-            child: Text('Offline-Downloads'),
-          ),
-        ],
-        icon: Badge(
-          isLabelVisible: value != null,
-          child: const Icon(Icons.cloud_queue_outlined),
         ),
       );
+    }
+    return PopupMenuButton<String?>(
+      tooltip: 'Quelle filtern',
+      initialValue: value,
+      onSelected: onChanged,
+      itemBuilder: (context) => items,
+      icon: Badge(
+        isLabelVisible: value != null,
+        child: const Icon(Icons.cloud_queue_outlined),
+      ),
+    );
+  }
 }
 
 class _MediaFilterButton extends StatelessWidget {
