@@ -2844,11 +2844,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                             : () => Navigator.pop(context, 'play'),
                         onSelectPerson: (name) =>
                             Navigator.pop(context, 'credit:$name'),
+                        onSelectTag: (name) =>
+                            Navigator.pop(context, 'tag:$name'),
                         collectionNames: collectionNames,
-                        onSelectCollection: (name) => Navigator.pop(
-                          context,
-                          'collection:$name',
-                        ),
+                        onSelectCollection: (name) =>
+                            Navigator.pop(context, 'collection:$name'),
                       ),
                     if (isDocument && !forceOffline)
                       Align(
@@ -3113,6 +3113,18 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       if (collection != null && mounted) {
         setState(() {
           _selectedCollectionId = collection.id;
+          _selectedCredit = null;
+          _selectedGroup = null;
+        });
+      }
+      return;
+    }
+    if (action.startsWith('tag:')) {
+      final tag = action.substring('tag:'.length).trim();
+      if (tag.isNotEmpty && mounted) {
+        setState(() {
+          _query = _query.copyWith(tags: {..._query.tags, tag});
+          _selectedCollectionId = null;
           _selectedCredit = null;
           _selectedGroup = null;
         });

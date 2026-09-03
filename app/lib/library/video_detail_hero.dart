@@ -53,6 +53,10 @@ class FundusVideoDetailHero extends StatelessWidget {
         if (metadata['genres'] case final values when values is List)
           ...values.whereType<String>(),
       }.where((value) => value.trim().isNotEmpty).toList(growable: false);
+      final tags = work.tags
+          .where((value) => value.trim().isNotEmpty)
+          .toSet()
+          .toList(growable: false);
       final details = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -96,6 +100,23 @@ class FundusVideoDetailHero extends StatelessWidget {
                     onPressed: onSelectTag == null
                         ? null
                         : () => onSelectTag!(genre),
+                  ),
+              ],
+            ),
+          ],
+          if (tags.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                for (final tag in tags)
+                  ActionChip(
+                    avatar: const Icon(Icons.label_outline, size: 18),
+                    label: Text(tag),
+                    onPressed: onSelectTag == null
+                        ? null
+                        : () => onSelectTag!(tag),
                   ),
               ],
             ),
