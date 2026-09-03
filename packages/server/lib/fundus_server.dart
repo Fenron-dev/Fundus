@@ -198,7 +198,40 @@ final class FundusServerHandler {
         .addMiddleware(_requestDiagnostics())
         .addMiddleware(_authentication())
         .addMiddleware(_jsonErrors())
+        .addMiddleware(_gzipJson())
         .addHandler(router.call);
+  }
+
+  Middleware _gzipJson() {
+    return (inner) {
+      return (request) async {
+        final response = await inner(request);
+        final acceptsGzip =
+            request.headers['accept-encoding']
+                ?.toLowerCase()
+                .split(',')
+                .map((value) => value.trim())
+                .contains('gzip') ==
+            true;
+        final contentType = response.headers['content-type']?.toLowerCase();
+        if (!acceptsGzip ||
+            contentType?.startsWith('application/json') != true) {
+          return response;
+        }
+        final bytes = await response.read().expand((chunk) => chunk).toList();
+        if (bytes.length < 128) return response.change(body: bytes);
+        final compressed = gzip.encode(bytes);
+        return response.change(
+          body: compressed,
+          headers: {
+            ...response.headers,
+            'content-encoding': 'gzip',
+            'content-length': '${compressed.length}',
+            'vary': 'Accept-Encoding',
+          },
+        );
+      };
+    };
   }
 
   Middleware _requestDiagnostics() {

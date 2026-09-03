@@ -213,6 +213,27 @@ void main() {
     expect(body['capabilities'], contains('catalog_delta'));
   });
 
+  test(
+    'compresses large JSON responses when the client advertises gzip',
+    () async {
+      final response = await server.handler(
+        Request(
+          'GET',
+          Uri.parse('http://localhost/v1/libraries'),
+          headers: {
+            'authorization': 'Bearer secret',
+            'accept-encoding': 'gzip',
+          },
+        ),
+      );
+      expect(response.statusCode, 200);
+      expect(response.headers['content-encoding'], 'gzip');
+      final encoded = await response.read().expand((chunk) => chunk).toList();
+      final decoded = jsonDecode(utf8.decode(gzip.decode(encoded))) as Map;
+      expect(decoded['libraries'], hasLength(2));
+    },
+  );
+
   test('catalog endpoint pages visible works with a resumable cursor', () async {
     final libraryId = firstLibrary.manifest.libraryId;
     final first = await _get(

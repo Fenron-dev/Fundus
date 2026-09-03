@@ -1961,13 +1961,21 @@ final class FundusRemoteClient {
       body: body,
     );
     try {
-      final bytes = Uint8List.fromList(
+      final encoded = Uint8List.fromList(
         await stream.response
             .timeout(const Duration(seconds: 20))
             .expand((chunk) => chunk)
             .toList(),
       );
-      return bytes;
+      final contentEncoding = stream.response.headers
+          .value(HttpHeaders.contentEncodingHeader)
+          ?.toLowerCase()
+          .split(',')
+          .map((value) => value.trim());
+      if (contentEncoding?.contains('gzip') == true) {
+        return Uint8List.fromList(gzip.decode(encoded));
+      }
+      return encoded;
     } finally {
       stream.close();
     }
@@ -1982,6 +1990,11 @@ final class FundusRemoteClient {
     String? range,
   }) async {
     final client = HttpClient();
+    // We negotiate gzip for JSON responses and decode it explicitly below.
+    // Dart's HttpClient otherwise transparently inflates the body while still
+    // exposing the Content-Encoding header, which would make a second decode
+    // fail on some Android and desktop runtimes.
+    client.autoUncompress = false;
     client.connectionTimeout = const Duration(seconds: 4);
     client.badCertificateCallback = (certificate, host, port) =>
         _fingerprint(certificate) == fingerprint;
@@ -1989,6 +2002,7 @@ final class FundusRemoteClient {
       final request = await client.openUrl(method, uri);
       request.followRedirects = false;
       request.headers.set(HttpHeaders.acceptHeader, '*/*');
+      request.headers.set(HttpHeaders.acceptEncodingHeader, 'gzip');
       if (token != null) {
         request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
       }
@@ -2006,7 +2020,19 @@ final class FundusRemoteClient {
         );
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        final responseBody = await utf8.decoder.bind(response).join();
+        final encoded = await response
+            .timeout(const Duration(seconds: 20))
+            .expand((chunk) => chunk)
+            .toList();
+        final contentEncoding = response.headers
+            .value(HttpHeaders.contentEncodingHeader)
+            ?.toLowerCase()
+            .split(',')
+            .map((value) => value.trim());
+        final bodyBytes = contentEncoding?.contains('gzip') == true
+            ? gzip.decode(encoded)
+            : encoded;
+        final responseBody = utf8.decode(bodyBytes);
         throw FundusRemoteRequestException(
           response.statusCode,
           responseBody,
