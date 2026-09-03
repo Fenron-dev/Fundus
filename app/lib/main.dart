@@ -50,6 +50,7 @@ import 'server/fundus_peer_discovery.dart';
 import 'server/fundus_offline_store.dart';
 import 'server/fundus_remote_client.dart';
 import 'server/fundus_remote_catalog_store.dart';
+import 'server/fundus_remote_cover_cache.dart';
 import 'server/remote_servers_view.dart';
 import 'server/server_settings.dart';
 import 'video/video_metadata_dialog.dart';
@@ -81,6 +82,11 @@ typedef WorkMetadataChangedCallback = void Function(LibraryWorkSummary work);
 typedef OfflineWorkOpenCallback = void Function(FundusOfflineWork work);
 typedef CatalogWorkOpenCallback =
     Future<void> Function(FundusCatalogEntry entry);
+typedef CatalogCoverPathProvider =
+    Future<String?> Function(
+      LibraryWorkSummary work,
+      FundusCatalogSource source,
+    );
 
 const _publicationFormats = PublicationFormatRegistry();
 
@@ -163,6 +169,7 @@ class _FundusAppState extends State<FundusApp> {
   final _remoteStore = FundusRemoteServerStore();
   final _remoteClient = const FundusRemoteClient();
   final _remoteCatalogStore = const FundusRemoteCatalogStore();
+  final _remoteCoverCache = FundusRemoteCoverCache();
   FundusOfflineStore _deviceOfflineStore = FundusOfflineStore();
   late FundusOfflineStore _offlineStore;
   final _peerDiscovery = FundusPeerDiscovery();
@@ -171,6 +178,8 @@ class _FundusAppState extends State<FundusApp> {
   List<_RemoteLibraryChoice> _remoteLibraries = const [];
   List<FundusOfflineWork> _offlineWorks = const [];
   List<FundusRemoteCatalogSnapshot> _remoteCatalog = const [];
+  final Map<String, Future<String?>> _remoteCoverRequests = {};
+  Map<String, FundusRemoteServer> _pairedServers = const {};
   bool _refreshingRemoteCatalog = false;
   Set<String> _reachableServerIds = const {};
   Set<String> _unauthorizedServerIds = const {};
@@ -354,6 +363,7 @@ class _FundusAppState extends State<FundusApp> {
               onOpenDownloads: _openOfflineMedia,
               onOpenOfflineWork: _openOfflineWork,
               onOpenCatalogWork: _openCatalogWork,
+              coverPathProvider: _remoteCoverPath,
               showHhh: _showHhh,
               onHhhEnabledChanged: (enabled) async {
                 await HhhContentSettings.setEnabled(enabled);
@@ -638,6 +648,7 @@ class _FundusAppState extends State<FundusApp> {
           }(),
       ]);
       references = await _remoteStore.loadLibraryReferences();
+      _pairedServers = {for (final server in servers) server.id: server};
       if (_library != null) {
         unawaited(_refreshRemoteCatalog(servers, references));
       }
@@ -754,6 +765,40 @@ class _FundusAppState extends State<FundusApp> {
       if (error.statusCode != HttpStatus.notFound) rethrow;
       return _remoteClient.works(server, libraryId);
     }
+  }
+
+  Future<String?> _remoteCoverPath(
+    LibraryWorkSummary work,
+    FundusCatalogSource source,
+  ) {
+    if (!source.isRemote || work.id.isEmpty) {
+      return Future.value(work.coverPath);
+    }
+    final sourceKey = source.id.startsWith('remote:')
+        ? source.id.substring('remote:'.length)
+        : '';
+    final separator = sourceKey.indexOf('/');
+    if (separator <= 0 || separator == sourceKey.length - 1) {
+      return Future.value(work.coverPath);
+    }
+    final serverId = sourceKey.substring(0, separator);
+    final libraryId = sourceKey.substring(separator + 1);
+    final cacheKey = '$serverId/$libraryId/${work.id}';
+    return _remoteCoverRequests.putIfAbsent(cacheKey, () async {
+      final server = _pairedServers[serverId];
+      if (server == null) return work.coverPath;
+      try {
+        final file = await _remoteCoverCache.obtain(
+          cacheKey: cacheKey,
+          open: () => _remoteClient.cover(server, libraryId, work.id),
+        );
+        return file?.path ?? work.coverPath;
+      } catch (_) {
+        // Artwork is optional; a failed cover must not make a catalog card
+        // unavailable or block scrolling through the unified library.
+        return work.coverPath;
+      }
+    });
   }
 
   Future<void> _openCatalogWork(FundusCatalogEntry entry) async {
@@ -1552,6 +1597,7 @@ class LibraryShell extends StatefulWidget {
     this.onOpenDownloads,
     this.onOpenOfflineWork,
     this.onOpenCatalogWork,
+    this.coverPathProvider,
     this.showHhh = false,
     this.onHhhEnabledChanged,
     this.onOpenCollections,
@@ -1580,6 +1626,7 @@ class LibraryShell extends StatefulWidget {
   final VoidCallback? onOpenDownloads;
   final OfflineWorkOpenCallback? onOpenOfflineWork;
   final CatalogWorkOpenCallback? onOpenCatalogWork;
+  final CatalogCoverPathProvider? coverPathProvider;
   final bool showHhh;
   final ValueChanged<bool>? onHhhEnabledChanged;
   final VoidCallback? onOpenCollections;
@@ -2897,6 +2944,7 @@ class _LibraryShellState extends State<LibraryShell> {
                     return _WorkCard(
                       work: work,
                       source: _sourceForWork(work),
+                      coverPathProvider: widget.coverPathProvider,
                       player: widget.player,
                       selected: !detailAsDialog && index == _selectedIndex,
                       selectionMode: _selectionMode,
@@ -3592,7 +3640,12 @@ class _LibraryShellState extends State<LibraryShell> {
                           dimension: 40,
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(4),
-                            child: _WorkCover(work: works[index], iconSize: 20),
+                            child: _CatalogWorkCover(
+                              work: works[index],
+                              source: _sourceForWork(works[index]),
+                              iconSize: 20,
+                              coverPathProvider: widget.coverPathProvider,
+                            ),
                           ),
                         ),
                       ),
@@ -5222,6 +5275,7 @@ class _WorkCard extends StatelessWidget {
     required this.selected,
     required this.onTap,
     this.source,
+    this.coverPathProvider,
     this.player,
     this.selectionMode = false,
     this.checked = false,
@@ -5232,6 +5286,7 @@ class _WorkCard extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
   final FundusCatalogSource? source;
+  final CatalogCoverPathProvider? coverPathProvider;
   final FundusPlayerController? player;
   final bool selectionMode;
   final bool checked;
@@ -5278,7 +5333,13 @@ class _WorkCard extends StatelessWidget {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        _WorkCover(work: work, iconSize: 42, player: player),
+                        _CatalogWorkCover(
+                          work: work,
+                          source: source,
+                          iconSize: 42,
+                          player: player,
+                          coverPathProvider: coverPathProvider,
+                        ),
                         if (selectionMode)
                           Positioned(
                             right: 8,
@@ -5355,6 +5416,42 @@ class _WorkCard extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _CatalogWorkCover extends StatelessWidget {
+  const _CatalogWorkCover({
+    required this.work,
+    required this.iconSize,
+    this.source,
+    this.player,
+    this.coverPathProvider,
+  });
+
+  final LibraryWorkSummary work;
+  final FundusCatalogSource? source;
+  final double iconSize;
+  final FundusPlayerController? player;
+  final CatalogCoverPathProvider? coverPathProvider;
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = coverPathProvider;
+    final resolvedSource = source;
+    if (provider == null ||
+        resolvedSource == null ||
+        !resolvedSource.isRemote) {
+      return _WorkCover(work: work, iconSize: iconSize, player: player);
+    }
+    return FutureBuilder<String?>(
+      future: provider(work, resolvedSource),
+      builder: (context, snapshot) => _WorkCover(
+        work: work,
+        iconSize: iconSize,
+        player: player,
+        coverPathOverride: snapshot.data,
       ),
     );
   }
@@ -8932,11 +9029,17 @@ class _MobileDashboardCard extends StatelessWidget {
 }
 
 class _WorkCover extends StatelessWidget {
-  const _WorkCover({required this.work, required this.iconSize, this.player});
+  const _WorkCover({
+    required this.work,
+    required this.iconSize,
+    this.player,
+    this.coverPathOverride,
+  });
 
   final LibraryWorkSummary work;
   final double iconSize;
   final FundusPlayerController? player;
+  final String? coverPathOverride;
 
   @override
   Widget build(BuildContext context) {
@@ -9000,7 +9103,7 @@ class _WorkCover extends StatelessWidget {
   }
 
   Widget _artwork() {
-    final path = work.coverPath;
+    final path = coverPathOverride ?? work.coverPath;
     if (path == null || path.isEmpty) return _placeholder();
     return Image.file(
       File(path),

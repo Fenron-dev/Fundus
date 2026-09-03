@@ -344,11 +344,14 @@ final class FundusServerHandler {
     final since = int.tryParse(request.url.queryParameters['since'] ?? '') ?? 0;
     final requestedLimit =
         int.tryParse(request.url.queryParameters['limit'] ?? '') ?? 1000;
-    final offset = since.clamp(0, entry.works.length);
     final limit = requestedLimit.clamp(1, 1000);
     final visible = entry.works
         .where((work) => _canViewWork(request, work))
         .toList(growable: false);
+    // Cursors address the visible snapshot, not the underlying unfiltered
+    // list. Otherwise hiding an HHH work before the cursor would silently
+    // skip a normal work on the next page.
+    final offset = since.clamp(0, visible.length);
     final page = visible.skip(offset).take(limit).toList(growable: false);
     final nextCursor = offset + page.length;
     return _json({
