@@ -253,16 +253,19 @@ final class FundusRemoteCollectionConflict implements Exception {
 }
 
 final class FundusRemoteRequestException extends HttpException {
-  FundusRemoteRequestException(this.statusCode, this.responseBody, {this.uri})
-    : super(
-        uri == null
-            ? 'Serverfehler $statusCode.'
-            : 'Serverfehler $statusCode bei ${uri.path}.',
-      );
+  FundusRemoteRequestException(
+    this.statusCode,
+    this.responseBody, {
+    this.requestUri,
+  }) : super(
+         requestUri == null
+             ? 'Serverfehler $statusCode.'
+             : 'Serverfehler $statusCode bei ${requestUri.path}.',
+       );
 
   final int statusCode;
   final String responseBody;
-  final Uri? uri;
+  final Uri? requestUri;
 }
 
 final class FundusRemotePlaybackSessionConflict implements Exception {
@@ -1859,7 +1862,7 @@ final class FundusRemoteClient {
         throw FundusRemoteRequestException(
           response.statusCode,
           responseBody,
-          uri: uri,
+          requestUri: uri,
         );
       }
       return FundusRemoteStream(client, response);
