@@ -64,4 +64,31 @@ void main() {
       isTrue,
     );
   });
+
+  test('video and remote records use the same finished-state policy', () {
+    expect(
+      PlaybackResumePolicy.resumeTime(
+        position: const Duration(minutes: 12),
+        total: const Duration(hours: 1),
+        finished: false,
+      ),
+      const Duration(minutes: 12),
+    );
+    expect(
+      PlaybackResumePolicy.resumeTime(
+        position: const Duration(minutes: 12),
+        total: const Duration(hours: 1),
+        finished: true,
+      ),
+      const Duration(minutes: 12),
+    );
+    expect(
+      PlaybackResumePolicy.resumeTime(
+        position: const Duration(minutes: 59, seconds: 55),
+        total: const Duration(hours: 1),
+        finished: true,
+      ),
+      isNull,
+    );
+  });
 }

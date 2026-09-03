@@ -13,6 +13,7 @@ import '../playback/playback_sleep_timer.dart';
 import '../playback/playback_shake_restart.dart';
 import '../playback/playback_conflict_settings.dart';
 import '../playback/playback_autosave_settings.dart';
+import '../playback/playback_resume_policy.dart';
 import '../playback/fundus_system_media_session.dart';
 import '../playback/video_track_preferences.dart';
 import 'fundus_remote_client.dart';
@@ -515,7 +516,13 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       } else if (resumeIndex >= 0) {
         _currentIndex = resumeIndex;
       }
-      final resumePosition = startPosition ?? progress?.position;
+      final resumePosition =
+          startPosition ??
+          PlaybackResumePolicy.resumeTime(
+            position: progress?.position,
+            total: progress?.duration,
+            finished: progress?.finished ?? false,
+          );
       final useNativeVideoResume =
           _isVideoWork(work) &&
           resumePosition != null &&

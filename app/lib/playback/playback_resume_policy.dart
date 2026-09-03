@@ -7,12 +7,32 @@ final class PlaybackResumePolicy {
   /// stored position is still clearly before the end.
   static Duration? resumePosition(LibraryPlaybackProgress? progress) {
     if (progress == null) return null;
-    final seconds = progress.position.numericValue ?? 0;
-    final total = progress.position.total;
+    final seconds = progress.position.numericValue;
+    return resumeTime(
+      position: seconds == null
+          ? null
+          : Duration(milliseconds: (seconds * 1000).round()),
+      total: progress.position.total == null
+          ? null
+          : Duration(milliseconds: (progress.position.total! * 1000).round()),
+      finished: progress.finished,
+    );
+  }
+
+  /// Applies the same finished-state semantics to audio, video and remote
+  /// progress records. A stale finished flag is ignored when the saved point
+  /// is clearly before the end; a genuinely completed item starts fresh.
+  static Duration? resumeTime({
+    required Duration? position,
+    required Duration? total,
+    required bool finished,
+  }) {
+    if (position == null || position <= Duration.zero) return Duration.zero;
     final incorrectlyFinished =
-        progress.finished && (total == null || seconds + 10 < total);
-    if (progress.finished && !incorrectlyFinished) return null;
-    return Duration(milliseconds: (seconds * 1000).round());
+        finished &&
+        (total == null || position + const Duration(seconds: 10) < total);
+    if (finished && !incorrectlyFinished) return null;
+    return position;
   }
 
   static bool isAtEnd(Duration position, Duration duration) =>

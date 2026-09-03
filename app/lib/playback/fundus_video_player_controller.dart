@@ -6,6 +6,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../diagnostics/fundus_diagnostics.dart';
+import 'playback_resume_policy.dart';
 import 'playback_autosave_settings.dart';
 import 'video_track_preferences.dart';
 
@@ -154,15 +155,26 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    final storedPosition =
+        progress?.position.kind == MediaPositionKind.time &&
+            progress?.fileId == _tracks[_currentIndex].fileId
+        ? Duration(
+            milliseconds: ((progress?.position.numericValue ?? 0) * 1000)
+                .round(),
+          )
+        : null;
     final resume =
         startPosition ??
-        (progress?.position.kind == MediaPositionKind.time &&
-                progress?.fileId == _tracks[_currentIndex].fileId
-            ? Duration(
-                milliseconds: ((progress?.position.numericValue ?? 0) * 1000)
-                    .round(),
-              )
-            : Duration.zero);
+        PlaybackResumePolicy.resumeTime(
+          position: storedPosition,
+          total: progress?.position.total == null
+              ? null
+              : Duration(
+                  milliseconds: ((progress!.position.total!) * 1000).round(),
+                ),
+          finished: progress?.finished ?? false,
+        ) ??
+        Duration.zero;
     try {
       _restoringPosition = true;
       await _player.open(
