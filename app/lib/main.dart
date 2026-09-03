@@ -5050,6 +5050,8 @@ class _VideoHero extends StatelessWidget {
         contentStyle: work.contentStyle,
         contentSensitivity: work.contentSensitivity,
       );
+      final providerMetadata = work.providerMetadata;
+      final backdropUrl = providerMetadata['backdrop_url'];
       final facts = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -5068,6 +5070,12 @@ class _VideoHero extends StatelessWidget {
               if (work.contentStyle case final style?) Chip(label: Text(style)),
               if (work.publishedYear case final year?)
                 Chip(label: Text('$year')),
+              if (providerMetadata['runtime_minutes'] case final minutes?
+                  when minutes is num && minutes > 0)
+                Chip(label: Text(_formatVideoRuntime(minutes.round()))),
+              if (providerMetadata['season'] case final season?
+                  when season is num)
+                Chip(label: Text('Staffel ${season.round()}')),
               Chip(label: Text('${work.fileCount} Datei(en)')),
             ],
           ),
@@ -5088,22 +5096,23 @@ class _VideoHero extends StatelessWidget {
               ],
             ),
           ],
-          if (work.providerMetadata case final provider
-              when provider.isNotEmpty) ...[
+          if (providerMetadata.isNotEmpty) ...[
             const SizedBox(height: 8),
             Wrap(
               spacing: 6,
               runSpacing: 4,
               children: [
-                if (provider['provider'] case final name? when name is String)
+                if (providerMetadata['provider'] case final name?
+                    when name is String)
                   Chip(
                     avatar: const Icon(Icons.cloud_done_outlined, size: 18),
                     label: Text('Quelle: ${name.toUpperCase()}'),
                   ),
-                if (provider['episode_count'] case final count?
+                if (providerMetadata['episode_count'] case final count?
                     when count is num)
                   Chip(label: Text('${count.round()} Folgen')),
-                if (provider['provider_id'] case final id? when id is String)
+                if (providerMetadata['provider_id'] case final id?
+                    when id is String)
                   Chip(label: Text('ID: $id')),
               ],
             ),
@@ -5173,41 +5182,66 @@ class _VideoHero extends StatelessWidget {
           child: _WorkCover(work: work, iconSize: 84),
         ),
       );
-      return DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              scheme.secondaryContainer.withValues(alpha: .42),
-              scheme.surfaceContainer.withValues(alpha: .55),
-            ],
-          ),
-          border: Border.all(color: scheme.outlineVariant),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: wide
-              ? Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(width: 230, child: cover),
-                    const SizedBox(width: 28),
-                    Expanded(child: facts),
-                  ],
-                )
-              : Column(
-                  children: [
-                    SizedBox(width: 190, child: cover),
-                    const SizedBox(height: 18),
-                    facts,
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: Stack(
+          children: [
+            if (backdropUrl is String && backdropUrl.trim().isNotEmpty)
+              Positioned.fill(
+                child: Opacity(
+                  opacity: .18,
+                  child: Image.network(
+                    backdropUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) =>
+                        const SizedBox.shrink(),
+                  ),
+                ),
+              ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    scheme.secondaryContainer.withValues(alpha: .78),
+                    scheme.surfaceContainer.withValues(alpha: .92),
                   ],
                 ),
+                border: Border.all(color: scheme.outlineVariant),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: wide
+                    ? Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(width: 230, child: cover),
+                          const SizedBox(width: 28),
+                          Expanded(child: facts),
+                        ],
+                      )
+                    : Column(
+                        children: [
+                          SizedBox(width: 190, child: cover),
+                          const SizedBox(height: 18),
+                          facts,
+                        ],
+                      ),
+              ),
+            ),
+          ],
         ),
       );
     },
   );
+}
+
+String _formatVideoRuntime(int minutes) {
+  if (minutes < 60) return '$minutes Min.';
+  final hours = minutes ~/ 60;
+  final remainder = minutes % 60;
+  return remainder == 0 ? '$hours Std.' : '$hours Std. $remainder Min.';
 }
 
 enum _DocumentFileSort {

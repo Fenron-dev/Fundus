@@ -2150,7 +2150,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         // Locally cached notes remain usable while the server is unavailable.
       }
     }
-    var trackSort = _DocumentTrackSort.oldestFirst;
+    // Video works are presented like a Plex season list by default. Documents
+    // retain their natural file order; both can be changed from the sort menu.
+    var trackSort = isDocument
+        ? _DocumentTrackSort.oldestFirst
+        : _DocumentTrackSort.seasonEpisode;
     if (!pageContext.mounted) return;
     String? action;
     if (mobilePublicationLayout && isDocument) {
@@ -2387,6 +2391,38 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                                     )
                                   else if (work.publishedYear case final year?)
                                     Chip(label: Text('$year')),
+                                  if (work.providerMetadata['provider']
+                                      case final provider?
+                                      when provider is String)
+                                    Chip(
+                                      avatar: const Icon(
+                                        Icons.cloud_done_outlined,
+                                        size: 16,
+                                      ),
+                                      label: Text(
+                                        'Quelle: ${provider.toUpperCase()}',
+                                      ),
+                                    ),
+                                  if (work.providerMetadata['runtime_minutes']
+                                      case final minutes?
+                                      when minutes is num && minutes > 0)
+                                    Chip(
+                                      label: Text(
+                                        _formatRemoteVideoRuntime(
+                                          minutes.round(),
+                                        ),
+                                      ),
+                                    ),
+                                  if (work.providerMetadata['season']
+                                      case final season? when season is num)
+                                    Chip(
+                                      label: Text('Staffel ${season.round()}'),
+                                    ),
+                                  if (work.providerMetadata['episode_count']
+                                      case final count? when count is num)
+                                    Chip(
+                                      label: Text('${count.round()} Folgen'),
+                                    ),
                                   Chip(
                                     label: Text('${work.fileCount} Datei(en)'),
                                   ),
@@ -5910,6 +5946,13 @@ String _formatRemoteDuration(Duration value) {
   final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
   final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
   return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+}
+
+String _formatRemoteVideoRuntime(int minutes) {
+  if (minutes < 60) return '$minutes Min.';
+  final hours = minutes ~/ 60;
+  final remainder = minutes % 60;
+  return remainder == 0 ? '$hours Std.' : '$hours Std. $remainder Min.';
 }
 
 String _remoteChapterSubtitle(FundusRemoteChapter chapter, int trackCount) {

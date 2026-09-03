@@ -18,6 +18,7 @@ void main() {
                 'format': 'TV',
                 'isAdult': true,
                 'episodes': 12,
+                'duration': 24,
                 'seasonYear': 2025,
                 'title': {
                   'romaji': 'Secret Title',
@@ -42,6 +43,7 @@ void main() {
     expect(results.single.title, 'A Secret Title');
     expect(results.single.alternateTitles, containsAll(['Secret Title', '秘密']));
     expect(results.single.contentSensitivity, 'adult_explicit');
+    expect(results.single.runtimeMinutes, 24);
     expect(results.single.description, 'Short description');
     expect(results.single.genres, ['Action', 'Comedy']);
     expect(client.lastRequest?.url.toString(), 'https://graphql.anilist.co');

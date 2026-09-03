@@ -13,6 +13,7 @@ final class VideoProviderCandidate {
     this.contentStyle,
     this.contentSensitivity,
     this.releaseYear,
+    this.runtimeMinutes,
     this.season,
     this.episodeCount,
     this.isAdult,
@@ -31,6 +32,11 @@ final class VideoProviderCandidate {
   final String? contentStyle;
   final String? contentSensitivity;
   final int? releaseYear;
+
+  /// Runtime in minutes when supplied by the metadata provider (for example
+  /// AniList). Providers may omit this for search results that do not expose
+  /// a duration.
+  final int? runtimeMinutes;
   final int? season;
   final int? episodeCount;
   final bool? isAdult;
@@ -49,6 +55,7 @@ final class VideoProviderCandidate {
     if (contentStyle != null) 'content_style': contentStyle,
     if (contentSensitivity != null) 'content_sensitivity': contentSensitivity,
     if (releaseYear != null) 'release_year': releaseYear,
+    if (runtimeMinutes != null) 'runtime_minutes': runtimeMinutes,
     if (season != null) 'season': season,
     if (episodeCount != null) 'episode_count': episodeCount,
     if (isAdult != null) 'is_adult': isAdult,
@@ -80,6 +87,7 @@ final class VideoProviderCandidate {
       contentStyle: value['content_style'] as String?,
       contentSensitivity: value['content_sensitivity'] as String?,
       releaseYear: (value['release_year'] as num?)?.round(),
+      runtimeMinutes: (value['runtime_minutes'] as num?)?.round(),
       season: (value['season'] as num?)?.round(),
       episodeCount: (value['episode_count'] as num?)?.round(),
       isAdult: value['is_adult'] as bool?,

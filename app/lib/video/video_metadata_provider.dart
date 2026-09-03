@@ -76,6 +76,7 @@ query ($search: String!, $perPage: Int!) {
       format
       isAdult
       episodes
+      duration
       seasonYear
       title { romaji english native }
       description(asHtml: false)
@@ -171,6 +172,7 @@ query ($search: String!, $perPage: Int!) {
       contentStyle: 'anime',
       contentSensitivity: isAdult ? 'adult_explicit' : null,
       releaseYear: (value['seasonYear'] as num?)?.round(),
+      runtimeMinutes: (value['duration'] as num?)?.round(),
       episodeCount: (value['episodes'] as num?)?.round(),
       isAdult: isAdult,
       description: _cleanDescription(value['description']),

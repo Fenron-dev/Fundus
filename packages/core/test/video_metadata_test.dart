@@ -93,6 +93,7 @@ void main() {
       providerId: '42',
       title: 'Cowboy Bebop',
       releaseYear: 1998,
+      runtimeMinutes: 24,
       isAdult: false,
       genres: ['Action', 'Science Fiction'],
       externalIds: {'mal': '1'},
@@ -101,6 +102,7 @@ void main() {
 
     expect(restored?.provider, 'anilist');
     expect(restored?.releaseYear, 1998);
+    expect(restored?.runtimeMinutes, 24);
     expect(restored?.genres, ['Action', 'Science Fiction']);
     expect(restored?.externalIds['mal'], '1');
     expect(VideoProviderCandidate.fromJson({'title': 'unvollständig'}), isNull);
