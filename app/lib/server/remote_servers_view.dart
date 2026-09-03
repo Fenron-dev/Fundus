@@ -61,7 +61,10 @@ enum _ChapterSelectionMode { range, individual }
 bool _isRemoteVideoWork(FundusRemoteWork work) =>
     VideoWorkKind.isVideo(work.kind);
 
-List<FundusBreadcrumb> _remoteDetailBreadcrumbs(WorkDetailViewModel detail) {
+List<FundusBreadcrumb> _remoteDetailBreadcrumbs(
+  WorkDetailViewModel detail, {
+  VoidCallback? onPrevious,
+}) {
   final summary = detail.summary;
   final mediaType = FundusMediaTypeRegistry.forWork(
     kind: summary.kind,
@@ -73,10 +76,12 @@ List<FundusBreadcrumb> _remoteDetailBreadcrumbs(WorkDetailViewModel detail) {
     FundusBreadcrumb(
       label: summary.sourceLibraryName ?? 'Bibliothek',
       icon: Icons.home_outlined,
+      onTap: onPrevious,
     ),
     FundusBreadcrumb(
       label: mediaType?.pluralLabel ?? 'Medien',
       icon: mediaType == null ? Icons.video_library_outlined : null,
+      onTap: onPrevious,
     ),
     FundusBreadcrumb(label: summary.title),
   ];
@@ -2779,7 +2784,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                   children: [
                     WorkDetailHeader(
                       detail: detail,
-                      breadcrumbs: _remoteDetailBreadcrumbs(detail),
+                      breadcrumbs: _remoteDetailBreadcrumbs(
+                        detail,
+                        onPrevious: () => Navigator.of(context).maybePop(),
+                      ),
                       coverBuilder: (_) => work.hasCover
                           ? _remoteCover(
                               server,
@@ -5773,7 +5781,10 @@ class _MobileRemotePublicationDetailsState
               children: [
                 WorkDetailHeader(
                   detail: widget.detail,
-                  breadcrumbs: _remoteDetailBreadcrumbs(widget.detail),
+                  breadcrumbs: _remoteDetailBreadcrumbs(
+                    widget.detail,
+                    onPrevious: () => Navigator.of(context).maybePop(),
+                  ),
                   coverBuilder: (_) => widget.coverBuilder(),
                   onCoverTap: _showCover,
                   favorite: _isFavorite,
