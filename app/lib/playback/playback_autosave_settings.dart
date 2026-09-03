@@ -65,8 +65,18 @@ abstract final class PlaybackAutosaveSettings {
     changes.value++;
   }
 
-  static String _baseKind(String kind) =>
-      kind == 'movie' || kind == 'tv' ? 'video' : kind;
+  static String _baseKind(String kind) {
+    final normalized = kind.trim().toLowerCase();
+    return switch (normalized) {
+      'movie' ||
+      'tv' ||
+      'anime_movie' ||
+      'anime_tv' ||
+      'hhh_movie' ||
+      'hhh_tv' => 'video',
+      _ => normalized,
+    };
+  }
 
   static bool _valid(int seconds) =>
       seconds == 0 || (seconds >= 15 && seconds <= 600);

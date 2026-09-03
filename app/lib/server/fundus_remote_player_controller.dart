@@ -33,8 +33,7 @@ final class FundusRemoteChapterTarget {
   final Duration position;
 }
 
-bool _isVideoWork(FundusRemoteWork work) =>
-    work.kind == 'movie' || work.kind == 'tv' || work.kind == 'video';
+bool _isVideoWork(FundusRemoteWork work) => VideoWorkKind.isVideo(work.kind);
 
 bool _isVideoTrack(FundusRemoteTrack track) {
   final path = track.title.toLowerCase();

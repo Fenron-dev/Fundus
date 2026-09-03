@@ -309,11 +309,10 @@ abstract final class VideoTrackPreferences {
     ].join('.');
   }
 
-  static String _baseKind(String kind) => switch (kind) {
-    'movie' => 'movie',
-    'tv' => 'tv',
-    _ => 'video',
-  };
+  static String _baseKind(String kind) {
+    final base = VideoWorkKind.base(kind);
+    return base == 'movie' || base == 'tv' ? base : 'video';
+  }
 }
 
 final class VideoTrackPreferenceSettingTile extends StatefulWidget {

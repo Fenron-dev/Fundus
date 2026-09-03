@@ -56,7 +56,7 @@ enum _DocumentTrackSort {
 enum _ChapterSelectionMode { range, individual }
 
 bool _isRemoteVideoWork(FundusRemoteWork work) =>
-    work.kind == 'movie' || work.kind == 'tv' || work.kind == 'video';
+    VideoWorkKind.isVideo(work.kind);
 
 Set<int> chapterSelectionRange({
   required int total,

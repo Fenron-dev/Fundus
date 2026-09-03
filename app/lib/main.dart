@@ -5109,7 +5109,10 @@ class _VideoHero extends StatelessWidget {
               Chip(
                 avatar: const Icon(Icons.movie_outlined, size: 18),
                 label: Text(
-                  mediaType?.label ?? (work.kind == 'movie' ? 'Film' : 'Serie'),
+                  mediaType?.label ??
+                      (VideoWorkKind.base(work.kind) == 'movie'
+                          ? 'Film'
+                          : 'Serie'),
                 ),
               ),
               if (work.contentStyle case final style?) Chip(label: Text(style)),
@@ -6009,10 +6012,7 @@ class _DetailPanelState extends State<_DetailPanel> {
             ],
             _DocumentFilesPanel(
               files: workFiles,
-              isVideo:
-                  selectedWork.kind == 'movie' ||
-                  selectedWork.kind == 'tv' ||
-                  selectedWork.kind == 'video',
+              isVideo: _isVideoWorkKind(selectedWork.kind),
               progress: widget.library?.loadProgress(selectedWork.id),
               availability: !selectedWork.available
                   ? WorkContentAvailability.missing
@@ -6325,10 +6325,7 @@ class _DetailPanelState extends State<_DetailPanel> {
                   ? const Center(child: Text('Keine Dateien gefunden.'))
                   : _DocumentFilesPanel(
                       files: files,
-                      isVideo:
-                          work.kind == 'movie' ||
-                          work.kind == 'tv' ||
-                          work.kind == 'video',
+                      isVideo: _isVideoWorkKind(work.kind),
                       progress: progress,
                       availability: !work.available
                           ? WorkContentAvailability.missing
@@ -6501,10 +6498,7 @@ class _DetailPanelState extends State<_DetailPanel> {
           ? const Center(child: Text('Keine Kapitel gefunden.'))
           : _DocumentFilesPanel(
               files: chapters,
-              isVideo:
-                  work.kind == 'movie' ||
-                  work.kind == 'tv' ||
-                  work.kind == 'video',
+              isVideo: _isVideoWorkKind(work.kind),
               progress: progress,
               availability: !work.available
                   ? WorkContentAvailability.missing
@@ -6770,7 +6764,7 @@ class _DetailPanelState extends State<_DetailPanel> {
     LibraryWorkSummary work,
     List<LibraryPlaybackTrack> files,
   ) async {
-    if (work.kind == 'movie' || work.kind == 'tv' || work.kind == 'video') {
+    if (_isVideoWorkKind(work.kind)) {
       await _openVideoWork(work);
       return;
     }
@@ -7618,15 +7612,20 @@ class _DetailPanelState extends State<_DetailPanel> {
       context: context,
       builder: (context) {
         final adult = work.contentSensitivity == 'adult_explicit';
+        final videoBase = VideoWorkKind.base(work.kind);
+        final anime =
+            work.kind == 'anime_movie' ||
+            work.kind == 'anime_tv' ||
+            work.contentStyle == 'anime';
         var selected = adult
-            ? work.kind == 'movie'
+            ? videoBase == 'movie'
                   ? 'hhh_movie'
                   : 'hhh_tv'
-            : work.kind == 'movie' && work.contentStyle == 'anime'
+            : videoBase == 'movie' && anime
             ? 'anime_movie'
-            : work.kind == 'tv' && work.contentStyle == 'anime'
+            : videoBase == 'tv' && anime
             ? 'anime_tv'
-            : work.kind == 'movie'
+            : videoBase == 'movie'
             ? 'movie'
             : 'tv';
         return StatefulBuilder(
@@ -8645,8 +8644,7 @@ String _workKindLabel(
       _ => kind,
     };
 
-bool _isVideoWorkKind(String kind) =>
-    kind == 'movie' || kind == 'tv' || kind == 'video';
+bool _isVideoWorkKind(String kind) => VideoWorkKind.isVideo(kind);
 
 IconData _workKindIcon(String kind) => switch (kind) {
   'audiobook' => Icons.music_note,
