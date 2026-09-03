@@ -1586,11 +1586,17 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       await player.open(result.server, library, work);
     }
     if (mounted) {
+      // Pause the already-opened remote player while the fullscreen route
+      // attaches its native video texture. Otherwise the decoder can advance
+      // (or render audio only) before the surface exists.
+      final initialPosition = player.position;
+      await player.player.pause();
       await showFundusVideoPlayerForPlayer(
         context,
         player: player.player,
         videoController: player.videoController,
         title: work.title,
+        initialPosition: initialPosition,
         onAudioTrackSelected: player.rememberVideoAudioTrack,
         onSubtitleTrackSelected: player.rememberVideoSubtitleTrack,
         onBookmarkAtCurrent: player.addBookmarkAtCurrent,

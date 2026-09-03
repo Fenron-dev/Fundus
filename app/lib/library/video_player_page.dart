@@ -18,6 +18,7 @@ Future<void> showFundusVideoPlayer(
   fundusController: controller,
   title: controller.work?.title ?? 'Video',
   resumePlayback: true,
+  initialPosition: controller.position,
 );
 
 Future<void> showFundusVideoPlayerForPlayer(
@@ -27,6 +28,7 @@ Future<void> showFundusVideoPlayerForPlayer(
   required String title,
   FundusVideoPlayerController? fundusController,
   bool resumePlayback = true,
+  Duration? initialPosition,
   Future<void> Function(AudioTrack track)? onAudioTrackSelected,
   Future<void> Function(bool enabled, SubtitleTrack? track)?
   onSubtitleTrackSelected,
@@ -40,6 +42,7 @@ Future<void> showFundusVideoPlayerForPlayer(
       title: title,
       fundusController: fundusController,
       resumePlayback: resumePlayback,
+      initialPosition: initialPosition,
       onAudioTrackSelected: onAudioTrackSelected,
       onSubtitleTrackSelected: onSubtitleTrackSelected,
       onBookmarkAtCurrent: onBookmarkAtCurrent,
@@ -54,6 +57,7 @@ final class _FundusVideoPlayerPage extends StatefulWidget {
     required this.title,
     this.fundusController,
     required this.resumePlayback,
+    this.initialPosition,
     this.onAudioTrackSelected,
     this.onSubtitleTrackSelected,
     this.onBookmarkAtCurrent,
@@ -63,6 +67,7 @@ final class _FundusVideoPlayerPage extends StatefulWidget {
   final String title;
   final FundusVideoPlayerController? fundusController;
   final bool resumePlayback;
+  final Duration? initialPosition;
   final Future<void> Function(AudioTrack track)? onAudioTrackSelected;
   final Future<void> Function(bool enabled, SubtitleTrack? track)?
   onSubtitleTrackSelected;
@@ -88,14 +93,40 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
         // in that state produces sound with a black or stale frame. Keep the
         // already restored timestamp, pause the decoder briefly, then seek
         // back to that timestamp before starting playback.
-        final restoredPosition = widget.player.state.position;
+        // Capture the position supplied by the owner before playback can
+        // advance. This is important for remote players, which may already
+        // have been opened by the time this route is pushed.
+        final restoredPosition =
+            widget.initialPosition ?? widget.player.state.position;
         await widget.player.pause();
-        await Future<void>.delayed(const Duration(milliseconds: 80));
+        await Future<void>.delayed(const Duration(milliseconds: 120));
         if (restoredPosition > Duration.zero) {
           await widget.player.seek(restoredPosition);
         }
-        await Future<void>.delayed(const Duration(milliseconds: 80));
-        if (mounted) await widget.player.play();
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        if (mounted) {
+          await widget.player.play();
+          // Wait for the native surface to receive a frame. Without this
+          // small priming step, resumed videos can play audio while their
+          // texture remains black until a later seek or track change.
+          try {
+            await widget.videoController.waitUntilFirstFrameRendered.timeout(
+              const Duration(seconds: 3),
+            );
+          } catch (_) {
+            // Some streams do not expose a first-frame future; playback can
+            // still continue normally in that case.
+          }
+          // Seeking once more after the surface is ready prevents the first
+          // decoded frame from snapping back to the beginning on resume.
+          if (restoredPosition > Duration.zero && mounted) {
+            final actual = widget.player.state.position;
+            if ((actual - restoredPosition).abs() >
+                const Duration(seconds: 2)) {
+              await widget.player.seek(restoredPosition);
+            }
+          }
+        }
       } catch (_) {
         // Playback errors are surfaced by media_kit's error stream/controls.
       }
