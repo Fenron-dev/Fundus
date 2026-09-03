@@ -77,9 +77,19 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted || !widget.resumePlayback) return;
       try {
-        if (widget.player.state.playing) {
-          await widget.player.pause();
+        // Always re-prime the native texture after the route is mounted. A
+        // resumed file can have a valid audio clock while the video output
+        // is still attached to the pre-route surface; simply calling play()
+        // in that state produces sound with a black or stale frame. Keep the
+        // already restored timestamp, pause the decoder briefly, then seek
+        // back to that timestamp before starting playback.
+        final restoredPosition = widget.player.state.position;
+        await widget.player.pause();
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+        if (restoredPosition > Duration.zero) {
+          await widget.player.seek(restoredPosition);
         }
+        await Future<void>.delayed(const Duration(milliseconds: 80));
         if (mounted) await widget.player.play();
       } catch (_) {
         // Playback errors are surfaced by media_kit's error stream/controls.

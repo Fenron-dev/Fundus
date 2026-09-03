@@ -2695,7 +2695,7 @@ class _LibraryShellState extends State<LibraryShell> {
         IconButton(
           onPressed: () {
             if (_selectionMode && _selectedWorkIds.isNotEmpty) {
-              unawaited(_openBulkEdit());
+              unawaited(_openBulkActions());
               return;
             }
             setState(() {
@@ -2924,6 +2924,97 @@ class _LibraryShellState extends State<LibraryShell> {
         _selectionMode = false;
         _selectedWorkIds.clear();
       });
+    }
+  }
+
+  Future<void> _openBulkActions() async {
+    final library = widget.library;
+    if (library == null || _selectedWorkIds.isEmpty) return;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.sell_outlined),
+              title: const Text('Tags bearbeiten'),
+              subtitle: const Text('Tags für alle ausgewählten Werke ersetzen'),
+              onTap: () => Navigator.pop(context, 'tags'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_special_outlined),
+              title: const Text('Zu Sammlung hinzufügen'),
+              subtitle: const Text(
+                'Auswahl einer bestehenden Sammlung zuordnen',
+              ),
+              onTap: () => Navigator.pop(context, 'collection'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    if (action == 'tags') {
+      await _openBulkEdit();
+      return;
+    }
+    await _addSelectedToCollection();
+  }
+
+  Future<void> _addSelectedToCollection() async {
+    final library = widget.library;
+    if (library == null || library.isReadOnly || _selectedWorkIds.isEmpty) {
+      return;
+    }
+    final collections = library.listCollections();
+    if (collections.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Lege zuerst eine Sammlung an.')),
+        );
+      }
+      return;
+    }
+    final collection = await showDialog<LibraryCollection>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Sammlung auswählen'),
+        children: [
+          for (final candidate in collections)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, candidate),
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.folder_special_outlined),
+                title: Text(candidate.name),
+                subtitle: Text('${candidate.workIds.length} Werk(e)'),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (!mounted || collection == null) return;
+    final localWorkIds = widget.works.map((work) => work.id).toSet();
+    final workIds = {
+      ...collection.workIds,
+      ..._selectedWorkIds.where(localWorkIds.contains),
+    };
+    library.saveCollection(
+      collectionId: collection.id,
+      name: collection.name,
+      parentId: collection.parentId,
+      kind: collection.kind,
+      rules: collection.rules,
+      workIds: workIds,
+    );
+    if (mounted) {
+      setState(() {
+        _selectionMode = false;
+        _selectedWorkIds.clear();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Werke zu „${collection.name}“ hinzugefügt.')),
+      );
     }
   }
 
