@@ -1035,6 +1035,7 @@ final class FundusLibrary {
       series: work.series,
       seriesSequence: work.seriesSequence,
       coverPath: safeCoverPath,
+      coverVersion: work.coverVersion,
       language: work.language,
       subtitle: work.subtitle,
       description: work.description,

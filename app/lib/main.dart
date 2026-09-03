@@ -815,7 +815,12 @@ class _FundusAppState extends State<FundusApp> {
     }
     final serverId = sourceKey.substring(0, separator);
     final libraryId = sourceKey.substring(separator + 1);
-    final cacheKey = '$serverId/$libraryId/${work.id}';
+    final cacheKey = [
+      serverId,
+      libraryId,
+      work.id,
+      work.coverVersion ?? 'legacy',
+    ].join('/');
     return _remoteCoverRequests.putIfAbsent(cacheKey, () async {
       final server = _pairedServers[serverId];
       if (server == null) return work.coverPath;

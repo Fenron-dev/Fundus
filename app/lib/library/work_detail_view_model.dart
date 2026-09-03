@@ -43,6 +43,7 @@ final class WorkDetailViewModel {
       addedAt: work.addedAt ?? DateTime.fromMillisecondsSinceEpoch(0),
       series: work.series,
       seriesSequence: work.seriesSequence?.toDouble(),
+      coverVersion: work.coverVersion,
       language: work.language,
       genres: _providerGenres(work.providerMetadata),
       subtitle: work.subtitle,

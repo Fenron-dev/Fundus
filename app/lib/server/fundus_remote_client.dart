@@ -288,6 +288,7 @@ final class FundusRemoteWork {
     this.subtitle,
     this.series,
     this.seriesSequence,
+    this.coverVersion,
     this.narrators = const [],
     this.language,
     this.description,
@@ -314,6 +315,7 @@ final class FundusRemoteWork {
   final String? subtitle;
   final String? series;
   final num? seriesSequence;
+  final String? coverVersion;
   final List<String> narrators;
   final String? language;
   final String? description;
@@ -342,6 +344,7 @@ final class FundusRemoteWork {
     if (subtitle != null) 'subtitle': subtitle,
     if (series != null) 'series': series,
     if (seriesSequence != null) 'series_sequence': seriesSequence,
+    if (coverVersion != null) 'cover_version': coverVersion,
     'narrators': narrators,
     if (language != null) 'language': language,
     if (description != null) 'description': description,
@@ -386,6 +389,9 @@ final class FundusRemoteWork {
       series: value['series'] is String ? value['series'] as String : null,
       seriesSequence: value['series_sequence'] is num
           ? value['series_sequence'] as num
+          : null,
+      coverVersion: value['cover_version'] is String
+          ? value['cover_version'] as String
           : null,
       narrators: strings(value['narrators']),
       language: value['language'] is String
@@ -817,6 +823,9 @@ final class FundusRemoteClient {
             series: item['series'] is String ? item['series'] as String : null,
             seriesSequence: item['series_sequence'] is num
                 ? item['series_sequence'] as num
+                : null,
+            coverVersion: item['cover_version'] is String
+                ? item['cover_version'] as String
                 : null,
             narrators: (item['narrators'] as List? ?? const [])
                 .whereType<String>()

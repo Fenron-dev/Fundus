@@ -247,6 +247,13 @@ void main() {
     expect(firstBody['has_more'], isFalse);
     expect(firstBody['deleted'], isEmpty);
     expect(firstBody['etag'], isA<String>());
+    final firstWork = (firstBody['works'] as List).single as Map;
+    expect(
+      firstWork['cover_version'],
+      isA<String>(),
+      reason: '${work.coverPath}',
+    );
+    expect(firstWork['cover_url'], contains('?v='));
 
     final unchanged = await _get(
       server,
@@ -389,6 +396,10 @@ void main() {
     );
     expect(response.statusCode, 200);
     expect(response.headers['content-type'], 'image/jpeg');
+    expect(
+      response.headers['cache-control'],
+      'public, max-age=31536000, immutable',
+    );
     expect(await response.read().expand((chunk) => chunk).toList(), [
       255,
       216,

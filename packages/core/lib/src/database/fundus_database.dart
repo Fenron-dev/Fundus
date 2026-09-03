@@ -28,6 +28,7 @@ final class LibraryWorkSummary {
     this.series,
     this.seriesSequence,
     this.coverPath,
+    this.coverVersion,
     this.language,
     this.subtitle,
     this.description,
@@ -66,6 +67,10 @@ final class LibraryWorkSummary {
   final String? series;
   final double? seriesSequence;
   final String? coverPath;
+
+  /// Stable version token for artwork.  Remote catalogs use this to invalidate
+  /// a local cover cache when the source replaces the image.
+  final String? coverVersion;
   final String? language;
   final String? subtitle;
   final String? description;

@@ -357,12 +357,7 @@ final class FundusServerHandler {
       'works': [
         for (final work in entry.works)
           if (_canViewWork(request, work))
-            {
-              ..._workJson(work),
-              'cover_url': work.coverPath == null
-                  ? null
-                  : '/v1/libraries/$libraryId/works/${work.id}/cover',
-            },
+            {..._workJson(work), 'cover_url': _coverUrl(libraryId, work)},
       ],
     });
   }
@@ -404,12 +399,7 @@ final class FundusServerHandler {
       'library_id': libraryId,
       'works': [
         for (final work in page)
-          {
-            ..._workJson(work),
-            'cover_url': work.coverPath == null
-                ? null
-                : '/v1/libraries/$libraryId/works/${work.id}/cover',
-          },
+          {..._workJson(work), 'cover_url': _coverUrl(libraryId, work)},
       ],
       'deleted': const <String>[],
       'next_cursor': nextCursor,
@@ -447,9 +437,7 @@ final class FundusServerHandler {
       ..._workJson(work),
       'files': [for (final track in entry.tracksFor(workId)) _trackJson(track)],
       'chapters': [for (final chapter in chapters) _chapterJson(chapter)],
-      'cover_url': work.coverPath == null
-          ? null
-          : '/v1/libraries/$libraryId/works/$workId/cover',
+      'cover_url': work.coverPath == null ? null : _coverUrl(libraryId, work),
     });
   }
 
@@ -465,7 +453,12 @@ final class FundusServerHandler {
     if (!_canViewWork(request, work)) return _notFound('cover_not_found');
     final path = work.coverPath;
     if (path == null) return _notFound('cover_not_found');
-    return _serveFile(request, File(path), resourceId: 'cover-$workId');
+    return _serveFile(
+      request,
+      File(path),
+      resourceId: 'cover-$workId',
+      cacheControl: 'public, max-age=31536000, immutable',
+    );
   }
 
   Response _file(Request request, String libraryId, String fileId) {
@@ -1574,6 +1567,7 @@ final class FundusServerHandler {
     Request request,
     File file, {
     required String resourceId,
+    String? cacheControl,
   }) async {
     if (!await file.exists()) return _notFound('file_missing');
     final stat = await file.stat();
@@ -1583,6 +1577,7 @@ final class FundusServerHandler {
       'accept-ranges': 'bytes',
       'content-type': _contentType(file.path),
       'etag': etag,
+      if (cacheControl != null) 'cache-control': cacheControl,
     };
     if (request.headers['if-none-match'] == etag &&
         request.headers['range'] == null) {
@@ -1768,6 +1763,8 @@ final class FundusServerHandler {
     'added_at': work.addedAt.toUtc().toIso8601String(),
     'last_listened_at': work.lastListenedAt?.toUtc().toIso8601String(),
     'has_cover': work.coverPath != null,
+    if (work.coverPath case final coverPath?)
+      'cover_version': _coverVersion(coverPath),
     if (work.providerMetadata.isNotEmpty)
       'provider_metadata': work.providerMetadata,
     'progress': {
@@ -1781,6 +1778,24 @@ final class FundusServerHandler {
       'finished': work.progressFinished,
     },
   };
+
+  static String? _coverVersion(String path) {
+    try {
+      final stat = File(path).statSync();
+      return '${stat.size}-${stat.modified.millisecondsSinceEpoch}';
+    } on FileSystemException {
+      return null;
+    }
+  }
+
+  static String? _coverUrl(String libraryId, LibraryWorkSummary work) {
+    if (work.coverPath == null) return null;
+    final base = '/v1/libraries/$libraryId/works/${work.id}/cover';
+    final version = _coverVersion(work.coverPath!);
+    return version == null
+        ? base
+        : '$base?v=${Uri.encodeQueryComponent(version)}';
+  }
 
   static Map<String, Object?> _trackJson(LibraryPlaybackTrack track) {
     final episode = track.episode ?? parseVideoEpisode(track.title);
