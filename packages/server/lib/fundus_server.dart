@@ -1379,6 +1379,7 @@ final class FundusServerHandler {
     'tags': work.tags,
     if (work.contentSensitivity != null)
       'content_sensitivity': work.contentSensitivity,
+    if (work.contentStyle != null) 'content_style': work.contentStyle,
     'added_at': work.addedAt.toUtc().toIso8601String(),
     'last_listened_at': work.lastListenedAt?.toUtc().toIso8601String(),
     'has_cover': work.coverPath != null,

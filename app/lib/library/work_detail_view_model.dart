@@ -54,6 +54,7 @@ final class WorkDetailViewModel {
       progressTrackIndex: work.progressTrackIndex,
       progressFinished: work.progressFinished,
       contentSensitivity: work.contentSensitivity,
+      contentStyle: work.contentStyle,
       tags: work.tags,
       lastListenedAt: work.lastListenedAt,
       offline: offlineAvailable,

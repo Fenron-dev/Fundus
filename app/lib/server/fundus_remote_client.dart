@@ -250,6 +250,7 @@ final class FundusRemoteWork {
     this.progressTrackIndex,
     this.progressFinished = false,
     this.contentSensitivity,
+    this.contentStyle,
     this.tags = const [],
     this.addedAt,
     this.lastListenedAt,
@@ -275,6 +276,7 @@ final class FundusRemoteWork {
   final int? progressTrackIndex;
   final bool progressFinished;
   final String? contentSensitivity;
+  final String? contentStyle;
   final List<String> tags;
   final DateTime? addedAt;
   final DateTime? lastListenedAt;
@@ -670,6 +672,9 @@ final class FundusRemoteClient {
             progressFinished: (item['progress'] as Map?)?['finished'] == true,
             contentSensitivity: item['content_sensitivity'] is String
                 ? item['content_sensitivity'] as String
+                : null,
+            contentStyle: item['content_style'] is String
+                ? item['content_style'] as String
                 : null,
             tags: (item['tags'] as List? ?? const [])
                 .whereType<String>()

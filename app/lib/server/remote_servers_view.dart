@@ -4895,6 +4895,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         publishedYear: offline.publishedYear,
         fileCount: offline.tracks.length,
         providerMetadata: offline.providerMetadata,
+        contentSensitivity: offline.contentSensitivity,
+        contentStyle: offline.contentStyle,
       );
       await _showWork(
         server,
@@ -5190,6 +5192,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           publisher: offline.publisher,
           publishedYear: offline.publishedYear,
           fileCount: offline.tracks.length,
+          contentSensitivity: offline.contentSensitivity,
+          contentStyle: offline.contentStyle,
         );
         final tracks = [
           for (final track in offline.tracks)
@@ -5311,6 +5315,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       publisher: offline.publisher,
       publishedYear: offline.publishedYear,
       fileCount: offline.tracks.length,
+      contentSensitivity: offline.contentSensitivity,
+      contentStyle: offline.contentStyle,
     );
     final player =
         _remotePlayer ??

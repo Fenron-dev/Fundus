@@ -6156,6 +6156,11 @@ class _DetailPanelState extends State<_DetailPanel> {
     List<LibraryPlaybackTrack> files,
   ) {
     final readable = _readableDocumentFiles(files);
+    final video = _isVideoWorkKind(work.kind);
+    final videoFiles = files
+        .where(FundusVideoPlayerController.isVideoTrack)
+        .toList(growable: false);
+    final openable = video ? videoFiles : readable;
     final progress = widget.library?.loadProgress(work.id);
     final detail = WorkDetailViewModel.fromLibrary(work);
     return Column(
@@ -6187,12 +6192,17 @@ class _DetailPanelState extends State<_DetailPanel> {
                 onToggleFavorite: widget.library == null || _saving
                     ? null
                     : _toggleFavorite,
-                primaryAction: readable.isEmpty
+                primaryAction: openable.isEmpty
                     ? null
                     : WorkDetailHeaderAction(
-                        label: progress == null ? 'Lesen' : 'Fortsetzen',
-                        icon: Icons.menu_book_outlined,
-                        onPressed: () => _openDocumentWork(work, files),
+                        label: video
+                            ? (progress == null ? 'Abspielen' : 'Fortsetzen')
+                            : (progress == null ? 'Lesen' : 'Fortsetzen'),
+                        icon: video
+                            ? Icons.play_arrow
+                            : Icons.menu_book_outlined,
+                        onPressed: () =>
+                            _openDocumentWork(work, video ? videoFiles : files),
                       ),
                 secondaryAction:
                     widget.library?.listProgressRevisions(work.id).isEmpty ??
@@ -6271,11 +6281,22 @@ class _DetailPanelState extends State<_DetailPanel> {
                           : WorkContentAvailability.local,
                       onOpen: _openDocument,
                     ),
-            WorkDetailSection.chapters => _publicationChapters(
-              work,
-              readable,
-              progress,
-            ),
+            WorkDetailSection.chapters =>
+              video
+                  ? (videoFiles.isEmpty
+                        ? const Center(child: Text('Keine Folgen gefunden.'))
+                        : _DocumentFilesPanel(
+                            files: videoFiles,
+                            isVideo: true,
+                            progress: progress,
+                            availability: !work.available
+                                ? WorkContentAvailability.missing
+                                : work.offline
+                                ? WorkContentAvailability.offline
+                                : WorkContentAvailability.local,
+                            onOpen: _openDocument,
+                          ))
+                  : _publicationChapters(work, readable, progress),
             WorkDetailSection.notes => Column(
               children: [
                 Padding(

@@ -108,4 +108,62 @@ void main() {
       findsNothing,
     );
   });
+
+  testWidgets('shared header resolves anime and HHH video labels', (
+    tester,
+  ) async {
+    final anime = WorkDetailViewModel.fromRemote(
+      const FundusRemoteWork(
+        id: 'anime',
+        title: 'Anime-Serie',
+        authors: const [],
+        hasCover: false,
+        kind: 'tv',
+        contentStyle: 'anime',
+        fileCount: 1,
+      ),
+      serverId: 'server',
+      libraryId: 'library',
+    );
+    final hhh = WorkDetailViewModel.fromRemote(
+      const FundusRemoteWork(
+        id: 'hhh',
+        title: 'HHH-Serie',
+        authors: [],
+        hasCover: false,
+        kind: 'tv',
+        contentSensitivity: 'adult_explicit',
+        fileCount: 1,
+      ),
+      serverId: 'server',
+      libraryId: 'library',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: WorkDetailHeader(
+            detail: anime,
+            coverBuilder: (_) => const Icon(Icons.movie),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Anime-Serie'), findsNWidgets(2));
+    expect(find.widgetWithText(Chip, 'Anime-Serie'), findsOneWidget);
+    expect(find.text('Serie'), findsNothing);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: WorkDetailHeader(
+            detail: hhh,
+            coverBuilder: (_) => const Icon(Icons.movie),
+          ),
+        ),
+      ),
+    );
+    expect(find.widgetWithText(Chip, 'HHH-Serie'), findsOneWidget);
+  });
 }

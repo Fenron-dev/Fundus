@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'media_content_schema.dart';
 import 'work_detail_view_model.dart';
 
 @immutable
@@ -101,8 +102,21 @@ class WorkDetailHeader extends StatelessWidget {
           runSpacing: 6,
           children: [
             Chip(
-              avatar: Icon(_kindIcon(work.kind), size: 18),
-              label: Text(_kindLabel(work.kind)),
+              avatar: Icon(
+                _kindIcon(
+                  work.kind,
+                  contentStyle: work.contentStyle,
+                  contentSensitivity: work.contentSensitivity,
+                ),
+                size: 18,
+              ),
+              label: Text(
+                _kindLabel(
+                  work.kind,
+                  contentStyle: work.contentStyle,
+                  contentSensitivity: work.contentSensitivity,
+                ),
+              ),
             ),
             Chip(label: Text('${work.fileCount} Datei(en)')),
             if (work.status == 'incomplete')
@@ -145,27 +159,61 @@ class WorkDetailHeader extends StatelessWidget {
         label: Text(action.label),
       );
 
-  String _kindLabel(String kind) => switch (kind) {
-    'audiobook' => 'Hörbuch',
-    'ebook' => 'E-Book/PDF',
-    'webnovel' => 'Webnovel',
-    'manga' => 'Manga/Comic',
-    'image' => 'Bildsammlung',
-    'document' => 'Dokument',
-    'ttrpg_product' => 'TTRPG-Produkt',
-    'archive' => 'Archiv',
-    _ => kind,
-  };
+  String _kindLabel(
+    String kind, {
+    String? contentStyle,
+    String? contentSensitivity,
+  }) =>
+      FundusMediaTypeRegistry.forWork(
+        kind: kind,
+        contentStyle: contentStyle,
+        contentSensitivity: contentSensitivity,
+      )?.label ??
+      switch (kind) {
+        'audiobook' => 'Hörbuch',
+        'ebook' => 'E-Book/PDF',
+        'webnovel' => 'Webnovel',
+        'manga' => 'Manga/Comic',
+        'image' => 'Bildsammlung',
+        'document' => 'Dokument',
+        'ttrpg_product' => 'TTRPG-Produkt',
+        'archive' => 'Archiv',
+        _ => kind,
+      };
 
-  IconData _kindIcon(String kind) => switch (kind) {
-    'audiobook' => Icons.music_note,
-    'ebook' => Icons.menu_book_outlined,
-    'webnovel' => Icons.chrome_reader_mode_outlined,
-    'manga' => Icons.auto_stories_outlined,
-    'image' => Icons.image_outlined,
-    'document' => Icons.description_outlined,
-    'ttrpg_product' => Icons.casino_outlined,
-    'archive' => Icons.archive_outlined,
-    _ => Icons.insert_drive_file_outlined,
-  };
+  IconData _kindIcon(
+    String kind, {
+    String? contentStyle,
+    String? contentSensitivity,
+  }) {
+    final registryIcon = FundusMediaTypeRegistry.forWork(
+      kind: kind,
+      contentStyle: contentStyle,
+      contentSensitivity: contentSensitivity,
+    )?.iconKey;
+    if (registryIcon != null) {
+      return switch (registryIcon) {
+        'movie' || 'anime_movie' || 'explicit_movie' => Icons.movie_outlined,
+        'tv' || 'anime' || 'explicit' => Icons.live_tv_outlined,
+        'headphones' => Icons.headphones_outlined,
+        'book_open' || 'article' || 'menu_book' => Icons.menu_book_outlined,
+        'casino' => Icons.casino_outlined,
+        'image' => Icons.image_outlined,
+        'picture_as_pdf' => Icons.picture_as_pdf_outlined,
+        'archive' => Icons.archive_outlined,
+        _ => Icons.insert_drive_file_outlined,
+      };
+    }
+    return switch (kind) {
+      'audiobook' => Icons.music_note,
+      'ebook' => Icons.menu_book_outlined,
+      'webnovel' => Icons.chrome_reader_mode_outlined,
+      'manga' => Icons.auto_stories_outlined,
+      'image' => Icons.image_outlined,
+      'document' => Icons.description_outlined,
+      'ttrpg_product' => Icons.casino_outlined,
+      'archive' => Icons.archive_outlined,
+      _ => Icons.insert_drive_file_outlined,
+    };
+  }
 }

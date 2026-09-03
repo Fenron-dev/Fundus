@@ -52,6 +52,7 @@ final class FundusOfflineWork {
     this.coverPath,
     this.tags = const [],
     this.contentSensitivity,
+    this.contentStyle,
     this.providerMetadata = const {},
     this.progress,
     this.missingTrackTitles = const [],
@@ -79,6 +80,7 @@ final class FundusOfflineWork {
   final String? coverPath;
   final List<String> tags;
   final String? contentSensitivity;
+  final String? contentStyle;
   final Map<String, Object?> providerMetadata;
   final FundusRemoteProgress? progress;
   final List<String> missingTrackTitles;
@@ -282,6 +284,9 @@ final class FundusOfflineStore {
         ),
         contentSensitivity: value['content_sensitivity'] is String
             ? value['content_sensitivity'] as String
+            : null,
+        contentStyle: value['content_style'] is String
+            ? value['content_style'] as String
             : null,
         providerMetadata: value['provider_metadata'] is Map
             ? {
@@ -500,6 +505,9 @@ final class FundusOfflineStore {
       if (work.contentSensitivity != null) {
         value['content_sensitivity'] = work.contentSensitivity;
       }
+      if (work.contentStyle != null) {
+        value['content_style'] = work.contentStyle;
+      }
       if (work.providerMetadata.isNotEmpty) {
         value['provider_metadata'] = work.providerMetadata;
       }
@@ -678,6 +686,7 @@ final class FundusOfflineStore {
           'tags': work.tags,
           if (work.contentSensitivity != null)
             'content_sensitivity': work.contentSensitivity,
+          if (work.contentStyle != null) 'content_style': work.contentStyle,
           if (work.providerMetadata.isNotEmpty)
             'provider_metadata': work.providerMetadata,
           'downloaded_at': downloadedAt.toIso8601String(),
