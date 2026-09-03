@@ -240,6 +240,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     FundusOfflineWork? offlineWork,
     String? startFileId,
     Duration? startPosition,
+    bool autoPlay = true,
   }) {
     _workQueue = [work];
     _workQueueIndex = 0;
@@ -254,6 +255,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       offlineWork: offlineWork,
       startFileId: startFileId,
       startPosition: startPosition,
+      autoPlay: autoPlay,
     );
   }
 
@@ -336,6 +338,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     bool persistCurrent = true,
     String? startFileId,
     Duration? startPosition,
+    bool autoPlay = true,
   }) async {
     if (_closed) return;
     final openStarted = Stopwatch()..start();
@@ -607,7 +610,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         _position = await _seekAndVerify(resumePosition);
         notifyListeners();
       }
-      await _player.play();
+      if (autoPlay) await _player.play();
       if (resumePosition != null &&
           !useNativeVideoResume &&
           !(progress?.finished ?? false) &&

@@ -1618,6 +1618,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         offlineWork: offlineWork,
         startFileId: startFileId,
         startPosition: startPosition,
+        // Let the fullscreen route attach the native video surface before
+        // starting a resumed stream. Starting beforehand can leave audio
+        // running with a black/stale video texture.
+        autoPlay: false,
       );
     } else {
       final result = await _runWithReconnect(
@@ -1630,14 +1634,14 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         work,
         startFileId: startFileId,
         startPosition: startPosition,
+        autoPlay: false,
       );
     }
     if (mounted) {
-      // Pause the already-opened remote player while the fullscreen route
-      // attaches its native video texture. Otherwise the decoder can advance
-      // (or render audio only) before the surface exists.
+      // The controller was opened paused so the route can attach its native
+      // video surface before playback begins. Capture the restored position;
+      // the shared route performs the final seek/prime sequence.
       final initialPosition = player.position;
-      await player.player.pause();
       await showFundusVideoPlayerForPlayer(
         context,
         player: player.player,
