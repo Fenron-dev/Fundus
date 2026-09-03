@@ -476,6 +476,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       final result = await _runWithReconnect(
         server,
         (active) => _client.libraries(active),
+        retryNotFound: true,
       );
       final libraries = result.value;
       await _store.rememberLibraries(result.server, libraries);
@@ -544,6 +545,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           collections: await _client.collections(active, library.id),
           views: await _savedViewStore.load(active.id, library.id),
         ),
+        retryNotFound: true,
       );
       final activeServer = result.server;
       final works = _visibleWorks(result.value.works);
@@ -3710,16 +3712,20 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
 
   Future<({FundusRemoteServer server, T value})> _runWithReconnect<T>(
     FundusRemoteServer server,
-    Future<T> Function(FundusRemoteServer server) operation,
-  ) async {
+    Future<T> Function(FundusRemoteServer server) operation, {
+    bool retryNotFound = false,
+  }) async {
     try {
       final value = await operation(server);
       _setServerOnline(true);
       return (server: server, value: value);
     } on FundusRemoteRequestException catch (error) {
-      // Relocation can only help transport/server failures, never a valid 4xx
-      // response such as a permanently missing cover.
-      if (error.statusCode >= 400 && error.statusCode < 500) {
+      // Relocation can only help transport/server failures. Callers may opt
+      // into retrying 404 for reconnect-sensitive catalog probes; permanent
+      // 4xx responses remain visible immediately by default.
+      if (error.statusCode >= 400 &&
+          error.statusCode < 500 &&
+          !(retryNotFound && error.statusCode == HttpStatus.notFound)) {
         if (error.statusCode == HttpStatus.unauthorized ||
             error.statusCode == HttpStatus.forbidden) {
           if (mounted) setState(() => _authorizationRequired = true);
@@ -3754,6 +3760,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       final result = await _runWithReconnect(
         selected,
         (active) => _client.libraries(active),
+        retryNotFound: true,
       );
       if (mounted && result.server.baseUri != selected.baseUri) {
         setState(() => _selectedServer = result.server);
