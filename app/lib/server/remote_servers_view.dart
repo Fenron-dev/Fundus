@@ -1528,11 +1528,13 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   );
 
   Widget _remoteCollectionsView(FundusRemoteLibrary library) {
+    final server = _selectedServer;
     final visibleWorkIds = _works.map((work) => work.id).toSet();
     final collections = _collections
         .where(
           (collection) =>
               collection.isSmart ||
+              collection.workIds.isEmpty ||
               collection.workIds.any(visibleWorkIds.contains),
         )
         .toList(growable: false);
@@ -1550,6 +1552,13 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           ),
           title: Text(library.name),
           subtitle: Text('${collections.length} Sammlung(en)'),
+          trailing: IconButton(
+            tooltip: 'Neue Sammlung',
+            icon: const Icon(Icons.create_new_folder_outlined),
+            onPressed: server == null
+                ? null
+                : () => _editRemoteCollection(library),
+          ),
         ),
         _librarySectionSelector(),
         if (collections.isEmpty)
@@ -1577,7 +1586,38 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                     ? 'Smart-Sammlung'
                     : '${collection.workIds.where(visibleWorkIds.contains).length} Werk(e)',
               ),
-              trailing: const Icon(Icons.chevron_right),
+              trailing: Wrap(
+                spacing: 2,
+                children: [
+                  IconButton(
+                    tooltip: 'Sammlung bearbeiten',
+                    icon: const Icon(Icons.edit_outlined),
+                    onPressed: server == null
+                        ? null
+                        : () => _editRemoteCollection(
+                            library,
+                            collection: collection,
+                          ),
+                  ),
+                  IconButton(
+                    tooltip: 'Sammlung löschen',
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: server == null
+                        ? null
+                        : () => _deleteRemoteCollection(library, collection),
+                  ),
+                  IconButton(
+                    tooltip: 'Sammlung öffnen',
+                    icon: const Icon(Icons.chevron_right),
+                    onPressed: () => setState(() {
+                      _librarySection = _RemoteLibrarySection.media;
+                      _selectedCollectionId = collection.id;
+                      _selectedGroup = null;
+                      _selectedCredit = null;
+                    }),
+                  ),
+                ],
+              ),
               onTap: () => setState(() {
                 _librarySection = _RemoteLibrarySection.media;
                 _selectedCollectionId = collection.id;
@@ -1588,6 +1628,226 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           ),
       ],
     );
+  }
+
+  Future<void> _editRemoteCollection(
+    FundusRemoteLibrary library, {
+    FundusRemoteCollection? collection,
+  }) async {
+    final server = _selectedServer;
+    if (server == null || !mounted) return;
+    final controller = TextEditingController(text: collection?.name ?? '');
+    final selected = {...?collection?.workIds};
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(
+            collection == null
+                ? 'Neue Sammlung'
+                : 'Sammlung „${collection.name}“ bearbeiten',
+          ),
+          content: SizedBox(
+            width: 620,
+            height: 520,
+            child: Column(
+              children: [
+                TextField(
+                  controller: controller,
+                  autofocus: collection == null,
+                  maxLength: 200,
+                  decoration: const InputDecoration(
+                    labelText: 'Name',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    collection?.isSmart == true
+                        ? 'Smart-Sammlungen werden über ihre Regeln gesteuert.'
+                        : 'Werke in der Sammlung',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Expanded(
+                  child: collection?.isSmart == true
+                      ? const Center(
+                          child: Text('Die Regeln bleiben unverändert.'),
+                        )
+                      : ListView.builder(
+                          itemCount: _works.length,
+                          itemBuilder: (context, index) {
+                            final work = _works[index];
+                            return CheckboxListTile(
+                              dense: true,
+                              value: selected.contains(work.id),
+                              title: Text(work.title),
+                              subtitle: Text(work.kind),
+                              onChanged: (value) => setDialogState(() {
+                                if (value == true) {
+                                  selected.add(work.id);
+                                } else {
+                                  selected.remove(work.id);
+                                }
+                              }),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(collection == null ? 'Anlegen' : 'Speichern'),
+            ),
+          ],
+        ),
+      ),
+    );
+    final name = controller.text.trim();
+    controller.dispose();
+    if (result != true || name.isEmpty || !mounted) return;
+    try {
+      final saved = collection == null
+          ? await _runWithReconnect(
+              server,
+              (active) => _client.createCollection(
+                active,
+                libraryId: library.id,
+                name: name,
+                workIds: selected.toList(),
+              ),
+            )
+          : await _runWithReconnect(
+              server,
+              (active) => _client.saveCollection(
+                active,
+                libraryId: library.id,
+                collection: collection,
+                name: name,
+                kind: collection.kind,
+                rules: collection.rules,
+                parentId: collection.parentId,
+                workIds: collection.isSmart
+                    ? collection.workIds
+                    : selected.toList(),
+              ),
+            );
+      if (!mounted) return;
+      setState(() {
+        _selectedServer = saved.server;
+        _collections = [
+          ..._collections.where((item) => item.id != saved.value.id),
+          saved.value,
+        ];
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            collection == null ? 'Sammlung angelegt.' : 'Sammlung gespeichert.',
+          ),
+        ),
+      );
+    } on FundusRemoteCollectionConflict catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _collections = [
+          ..._collections.where((item) => item.id != error.current.id),
+          error.current,
+        ];
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Die Sammlung wurde auf einem anderen Gerät geändert. Sie wurde neu geladen.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Sammlung konnte nicht gespeichert werden: $error'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _deleteRemoteCollection(
+    FundusRemoteLibrary library,
+    FundusRemoteCollection collection,
+  ) async {
+    final server = _selectedServer;
+    if (server == null || !mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sammlung löschen?'),
+        content: Text('„${collection.name}“ wird auf dem Server gelöscht.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Löschen'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      final result = await _runWithReconnect(
+        server,
+        (active) => _client.deleteCollection(
+          active,
+          libraryId: library.id,
+          collection: collection,
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        _selectedServer = result.server;
+        _collections = _collections
+            .where((item) => item.id != collection.id)
+            .toList(growable: false);
+        if (_selectedCollectionId == collection.id) {
+          _selectedCollectionId = null;
+        }
+      });
+    } on FundusRemoteCollectionConflict catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _collections = [
+          ..._collections.where((item) => item.id != error.current.id),
+          error.current,
+        ];
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Die Sammlung wurde auf einem anderen Gerät geändert. Sie wurde neu geladen.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Sammlung konnte nicht gelöscht werden: $error'),
+        ),
+      );
+    }
   }
 
   Widget _remotePlaylistsView(FundusRemoteLibrary library) {

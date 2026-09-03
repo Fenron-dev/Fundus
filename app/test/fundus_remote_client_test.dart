@@ -78,16 +78,36 @@ void main() {
     final works = await client.works(profile, libraries.single.id);
     expect(works.single.kind, 'audiobook');
     final localWork = library.listWorks().single;
-    library.saveCollection(
-      name: 'Test-Sammlung',
+    library.saveCollection(name: 'Test-Sammlung', workIds: [localWork.id]);
+    final collections = await client.collections(profile, libraries.single.id);
+    expect(collections.single.name, 'Test-Sammlung');
+    expect(collections.single.workIds, [localWork.id]);
+    final createdCollection = await client.createCollection(
+      profile,
+      libraryId: libraries.single.id,
+      name: 'Client-Sammlung',
       workIds: [localWork.id],
     );
-    final collections = await client.collections(
+    expect(createdCollection.revision, 1);
+    final renamedCollection = await client.saveCollection(
+      profile,
+      libraryId: libraries.single.id,
+      collection: createdCollection,
+      name: 'Client-Sammlung (bearbeitet)',
+      workIds: [localWork.id],
+    );
+    expect(renamedCollection.name, 'Client-Sammlung (bearbeitet)');
+    expect(renamedCollection.revision, 2);
+    await client.deleteCollection(
+      profile,
+      libraryId: libraries.single.id,
+      collection: renamedCollection,
+    );
+    final remainingCollections = await client.collections(
       profile,
       libraries.single.id,
     );
-    expect(collections.single.name, 'Test-Sammlung');
-    expect(collections.single.workIds, [localWork.id]);
+    expect(remainingCollections.single.name, 'Test-Sammlung');
     final detail = await client.work(
       profile,
       libraries.single.id,

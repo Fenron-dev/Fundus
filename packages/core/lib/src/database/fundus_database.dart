@@ -114,7 +114,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 7;
+  static const schemaVersion = 8;
   static const supportedContentSensitivities = {
     'general',
     'mature',
@@ -1337,24 +1337,40 @@ final class FundusDatabase {
     final id = collectionId ?? FundusId.generate();
     return transaction(() {
       final previous = _database.select(
-        'SELECT created_at FROM collections WHERE id = ?',
+        'SELECT created_at, revision FROM collections WHERE id = ?',
         [id],
       );
+      final now = DateTime.now().millisecondsSinceEpoch;
       final createdAt = previous.isEmpty
-          ? DateTime.now().millisecondsSinceEpoch
+          ? now
           : previous.first['created_at'] as int;
+      final revision = previous.isEmpty
+          ? 1
+          : (previous.first['revision'] as int? ?? 1) + 1;
       final encodedRules = rules == null ? null : jsonEncode(rules);
       _database.execute(
         '''
-        INSERT INTO collections (id, name, parent_id, kind, rules_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO collections
+          (id, name, parent_id, kind, rules_json, revision, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           parent_id = excluded.parent_id,
           kind = excluded.kind,
-          rules_json = excluded.rules_json
+          rules_json = excluded.rules_json,
+          revision = excluded.revision,
+          updated_at = excluded.updated_at
         ''',
-        [id, normalizedName, parentId, kind, encodedRules, createdAt],
+        [
+          id,
+          normalizedName,
+          parentId,
+          kind,
+          encodedRules,
+          revision,
+          createdAt,
+          now,
+        ],
       );
       _database.execute(
         'DELETE FROM collection_works WHERE collection_id = ?',
@@ -1395,6 +1411,10 @@ final class FundusDatabase {
       rules: rules,
       workIds: items.map((item) => item['work_id'] as String).toList(),
       createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
+      revision: row['revision'] as int? ?? 1,
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(
+        (row['updated_at'] as int?) ?? (row['created_at'] as int),
+      ),
     );
   }
 
@@ -2121,6 +2141,7 @@ final class FundusDatabase {
     if (_database.userVersion == 4 && !readOnly) _migrateToVersion5();
     if (_database.userVersion == 5 && !readOnly) _migrateToVersion6();
     if (_database.userVersion == 6 && !readOnly) _migrateToVersion7();
+    if (_database.userVersion == 7 && !readOnly) _migrateToVersion8();
   }
 
   void _migrateToVersion1() {
@@ -2248,6 +2269,32 @@ final class FundusDatabase {
         );
       }
       _database.userVersion = 7;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  void _migrateToVersion8() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      if (tableExists('collections')) {
+        if (!columnExists('collections', 'revision')) {
+          _database.execute(
+            'ALTER TABLE collections ADD COLUMN revision INTEGER NOT NULL DEFAULT 1',
+          );
+        }
+        if (!columnExists('collections', 'updated_at')) {
+          _database.execute(
+            'ALTER TABLE collections ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0',
+          );
+          _database.execute(
+            'UPDATE collections SET updated_at = created_at WHERE updated_at = 0',
+          );
+        }
+      }
+      _database.userVersion = 8;
       _database.execute('COMMIT');
     } catch (_) {
       _database.execute('ROLLBACK');
@@ -2416,7 +2463,9 @@ const _version1Statements = <String>[
     parent_id TEXT REFERENCES collections(id) ON DELETE SET NULL,
     kind TEXT NOT NULL DEFAULT 'manual',
     rules_json TEXT,
-    created_at INTEGER NOT NULL
+    revision INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
   )
   ''',
   '''

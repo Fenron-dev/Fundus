@@ -12,7 +12,9 @@ final class LibraryCollection {
     this.rules,
     required this.workIds,
     required this.createdAt,
-  });
+    this.revision = 1,
+    DateTime? updatedAt,
+  }) : updatedAt = updatedAt ?? createdAt;
 
   final String id;
   final String name;
@@ -21,6 +23,8 @@ final class LibraryCollection {
   final Map<String, Object?>? rules;
   final List<String> workIds;
   final DateTime createdAt;
+  final int revision;
+  final DateTime updatedAt;
 
   bool get isSmart => kind == 'smart';
 }

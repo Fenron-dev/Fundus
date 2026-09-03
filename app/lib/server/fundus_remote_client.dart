@@ -210,6 +210,8 @@ final class FundusRemoteCollection {
     required this.kind,
     required this.workIds,
     required this.createdAt,
+    required this.revision,
+    required this.updatedAt,
     this.parentId,
     this.rules,
   });
@@ -221,6 +223,8 @@ final class FundusRemoteCollection {
   final Map<String, Object?>? rules;
   final List<String> workIds;
   final DateTime createdAt;
+  final int revision;
+  final DateTime updatedAt;
 
   bool get isSmart => kind == 'smart';
 }
@@ -233,6 +237,16 @@ final class FundusRemotePlaylistConflict implements Exception {
   @override
   String toString() =>
       'Die Playlist wurde auf einem anderen Gerät geändert (Revision ${current.revision}).';
+}
+
+final class FundusRemoteCollectionConflict implements Exception {
+  const FundusRemoteCollectionConflict(this.current);
+
+  final FundusRemoteCollection current;
+
+  @override
+  String toString() =>
+      'Die Sammlung wurde auf einem anderen Gerät geändert (Revision ${current.revision}).';
 }
 
 final class FundusRemoteRequestException extends HttpException {
@@ -746,6 +760,110 @@ final class FundusRemoteClient {
         .toList(growable: false);
   }
 
+  Future<FundusRemoteCollection> createCollection(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String name,
+    String? parentId,
+    String kind = 'manual',
+    Map<String, Object?>? rules,
+    List<String> workIds = const [],
+  }) => _writeCollection(
+    server,
+    '/v1/libraries/$libraryId/collections',
+    method: 'POST',
+    body: {
+      'name': name,
+      'parent_id': parentId,
+      'kind': kind,
+      'rules': rules,
+      'work_ids': workIds,
+    },
+  );
+
+  Future<FundusRemoteCollection> saveCollection(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required FundusRemoteCollection collection,
+    required String name,
+    String? parentId,
+    String kind = 'manual',
+    Map<String, Object?>? rules,
+    List<String> workIds = const [],
+  }) => _writeCollection(
+    server,
+    '/v1/libraries/$libraryId/collections/${Uri.encodeComponent(collection.id)}',
+    method: 'PUT',
+    body: {
+      'name': name,
+      'parent_id': parentId,
+      'kind': kind,
+      'rules': rules,
+      'work_ids': workIds,
+      'expected_revision': collection.revision,
+    },
+  );
+
+  Future<void> deleteCollection(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required FundusRemoteCollection collection,
+  }) async {
+    final path =
+        '/v1/libraries/$libraryId/collections/${Uri.encodeComponent(collection.id)}'
+        '?expected_revision=${collection.revision}';
+    try {
+      await _request(
+        server.baseUri.resolve(path),
+        fingerprint: server.certificateFingerprint,
+        token: server.token,
+        method: 'DELETE',
+      );
+    } on FundusRemoteRequestException catch (error) {
+      _throwCollectionConflict(error);
+      rethrow;
+    }
+  }
+
+  Future<FundusRemoteCollection> _writeCollection(
+    FundusRemoteServer server,
+    String path, {
+    required String method,
+    required Map<String, Object?> body,
+  }) async {
+    try {
+      final bytes = await _request(
+        server.baseUri.resolve(path),
+        fingerprint: server.certificateFingerprint,
+        token: server.token,
+        method: method,
+        body: jsonEncode(body),
+      );
+      final collection = _collectionFromJson(jsonDecode(utf8.decode(bytes)));
+      if (collection == null) {
+        throw const HttpException('Ungültige Sammlungs-Antwort.');
+      }
+      return collection;
+    } on FundusRemoteRequestException catch (error) {
+      _throwCollectionConflict(error);
+      rethrow;
+    }
+  }
+
+  static Never? _throwCollectionConflict(FundusRemoteRequestException error) {
+    if (error.statusCode != HttpStatus.conflict) return null;
+    try {
+      final value = jsonDecode(error.responseBody);
+      final collection = value is Map
+          ? _collectionFromJson(value['collection'])
+          : null;
+      if (collection != null) throw FundusRemoteCollectionConflict(collection);
+    } on FormatException {
+      return null;
+    }
+    return null;
+  }
+
   static FundusRemoteCollection? _collectionFromJson(Object? value) {
     if (value is! Map || value['id'] is! String || value['name'] is! String) {
       return null;
@@ -762,8 +880,12 @@ final class FundusRemoteClient {
       workIds: (value['work_ids'] as List? ?? const [])
           .whereType<String>()
           .toList(growable: false),
+      revision: value['revision'] is int ? value['revision'] as int : 1,
       createdAt:
           DateTime.tryParse('${value['created_at'] ?? ''}') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      updatedAt:
+          DateTime.tryParse('${value['updated_at'] ?? ''}') ??
           DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
     );
   }

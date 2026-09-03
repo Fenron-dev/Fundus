@@ -192,6 +192,7 @@ void main() {
     expect(body['capabilities'], contains('comic_pages'));
     expect(body['capabilities'], contains('chapters'));
     expect(body['capabilities'], contains('playlists'));
+    expect(body['capabilities'], contains('collection_revisions'));
     expect(body['capabilities'], contains('playlist_revisions'));
     expect(body['capabilities'], contains('playback_session_revisions'));
     expect(body['capabilities'], contains('progress_history'));
@@ -678,6 +679,63 @@ void main() {
     );
     final restricted = await _json(response);
     expect(restricted['collections'], isEmpty);
+  });
+
+  test('syncs collections with revision conflict protection', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final path = '/v1/libraries/$libraryId/collections';
+    final createdResponse = await _post(
+      server,
+      path,
+      jsonEncode({
+        'name': 'Unterwegs',
+        'work_ids': [work.id],
+      }),
+    );
+    final created = await _json(createdResponse);
+    expect(createdResponse.statusCode, HttpStatus.created);
+    expect(created['revision'], 1);
+    expect(created['work_ids'], [work.id]);
+    final collectionId = created['id']! as String;
+
+    final updatedResponse = await _put(
+      server,
+      '$path/$collectionId',
+      jsonEncode({
+        'name': 'Unterwegs aktualisiert',
+        'work_ids': [work.id],
+        'expected_revision': 1,
+      }),
+    );
+    final updated = await _json(updatedResponse);
+    expect(updated['revision'], 2);
+    expect(updated['name'], 'Unterwegs aktualisiert');
+
+    final conflictResponse = await _put(
+      server,
+      '$path/$collectionId',
+      jsonEncode({
+        'name': 'Veraltete Änderung',
+        'work_ids': [work.id],
+        'expected_revision': 1,
+      }),
+    );
+    final conflict = await _json(conflictResponse);
+    expect(conflictResponse.statusCode, HttpStatus.conflict);
+    expect(conflict['error'], 'collection_conflict');
+    expect((conflict['collection']! as Map<String, dynamic>)['revision'], 2);
+
+    final deleteConflict = await _delete(
+      server,
+      '$path/$collectionId?expected_revision=1',
+    );
+    expect(deleteConflict.statusCode, HttpStatus.conflict);
+    final deleted = await _delete(
+      server,
+      '$path/$collectionId?expected_revision=2',
+    );
+    expect(deleted.statusCode, HttpStatus.noContent);
+    expect((await _json(await _get(server, path)))['collections'], isEmpty);
   });
 
   test('syncs a complete playback session with conflict protection', () async {

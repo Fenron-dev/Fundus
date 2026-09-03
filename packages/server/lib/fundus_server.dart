@@ -141,6 +141,15 @@ final class FundusServerHandler {
         _deletePlaylist,
       )
       ..get('/v1/libraries/<libraryId>/collections', _collections)
+      ..post('/v1/libraries/<libraryId>/collections', _createCollection)
+      ..put(
+        '/v1/libraries/<libraryId>/collections/<collectionId>',
+        _saveCollection,
+      )
+      ..delete(
+        '/v1/libraries/<libraryId>/collections/<collectionId>',
+        _deleteCollection,
+      )
       ..get('/v1/libraries/<libraryId>/playback-session', _playbackSession)
       ..put('/v1/libraries/<libraryId>/playback-session', _savePlaybackSession)
       ..get('/v1/libraries/<libraryId>/progress/<workId>', _progress)
@@ -285,6 +294,7 @@ final class FundusServerHandler {
       'progress_history',
       'playlists',
       'collections',
+      'collection_revisions',
       'playlist_revisions',
       'playback_session',
       'playback_session_revisions',
@@ -529,6 +539,128 @@ final class FundusServerHandler {
             _collectionJson(collection, workIds: collectionWorkIds),
       ],
     });
+  }
+
+  Future<Response> _createCollection(Request request, String libraryId) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    final decoded = await _readJson(request);
+    if (decoded == null) return _badRequest('invalid_json');
+    final values = _collectionValues(entry.library, decoded);
+    if (values == null) return _badRequest('invalid_collection');
+    if (!_canViewCollectionValues(request, entry, values)) {
+      return _badRequest('work_not_found');
+    }
+    if (!_canViewCollectionRules(request, values.rules)) {
+      return _badRequest('collection_not_allowed');
+    }
+    final collection = entry.library.saveCollection(
+      name: values.name,
+      parentId: values.parentId,
+      kind: values.kind,
+      rules: values.rules,
+      workIds: values.workIds,
+    );
+    return _json(_collectionJson(collection), statusCode: HttpStatus.created);
+  }
+
+  Future<Response> _saveCollection(
+    Request request,
+    String libraryId,
+    String collectionId,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    final current = entry.library.loadCollection(collectionId);
+    if (current == null) return _notFound('collection_not_found');
+    if (_collectionVisibility(
+          request,
+          entry,
+          current,
+          visibleWorkIds: {
+            for (final work in entry.works)
+              if (_canViewWork(request, work)) work.id,
+          },
+        ) ==
+        null) {
+      return _notFound('collection_not_found');
+    }
+    final decoded = await _readJson(request);
+    if (decoded == null) return _badRequest('invalid_json');
+    final expectedRevision = decoded['expected_revision'];
+    if (expectedRevision is! int || expectedRevision < 1) {
+      return _badRequest('invalid_collection_revision');
+    }
+    if (expectedRevision != current.revision) {
+      return _json({
+        'error': 'collection_conflict',
+        'collection': _collectionJson(current),
+      }, statusCode: HttpStatus.conflict);
+    }
+    final values = _collectionValues(entry.library, decoded);
+    if (values == null) return _badRequest('invalid_collection');
+    if (!_canViewCollectionValues(request, entry, values)) {
+      return _badRequest('work_not_found');
+    }
+    if (!_canViewCollectionRules(request, values.rules)) {
+      return _badRequest('collection_not_allowed');
+    }
+    final collection = entry.library.saveCollection(
+      collectionId: collectionId,
+      name: values.name,
+      parentId: values.parentId,
+      kind: values.kind,
+      rules: values.rules,
+      workIds: values.workIds,
+    );
+    return _json(_collectionJson(collection));
+  }
+
+  Response _deleteCollection(
+    Request request,
+    String libraryId,
+    String collectionId,
+  ) {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    final current = entry.library.loadCollection(collectionId);
+    if (current == null) return _notFound('collection_not_found');
+    final visibleIds = {
+      for (final work in entry.works)
+        if (_canViewWork(request, work)) work.id,
+    };
+    if (_collectionVisibility(
+          request,
+          entry,
+          current,
+          visibleWorkIds: visibleIds,
+        ) ==
+        null) {
+      return _notFound('collection_not_found');
+    }
+    final expectedRevision = int.tryParse(
+      request.url.queryParameters['expected_revision'] ?? '',
+    );
+    if (expectedRevision == null || expectedRevision < 1) {
+      return _badRequest('invalid_collection_revision');
+    }
+    if (expectedRevision != current.revision) {
+      return _json({
+        'error': 'collection_conflict',
+        'collection': _collectionJson(current),
+      }, statusCode: HttpStatus.conflict);
+    }
+    entry.library.deleteCollection(collectionId);
+    return Response(HttpStatus.noContent);
   }
 
   Response _playlist(Request request, String libraryId, String playlistId) {
@@ -816,6 +948,99 @@ final class FundusServerHandler {
       mediaType: normalizedMediaType,
       workIds: normalizedIds,
     );
+  }
+
+  static ({
+    String name,
+    String? parentId,
+    String kind,
+    Map<String, Object?>? rules,
+    List<String> workIds,
+  })?
+  _collectionValues(FundusLibrary library, Map<String, dynamic> decoded) {
+    final name = decoded['name'];
+    final parentId = decoded['parent_id'];
+    final kind = decoded['kind'] ?? 'manual';
+    final rules = decoded['rules'];
+    final workIds = decoded['work_ids'] ?? const <Object?>[];
+    if (name is! String ||
+        name.trim().isEmpty ||
+        name.trim().length > 200 ||
+        (parentId != null && parentId is! String) ||
+        (kind is! String || !const {'manual', 'smart'}.contains(kind)) ||
+        (rules != null && rules is! Map) ||
+        workIds is! List ||
+        workIds.any((value) => value is! String)) {
+      return null;
+    }
+    final normalizedParent = parentId is String && parentId.trim().isNotEmpty
+        ? parentId.trim()
+        : null;
+    if (normalizedParent != null &&
+        (library.loadCollection(normalizedParent) == null)) {
+      return null;
+    }
+    final normalizedIds = workIds.cast<String>();
+    if (normalizedIds.toSet().length != normalizedIds.length ||
+        normalizedIds.any((id) => _findWork(library, id) == null)) {
+      return null;
+    }
+    final normalizedRules = rules == null
+        ? null
+        : <String, Object?>{
+            for (final entry in (rules as Map).entries)
+              if (entry.key is String) entry.key as String: entry.value,
+          };
+    if (kind == 'smart' && normalizedRules == null) return null;
+    return (
+      name: name.trim(),
+      parentId: normalizedParent,
+      kind: kind,
+      rules: normalizedRules,
+      workIds: normalizedIds,
+    );
+  }
+
+  bool _canViewCollectionValues(
+    Request request,
+    SharedFundusLibrary entry,
+    ({
+      String name,
+      String? parentId,
+      String kind,
+      Map<String, Object?>? rules,
+      List<String> workIds,
+    })
+    values,
+  ) {
+    if (!_canViewWorkIds(request, entry, values.workIds)) return false;
+    if (values.parentId case final parentId?) {
+      final parent = entry.library.loadCollection(parentId);
+      if (parent == null ||
+          _collectionVisibility(
+                request,
+                entry,
+                parent,
+                visibleWorkIds: {
+                  for (final work in entry.works)
+                    if (_canViewWork(request, work)) work.id,
+                },
+              ) ==
+              null) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _canViewCollectionRules(Request request, Map<String, Object?>? rules) {
+    final sensitivities = rules?['sensitivities'];
+    final targetsAdult =
+        sensitivities is List &&
+        sensitivities.whereType<String>().any(
+          (value) => value == 'adult_explicit',
+        );
+    return !targetsAdult || _canViewAdult(request);
   }
 
   Response _progress(Request request, String libraryId, String workId) {
@@ -1375,9 +1600,10 @@ final class FundusServerHandler {
     final allowed = collection.workIds
         .where(visibleWorkIds.contains)
         .toList(growable: false);
-    // Do not expose an empty manual collection: it may otherwise reveal that
-    // hidden HHH works exist or preserve a sensitive collection name.
-    return allowed.isEmpty ? null : allowed;
+    // A genuinely empty manual collection is safe to expose and must remain
+    // usable as a container that can be filled later. Hide only collections
+    // whose non-empty membership became invisible through the HHH filter.
+    return allowed.isEmpty && collection.workIds.isNotEmpty ? null : allowed;
   }
 
   bool _canViewPlaybackSession(
@@ -1542,7 +1768,9 @@ final class FundusServerHandler {
     'kind': collection.kind,
     if (collection.rules != null) 'rules': collection.rules,
     'work_ids': (workIds ?? collection.workIds).toList(growable: false),
+    'revision': collection.revision,
     'created_at': collection.createdAt.toUtc().toIso8601String(),
+    'updated_at': collection.updatedAt.toUtc().toIso8601String(),
   };
 
   static Map<String, Object?> _playbackSessionJson(PlaybackSession session) => {

@@ -35,6 +35,7 @@ void main() {
       kind: 'manual',
       rules: {'genre': 'Science Fiction'},
     );
+    expect(collection.revision, 1);
     expect(database.listCollections().single.name, 'Star Wars');
     expect(database.loadCollection(collection.id)?.rules, {
       'genre': 'Science Fiction',
@@ -45,6 +46,7 @@ void main() {
       workIds: const [],
     );
     expect(renamed.id, collection.id);
+    expect(renamed.revision, 2);
     expect(
       database.loadCollection(collection.id)?.name,
       'Star Wars Collection',
@@ -145,5 +147,46 @@ void main() {
     addTearDown(migrated.close);
     expect(migrated.userVersion, FundusDatabase.schemaVersion);
     expect(migrated.columnExists('files', 'video_episode_json'), isTrue);
+  });
+
+  test('schema v7 is migrated with collection revisions', () async {
+    final directory = await Directory.systemTemp.createTemp('fundus-db-v7-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/index.db');
+    final legacy = sqlite3.open(file.path);
+    legacy.execute('''
+      CREATE TABLE collections (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        parent_id TEXT,
+        kind TEXT NOT NULL DEFAULT 'manual',
+        rules_json TEXT,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+    legacy.execute('''
+      INSERT INTO collections (id, name, created_at)
+      VALUES ('collection-1', 'Legacy', 1234)
+    ''');
+    legacy.execute('''
+      CREATE TABLE collection_works (
+        collection_id TEXT NOT NULL,
+        work_id TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+    legacy.userVersion = 7;
+    legacy.close();
+
+    final migrated = FundusDatabase.openFile(file);
+    addTearDown(migrated.close);
+    expect(migrated.userVersion, FundusDatabase.schemaVersion);
+    expect(migrated.columnExists('collections', 'revision'), isTrue);
+    expect(migrated.columnExists('collections', 'updated_at'), isTrue);
+    expect(migrated.loadCollection('collection-1')?.revision, 1);
+    expect(
+      migrated.loadCollection('collection-1')?.updatedAt,
+      DateTime.fromMillisecondsSinceEpoch(1234),
+    );
   });
 }
