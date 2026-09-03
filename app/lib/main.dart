@@ -31,6 +31,7 @@ import 'library/work_content_list.dart';
 import 'library/work_annotation_list.dart';
 import 'library/fundus_breadcrumbs.dart';
 import 'library/fundus_library_catalog.dart';
+import 'library/library_view_preferences.dart';
 import 'library/collection_rules.dart';
 import 'library/media_content_schema.dart';
 import 'library/video_player_page.dart';
@@ -1413,6 +1414,7 @@ class LibraryShell extends StatefulWidget {
 }
 
 class _LibraryShellState extends State<LibraryShell> {
+  final _viewPreferencesStore = LibraryViewPreferencesStore();
   final _searchController = SearchController();
   _LibrarySection _section = _LibrarySection.library;
   int _selectedIndex = 0;
@@ -1439,11 +1441,14 @@ class _LibraryShellState extends State<LibraryShell> {
   List<LibrarySavedView> _savedViews = const [];
   String? _lastTappedWorkId;
   DateTime? _lastWorkTapAt;
+  bool _viewPreferencesLoaded = false;
+  Timer? _viewPreferencesSaveTimer;
 
   @override
   void initState() {
     super.initState();
     unawaited(_loadSavedViews());
+    unawaited(_loadViewPreferences());
   }
 
   @override
@@ -1454,8 +1459,53 @@ class _LibraryShellState extends State<LibraryShell> {
 
   @override
   void dispose() {
+    _viewPreferencesSaveTimer?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadViewPreferences() async {
+    final preferences = await _viewPreferencesStore.load();
+    if (!mounted || _viewPreferencesLoaded) return;
+    setState(() {
+      _layout = switch (preferences.layout) {
+        'table' => _LibraryLayout.table,
+        'folder' => _LibraryLayout.folder,
+        _ => _LibraryLayout.grid,
+      };
+      _gridTileExtent = preferences.gridTileExtent;
+      _sidebarCollapsed = preferences.sidebarCollapsed;
+      _detailPaneVisible = preferences.detailPaneVisible;
+      _leftPaneWidth = preferences.leftPaneWidth;
+      _detailPaneWidth = preferences.detailPaneWidth;
+      _viewPreferencesLoaded = true;
+    });
+  }
+
+  void _saveViewPreferences() {
+    if (!_viewPreferencesLoaded) return;
+    final preferences = LibraryViewPreferences(
+      layout: switch (_layout) {
+        _LibraryLayout.table => 'table',
+        _LibraryLayout.folder => 'folder',
+        _ => 'grid',
+      },
+      gridTileExtent: _gridTileExtent,
+      sidebarCollapsed: _sidebarCollapsed,
+      detailPaneVisible: _detailPaneVisible,
+      leftPaneWidth: _leftPaneWidth,
+      detailPaneWidth: _detailPaneWidth,
+    );
+    unawaited(_viewPreferencesStore.save(preferences));
+  }
+
+  void _scheduleViewPreferencesSave() {
+    if (!_viewPreferencesLoaded) return;
+    _viewPreferencesSaveTimer?.cancel();
+    _viewPreferencesSaveTimer = Timer(
+      const Duration(milliseconds: 250),
+      _saveViewPreferences,
+    );
   }
 
   Map<String, FundusOfflineWork> get _offlineBySummaryId => {
@@ -1711,6 +1761,7 @@ class _LibraryShellState extends State<LibraryShell> {
               onToggleDetails: () => setState(() {
                 _detailPaneVisible = !_detailPaneVisible;
                 if (_detailPaneVisible) _inlineDetailWork = null;
+                _scheduleViewPreferencesSave();
               }),
             ),
             Expanded(
@@ -1722,9 +1773,10 @@ class _LibraryShellState extends State<LibraryShell> {
                       selectedSection: _section,
                       showHhh: widget.showHhh,
                       collapsed: _sidebarCollapsed,
-                      onToggleCollapsed: () => setState(
-                        () => _sidebarCollapsed = !_sidebarCollapsed,
-                      ),
+                      onToggleCollapsed: () => setState(() {
+                        _sidebarCollapsed = !_sidebarCollapsed;
+                        _scheduleViewPreferencesSave();
+                      }),
                       onSelectSection: (section) => setState(() {
                         _section = section;
                         if (section.isDocumentSection) {
@@ -1741,15 +1793,14 @@ class _LibraryShellState extends State<LibraryShell> {
                     ),
                   ),
                   _ResizeHandle(
-                    onDrag: (delta) => setState(
-                      () => _leftPaneWidth = (_leftPaneWidth + delta).clamp(
-                        180,
-                        420,
-                      ),
-                    ),
+                    onDrag: (delta) => setState(() {
+                      _leftPaneWidth = (_leftPaneWidth + delta).clamp(180, 420);
+                      _scheduleViewPreferencesSave();
+                    }),
                     onReset: () => setState(() {
                       _leftPaneWidth = 236;
                       _sidebarCollapsed = false;
+                      _scheduleViewPreferencesSave();
                     }),
                   ),
                   Expanded(
@@ -1774,11 +1825,17 @@ class _LibraryShellState extends State<LibraryShell> {
                       (_section == _LibrarySection.library ||
                           _section.isDocumentSection)) ...[
                     _ResizeHandle(
-                      onDrag: (delta) => setState(
-                        () => _detailPaneWidth = (_detailPaneWidth - delta)
-                            .clamp(420, 760),
-                      ),
-                      onReset: () => setState(() => _detailPaneWidth = 480),
+                      onDrag: (delta) => setState(() {
+                        _detailPaneWidth = (_detailPaneWidth - delta).clamp(
+                          420,
+                          760,
+                        );
+                        _scheduleViewPreferencesSave();
+                      }),
+                      onReset: () => setState(() {
+                        _detailPaneWidth = 480;
+                        _scheduleViewPreferencesSave();
+                      }),
                     ),
                     SizedBox(
                       width: _detailPaneWidth,
@@ -2867,7 +2924,10 @@ class _LibraryShellState extends State<LibraryShell> {
             ),
           ],
           selected: {_layout},
-          onSelectionChanged: (value) => setState(() => _layout = value.single),
+          onSelectionChanged: (value) => setState(() {
+            _layout = value.single;
+            _scheduleViewPreferencesSave();
+          }),
         ),
         IconButton(
           onPressed: () => _showGridSizeDialog(),
@@ -2919,7 +2979,7 @@ class _LibraryShellState extends State<LibraryShell> {
                   onChanged: (next) => setDialogState(() => value = next),
                 ),
                 const Text(
-                  'Die Einstellung gilt für die Kachelansicht dieser Sitzung. Eine dauerhafte Gerätepräferenz wird im Ansichtsprofil gespeichert.',
+                  'Die Einstellung wird als Gerätepräferenz für lokale, Remote- und Offline-Bibliotheken gespeichert.',
                 ),
               ],
             ),
@@ -2938,7 +2998,10 @@ class _LibraryShellState extends State<LibraryShell> {
       ),
     );
     if (!mounted || result == null) return;
-    setState(() => _gridTileExtent = result);
+    setState(() {
+      _gridTileExtent = result;
+      _scheduleViewPreferencesSave();
+    });
   }
 
   Future<void> _openBulkEdit() async {
