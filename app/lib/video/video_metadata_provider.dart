@@ -82,6 +82,24 @@ query ($search: String!, $perPage: Int!) {
       description(asHtml: false)
       coverImage { large medium }
       bannerImage
+      trailer { id site }
+      characters(sort: ROLE, perPage: 8) {
+        edges {
+          role
+          node { id name { full } image { medium } }
+          voiceActors(language: JAPANESE) {
+            id
+            name { full }
+            image { medium }
+          }
+        }
+      }
+      staff(sort: RELEVANCE, perPage: 8) {
+        edges {
+          role
+          node { id name { full } image { medium } }
+        }
+      }
       genres
       synonyms
     }
@@ -163,6 +181,11 @@ query ($search: String!, $perPage: Int!) {
     }..remove(title);
     final format = value['format'];
     final isAdult = value['isAdult'] == true;
+    final credits = _credits(value);
+    final trailer = value['trailer'];
+    final trailerUrl = trailer is Map && trailer['site'] == 'youtube'
+        ? 'https://www.youtube.com/watch?v=${trailer['id']}'
+        : null;
     return VideoProviderCandidate(
       provider: provider,
       providerId: '${id.round()}',
@@ -185,8 +208,60 @@ query ($search: String!, $perPage: Int!) {
           _stringFromMap(value['coverImage'], 'large') ??
           _stringFromMap(value['coverImage'], 'medium'),
       backdropUrl: value['bannerImage'] as String?,
+      credits: credits,
+      trailerUrl: trailerUrl,
       externalIds: {'anilist': '${id.round()}'},
     );
+  }
+
+  List<VideoProviderCredit> _credits(Map value) {
+    final result = <VideoProviderCredit>[];
+    final seen = <String>{};
+    void add(Object? raw, {String? role}) {
+      if (raw is! Map) return;
+      final name = _stringFromMap(raw['name'], 'full')?.trim();
+      if (name == null || name.isEmpty || !seen.add(name.toLowerCase())) {
+        return;
+      }
+      final id = raw['id'];
+      result.add(
+        VideoProviderCredit(
+          name: name,
+          role: role,
+          providerId: id is num ? '${id.round()}' : null,
+          imageUrl: _stringFromMap(raw['image'], 'medium'),
+        ),
+      );
+    }
+
+    final characters = value['characters'];
+    if (characters is Map && characters['edges'] is List) {
+      for (final edge in characters['edges'] as List) {
+        if (edge is! Map) continue;
+        final character = edge['node'];
+        final characterName = _stringFromMap(character?['name'], 'full');
+        final voiceActors = edge['voiceActors'];
+        if (voiceActors is List && voiceActors.isNotEmpty) {
+          for (final actor in voiceActors) {
+            add(
+              actor,
+              role: characterName == null
+                  ? 'Stimme'
+                  : '$characterName · Stimme',
+            );
+          }
+        } else {
+          add(character, role: edge['role'] as String?);
+        }
+      }
+    }
+    final staff = value['staff'];
+    if (staff is Map && staff['edges'] is List) {
+      for (final edge in staff['edges'] as List) {
+        if (edge is Map) add(edge['node'], role: edge['role'] as String?);
+      }
+    }
+    return result;
   }
 }
 

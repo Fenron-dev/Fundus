@@ -30,6 +30,38 @@ void main() {
                 'genres': ['Action', 'Comedy'],
                 'coverImage': {'large': 'https://img.example/cover.webp'},
                 'bannerImage': 'https://img.example/banner.webp',
+                'trailer': {'id': 'abc123', 'site': 'youtube'},
+                'characters': {
+                  'edges': [
+                    {
+                      'role': 'MAIN',
+                      'node': {
+                        'id': 77,
+                        'name': {'full': 'Mika Hero'},
+                        'image': {'medium': 'https://img.example/mika.webp'},
+                      },
+                      'voiceActors': [
+                        {
+                          'id': 88,
+                          'name': {'full': 'Jane Voice'},
+                          'image': {'medium': 'https://img.example/jane.webp'},
+                        },
+                      ],
+                    },
+                  ],
+                },
+                'staff': {
+                  'edges': [
+                    {
+                      'role': 'Director',
+                      'node': {
+                        'id': 99,
+                        'name': {'full': 'Pat Director'},
+                        'image': {'medium': 'https://img.example/pat.webp'},
+                      },
+                    },
+                  ],
+                },
               },
             ],
           },
@@ -46,6 +78,12 @@ void main() {
     expect(results.single.runtimeMinutes, 24);
     expect(results.single.description, 'Short description');
     expect(results.single.genres, ['Action', 'Comedy']);
+    expect(results.single.trailerUrl, 'https://www.youtube.com/watch?v=abc123');
+    expect(results.single.credits, hasLength(2));
+    expect(results.single.credits[0].name, 'Jane Voice');
+    expect(results.single.credits[0].role, 'Mika Hero · Stimme');
+    expect(results.single.credits[1].name, 'Pat Director');
+    expect(results.single.credits[1].role, 'Director');
     expect(client.lastRequest?.url.toString(), 'https://graphql.anilist.co');
   });
 

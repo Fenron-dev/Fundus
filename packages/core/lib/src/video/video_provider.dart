@@ -1,3 +1,41 @@
+/// A person attached to a provider result (actor, voice actor, director, …).
+///
+/// The object intentionally contains only display-safe values so it can be
+/// stored in a portable sidecar and transported to remote/offline clients.
+final class VideoProviderCredit {
+  const VideoProviderCredit({
+    required this.name,
+    this.role,
+    this.imageUrl,
+    this.providerId,
+  });
+
+  final String name;
+  final String? role;
+  final String? imageUrl;
+  final String? providerId;
+
+  Map<String, Object?> toJson() => {
+    'name': name,
+    if (role != null && role!.trim().isNotEmpty) 'role': role,
+    if (imageUrl != null && imageUrl!.trim().isNotEmpty) 'image_url': imageUrl,
+    if (providerId != null && providerId!.trim().isNotEmpty)
+      'provider_id': providerId,
+  };
+
+  static VideoProviderCredit? fromJson(Object? value) {
+    if (value is! Map || value['name'] is! String) return null;
+    final name = (value['name'] as String).trim();
+    if (name.isEmpty) return null;
+    return VideoProviderCredit(
+      name: name,
+      role: (value['role'] as String?)?.trim(),
+      imageUrl: (value['image_url'] as String?)?.trim(),
+      providerId: (value['provider_id'] as String?)?.trim(),
+    );
+  }
+}
+
 /// Provider-neutral metadata used to enrich video works.
 ///
 /// The core package deliberately contains no HTTP client or credentials. App
@@ -21,6 +59,8 @@ final class VideoProviderCandidate {
     this.genres = const [],
     this.posterUrl,
     this.backdropUrl,
+    this.credits = const [],
+    this.trailerUrl,
     this.externalIds = const {},
   });
 
@@ -44,6 +84,8 @@ final class VideoProviderCandidate {
   final List<String> genres;
   final String? posterUrl;
   final String? backdropUrl;
+  final List<VideoProviderCredit> credits;
+  final String? trailerUrl;
   final Map<String, String> externalIds;
 
   Map<String, Object?> toJson() => {
@@ -63,6 +105,10 @@ final class VideoProviderCandidate {
     if (genres.isNotEmpty) 'genres': genres,
     if (posterUrl != null) 'poster_url': posterUrl,
     if (backdropUrl != null) 'backdrop_url': backdropUrl,
+    if (credits.isNotEmpty)
+      'credits': [for (final credit in credits) credit.toJson()],
+    if (trailerUrl != null && trailerUrl!.trim().isNotEmpty)
+      'trailer_url': trailerUrl,
     if (externalIds.isNotEmpty) 'external_ids': externalIds,
   };
 
@@ -76,6 +122,7 @@ final class VideoProviderCandidate {
     final alternateTitles = value['alternate_titles'];
     final externalIds = value['external_ids'];
     final genres = value['genres'];
+    final credits = value['credits'];
     return VideoProviderCandidate(
       provider: value['provider'] as String,
       providerId: value['provider_id'] as String,
@@ -97,6 +144,13 @@ final class VideoProviderCandidate {
           : const [],
       posterUrl: value['poster_url'] as String?,
       backdropUrl: value['backdrop_url'] as String?,
+      credits: credits is List
+          ? credits
+                .map(VideoProviderCredit.fromJson)
+                .whereType<VideoProviderCredit>()
+                .toList(growable: false)
+          : const [],
+      trailerUrl: value['trailer_url'] as String?,
       externalIds: externalIds is Map
           ? {
               for (final entry in externalIds.entries)

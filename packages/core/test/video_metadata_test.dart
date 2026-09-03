@@ -107,4 +107,28 @@ void main() {
     expect(restored?.externalIds['mal'], '1');
     expect(VideoProviderCandidate.fromJson({'title': 'unvollständig'}), isNull);
   });
+
+  test('provider candidate keeps credits and trailer metadata portable', () {
+    const candidate = VideoProviderCandidate(
+      provider: 'anilist',
+      providerId: '42',
+      title: 'Cowboy Bebop',
+      credits: [
+        VideoProviderCredit(
+          name: 'Jane Voice',
+          role: 'Spike · Stimme',
+          imageUrl: 'https://img.example/jane.webp',
+          providerId: '88',
+        ),
+      ],
+      trailerUrl: 'https://www.youtube.com/watch?v=abc123',
+    );
+    final restored = VideoProviderCandidate.fromJson(candidate.toJson());
+
+    expect(restored?.credits, hasLength(1));
+    expect(restored?.credits.single.name, 'Jane Voice');
+    expect(restored?.credits.single.role, 'Spike · Stimme');
+    expect(restored?.credits.single.providerId, '88');
+    expect(restored?.trailerUrl, 'https://www.youtube.com/watch?v=abc123');
+  });
 }

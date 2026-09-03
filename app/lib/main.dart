@@ -1400,6 +1400,7 @@ class _LibraryShellState extends State<LibraryShell> {
   _LibraryGrouping _grouping = _LibraryGrouping.books;
   String? _selectedAuthor;
   String? _selectedNarrator;
+  String? _selectedPerson;
   String? _selectedSeries;
   bool _detailPaneVisible = true;
   bool _sidebarCollapsed = false;
@@ -1500,6 +1501,8 @@ class _LibraryShellState extends State<LibraryShell> {
 
   bool get _showingGroups => _section.isDocumentSection
       ? false
+      : _selectedPerson != null
+      ? false
       : switch (_grouping) {
           _LibraryGrouping.books => false,
           _LibraryGrouping.authors =>
@@ -1512,6 +1515,7 @@ class _LibraryShellState extends State<LibraryShell> {
     var works = _visibleWorks;
     final author = _selectedAuthor;
     final narrator = _selectedNarrator;
+    final person = _selectedPerson;
     final series = _selectedSeries;
     if (author != null) {
       works = works
@@ -1523,6 +1527,18 @@ class _LibraryShellState extends State<LibraryShell> {
     }
     if (narrator != null) {
       works = works.where((work) => work.narrators.contains(narrator)).toList();
+    }
+    if (person != null) {
+      works = works.where((work) {
+        final credits = work.providerMetadata['credits'];
+        if (credits is! List) return false;
+        return credits.any(
+          (value) =>
+              value is Map &&
+              value['name'] is String &&
+              (value['name'] as String).toLowerCase() == person.toLowerCase(),
+        );
+      }).toList();
     }
     if (series != null) {
       works = works.where((work) => (work.series ?? '') == series).toList();
@@ -1549,6 +1565,7 @@ class _LibraryShellState extends State<LibraryShell> {
           _section = _LibrarySection.library;
           _selectedAuthor = null;
           _selectedNarrator = null;
+          _selectedPerson = null;
           _selectedSeries = null;
           _inlineDetailWork = null;
           _activeCollectionId = null;
@@ -1560,6 +1577,7 @@ class _LibraryShellState extends State<LibraryShell> {
         onTap: () => setState(() {
           _selectedAuthor = null;
           _selectedNarrator = null;
+          _selectedPerson = null;
           _selectedSeries = null;
           _inlineDetailWork = null;
           _activeCollectionId = null;
@@ -1570,6 +1588,9 @@ class _LibraryShellState extends State<LibraryShell> {
       items.add(FundusBreadcrumb(label: _selectedAuthor!));
     } else if (_selectedNarrator != null) {
       items.add(FundusBreadcrumb(label: _selectedNarrator!));
+    }
+    if (_selectedPerson != null) {
+      items.add(FundusBreadcrumb(label: _selectedPerson!));
     }
     if (_selectedSeries != null) {
       items.add(FundusBreadcrumb(label: _selectedSeries!));
@@ -1722,6 +1743,7 @@ class _LibraryShellState extends State<LibraryShell> {
                         onMetadataChanged: _metadataChanged,
                         onSelectAuthor: _showAuthor,
                         onSelectNarrator: _showNarrator,
+                        onSelectPerson: _showPerson,
                       ),
                     ),
                   ],
@@ -3335,6 +3357,7 @@ class _LibraryShellState extends State<LibraryShell> {
               onMetadataChanged: _metadataChanged,
               onSelectAuthor: _showAuthor,
               onSelectNarrator: _showNarrator,
+              onSelectPerson: _showPerson,
             ),
           ),
         ),
@@ -3370,6 +3393,7 @@ class _LibraryShellState extends State<LibraryShell> {
           onMetadataChanged: _metadataChanged,
           onSelectAuthor: _showAuthor,
           onSelectNarrator: _showNarrator,
+          onSelectPerson: _showPerson,
         ),
       ),
     ],
@@ -3414,6 +3438,7 @@ class _LibraryShellState extends State<LibraryShell> {
     } else {
       _selectedAuthor = null;
       _selectedNarrator = null;
+      _selectedPerson = null;
       _selectedSeries = null;
     }
   });
@@ -3421,12 +3446,14 @@ class _LibraryShellState extends State<LibraryShell> {
   bool get _canNavigateUp =>
       _selectedAuthor != null ||
       _selectedNarrator != null ||
+      _selectedPerson != null ||
       _selectedSeries != null;
 
   void _setGrouping(_LibraryGrouping value) => setState(() {
     _grouping = value;
     _selectedAuthor = null;
     _selectedNarrator = null;
+    _selectedPerson = null;
     _selectedSeries = null;
     _selectedIndex = 0;
   });
@@ -3436,6 +3463,7 @@ class _LibraryShellState extends State<LibraryShell> {
     _grouping = _LibraryGrouping.books;
     _selectedAuthor = author;
     _selectedNarrator = null;
+    _selectedPerson = null;
     _selectedSeries = null;
     _inlineDetailWork = null;
     _selectedIndex = 0;
@@ -3445,7 +3473,19 @@ class _LibraryShellState extends State<LibraryShell> {
     _playerExpanded = false;
     _grouping = _LibraryGrouping.books;
     _selectedAuthor = null;
+    _selectedPerson = null;
     _selectedNarrator = narrator;
+    _selectedSeries = null;
+    _inlineDetailWork = null;
+    _selectedIndex = 0;
+  });
+
+  void _showPerson(String person) => setState(() {
+    _playerExpanded = false;
+    _grouping = _LibraryGrouping.books;
+    _selectedAuthor = null;
+    _selectedNarrator = null;
+    _selectedPerson = person;
     _selectedSeries = null;
     _inlineDetailWork = null;
     _selectedIndex = 0;
@@ -5028,6 +5068,7 @@ class _VideoHero extends StatelessWidget {
     required this.onOpen,
     required this.onLoadMetadata,
     this.onChangeType,
+    this.onSelectPerson,
   });
 
   final LibraryWorkSummary work;
@@ -5035,6 +5076,7 @@ class _VideoHero extends StatelessWidget {
   final VoidCallback? onOpen;
   final VoidCallback? onLoadMetadata;
   final VoidCallback? onChangeType;
+  final ValueChanged<String>? onSelectPerson;
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
@@ -5052,6 +5094,7 @@ class _VideoHero extends StatelessWidget {
       );
       final providerMetadata = work.providerMetadata;
       final backdropUrl = providerMetadata['backdrop_url'];
+      final credits = _videoCredits(providerMetadata['credits']);
       final facts = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -5093,6 +5136,32 @@ class _VideoHero extends StatelessWidget {
               runSpacing: 4,
               children: [
                 for (final genre in work.genres) Chip(label: Text(genre)),
+              ],
+            ),
+          ],
+          if (credits.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Text(
+              'Besetzung & Crew',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final credit in credits)
+                  ActionChip(
+                    avatar: _creditAvatar(credit),
+                    label: Text(
+                      credit.role == null
+                          ? credit.name
+                          : '${credit.name} · ${credit.role}',
+                    ),
+                    onPressed: onSelectPerson == null
+                        ? null
+                        : () => onSelectPerson!(credit.name),
+                  ),
               ],
             ),
           ],
@@ -5235,6 +5304,24 @@ class _VideoHero extends StatelessWidget {
       );
     },
   );
+
+  List<VideoProviderCredit> _videoCredits(Object? value) => value is List
+      ? value
+            .map(VideoProviderCredit.fromJson)
+            .whereType<VideoProviderCredit>()
+            .toList(growable: false)
+      : const [];
+
+  Widget _creditAvatar(VideoProviderCredit credit) {
+    final image = credit.imageUrl;
+    if (image != null && image.isNotEmpty) {
+      return CircleAvatar(
+        backgroundImage: NetworkImage(image),
+        onBackgroundImageError: (_, _) {},
+      );
+    }
+    return const Icon(Icons.person_outline, size: 18);
+  }
 }
 
 String _formatVideoRuntime(int minutes) {
@@ -5606,6 +5693,7 @@ class _DetailPanel extends StatefulWidget {
     this.onMetadataChanged,
     this.onSelectAuthor,
     this.onSelectNarrator,
+    this.onSelectPerson,
   });
 
   final LibraryWorkSummary? work;
@@ -5616,6 +5704,7 @@ class _DetailPanel extends StatefulWidget {
   final WorkMetadataChangedCallback? onMetadataChanged;
   final ValueChanged<String>? onSelectAuthor;
   final ValueChanged<String>? onSelectNarrator;
+  final ValueChanged<String>? onSelectPerson;
 
   @override
   State<_DetailPanel> createState() => _DetailPanelState();
@@ -5766,6 +5855,7 @@ class _DetailPanelState extends State<_DetailPanel> {
                 widget.library == null || widget.library!.isReadOnly || _saving
                 ? null
                 : () => _changeVideoType(selectedWork),
+            onSelectPerson: widget.onSelectPerson,
           )
         else
           _DocumentHero(work: selectedWork, directoryPath: directoryPath),
@@ -7566,8 +7656,18 @@ class _DetailPanelState extends State<_DetailPanel> {
           if (candidate.season != null) 'season': candidate.season,
           if (candidate.episodeCount != null)
             'episode_count': candidate.episodeCount,
+          if (candidate.runtimeMinutes != null)
+            'runtime_minutes': candidate.runtimeMinutes,
+          if (candidate.isAdult != null) 'is_adult': candidate.isAdult,
+          if (candidate.alternateTitles.isNotEmpty)
+            'alternate_titles': candidate.alternateTitles,
           if (candidate.backdropUrl != null)
             'backdrop_url': candidate.backdropUrl,
+          if (candidate.credits.isNotEmpty)
+            'credits': [
+              for (final credit in candidate.credits) credit.toJson(),
+            ],
+          if (candidate.trailerUrl != null) 'trailer_url': candidate.trailerUrl,
           if (candidate.externalIds.isNotEmpty)
             'external_ids': candidate.externalIds,
         },
