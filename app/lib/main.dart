@@ -1765,6 +1765,7 @@ class _LibraryShellState extends State<LibraryShell> {
                         onSelectAuthor: _showAuthor,
                         onSelectNarrator: _showNarrator,
                         onSelectPerson: _showPerson,
+                        onSelectTag: _showTag,
                       ),
                     ),
                   ],
@@ -3379,6 +3380,7 @@ class _LibraryShellState extends State<LibraryShell> {
               onSelectAuthor: _showAuthor,
               onSelectNarrator: _showNarrator,
               onSelectPerson: _showPerson,
+              onSelectTag: _showTag,
             ),
           ),
         ),
@@ -3415,6 +3417,7 @@ class _LibraryShellState extends State<LibraryShell> {
           onSelectAuthor: _showAuthor,
           onSelectNarrator: _showNarrator,
           onSelectPerson: _showPerson,
+          onSelectTag: _showTag,
         ),
       ),
     ],
@@ -3510,6 +3513,17 @@ class _LibraryShellState extends State<LibraryShell> {
     _selectedSeries = null;
     _inlineDetailWork = null;
     _selectedIndex = 0;
+  });
+
+  void _showTag(String tag) => setState(() {
+    _playerExpanded = false;
+    _selectedAuthor = null;
+    _selectedNarrator = null;
+    _selectedPerson = null;
+    _selectedSeries = null;
+    _inlineDetailWork = null;
+    _selectedIndex = 0;
+    _query = _query.copyWith(tags: {tag});
   });
 
   void _setSearch(String value) => setState(() {
@@ -3879,7 +3893,9 @@ extension on _LibrarySection {
   bool matchesWork(LibraryWorkSummary work) => switch (this) {
     _LibrarySection.anime =>
       work.contentStyle?.toLowerCase() == 'anime' ||
-          work.tags.any((tag) => tag.toLowerCase() == 'anime'),
+          work.tags.any((tag) => tag.toLowerCase() == 'anime') ||
+          work.providerMetadata['provider']?.toString().toLowerCase() ==
+              'anilist',
     _LibrarySection.hhh => work.isHhh,
     _ => true,
   };
@@ -5090,6 +5106,7 @@ class _VideoHero extends StatelessWidget {
     required this.onLoadMetadata,
     this.onChangeType,
     this.onSelectPerson,
+    this.onSelectTag,
     this.collectionNames = const [],
   });
 
@@ -5099,6 +5116,7 @@ class _VideoHero extends StatelessWidget {
   final VoidCallback? onLoadMetadata;
   final VoidCallback? onChangeType;
   final ValueChanged<String>? onSelectPerson;
+  final ValueChanged<String>? onSelectTag;
   final List<String> collectionNames;
 
   @override
@@ -5114,6 +5132,7 @@ class _VideoHero extends StatelessWidget {
         kind: work.kind,
         contentStyle: work.contentStyle,
         contentSensitivity: work.contentSensitivity,
+        providerMetadata: work.providerMetadata,
       );
       final providerMetadata = work.providerMetadata;
       final backdropUrl = providerMetadata['backdrop_url'];
@@ -5161,7 +5180,13 @@ class _VideoHero extends StatelessWidget {
               spacing: 6,
               runSpacing: 4,
               children: [
-                for (final genre in work.genres) Chip(label: Text(genre)),
+                for (final genre in work.genres)
+                  ActionChip(
+                    label: Text(genre),
+                    onPressed: onSelectTag == null
+                        ? null
+                        : () => onSelectTag!(genre),
+                  ),
               ],
             ),
           ],
@@ -5762,6 +5787,7 @@ class _DetailPanel extends StatefulWidget {
     this.onSelectAuthor,
     this.onSelectNarrator,
     this.onSelectPerson,
+    this.onSelectTag,
   });
 
   final LibraryWorkSummary? work;
@@ -5773,6 +5799,7 @@ class _DetailPanel extends StatefulWidget {
   final ValueChanged<String>? onSelectAuthor;
   final ValueChanged<String>? onSelectNarrator;
   final ValueChanged<String>? onSelectPerson;
+  final ValueChanged<String>? onSelectTag;
 
   @override
   State<_DetailPanel> createState() => _DetailPanelState();
@@ -5936,6 +5963,7 @@ class _DetailPanelState extends State<_DetailPanel> {
                 ? null
                 : () => _changeVideoType(selectedWork),
             onSelectPerson: widget.onSelectPerson,
+            onSelectTag: widget.onSelectTag,
           )
         else
           _DocumentHero(work: selectedWork, directoryPath: directoryPath),
@@ -6300,6 +6328,7 @@ class _DetailPanelState extends State<_DetailPanel> {
                       kind: work.kind,
                       contentStyle: work.contentStyle,
                       contentSensitivity: work.contentSensitivity,
+                      providerMetadata: work.providerMetadata,
                     )?.contentTabLabel ??
                     'Kapitel',
                 onChanged: (value) => setState(() => _mobileDetailTab = value),
@@ -6335,7 +6364,12 @@ class _DetailPanelState extends State<_DetailPanel> {
                     runSpacing: 6,
                     children: [
                       for (final tag in _annotations.tags)
-                        Chip(label: Text('#$tag')),
+                        ActionChip(
+                          label: Text('#$tag'),
+                          onPressed: widget.onSelectTag == null
+                              ? null
+                              : () => widget.onSelectTag!(tag),
+                        ),
                     ],
                   ),
                 ],

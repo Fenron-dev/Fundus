@@ -168,6 +168,7 @@ class WorkDetailHeader extends StatelessWidget {
         kind: kind,
         contentStyle: contentStyle,
         contentSensitivity: contentSensitivity,
+        providerMetadata: detail.summary.providerMetadata,
       )?.label ??
       switch (kind) {
         'audiobook' => 'Hörbuch',
@@ -190,6 +191,7 @@ class WorkDetailHeader extends StatelessWidget {
       kind: kind,
       contentStyle: contentStyle,
       contentSensitivity: contentSensitivity,
+      providerMetadata: detail.summary.providerMetadata,
     )?.iconKey;
     if (registryIcon != null) {
       return switch (registryIcon) {

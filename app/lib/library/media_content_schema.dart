@@ -465,6 +465,7 @@ abstract final class FundusMediaTypeRegistry {
     required String kind,
     String? contentStyle,
     String? contentSensitivity,
+    Map<String, Object?>? providerMetadata,
   }) {
     final normalizedKind = kind.trim().toLowerCase();
     final style = contentStyle?.trim().toLowerCase();
@@ -472,8 +473,17 @@ abstract final class FundusMediaTypeRegistry {
         contentSensitivity == 'adult_explicit' ||
         contentSensitivity == 'adult' ||
         normalizedKind.startsWith('hhh_');
+    // AniList enrichment is the strongest available signal for anime when a
+    // legacy work has not yet persisted `content_style`.  Keep the explicit
+    // style and kind values authoritative, but let provider metadata repair
+    // older records so they appear in the Anime section immediately after a
+    // metadata refresh/scan.
+    final provider = providerMetadata?['provider']?.toString().toLowerCase();
     final anime =
-        style == 'anime' || style == 'anime_series' || style == 'anime_film';
+        style == 'anime' ||
+        style == 'anime_series' ||
+        style == 'anime_film' ||
+        provider == 'anilist';
     switch (normalizedKind) {
       case 'movie':
       case 'anime_movie':

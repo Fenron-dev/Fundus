@@ -20,6 +20,13 @@ void main() {
     );
     expect(
       FundusMediaTypeRegistry.forWork(
+        kind: 'tv',
+        providerMetadata: const {'provider': 'anilist'},
+      ),
+      same(FundusMediaTypes.animeSeries),
+    );
+    expect(
+      FundusMediaTypeRegistry.forWork(
         kind: 'video',
         contentSensitivity: 'adult_explicit',
       ),
