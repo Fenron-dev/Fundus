@@ -8648,7 +8648,13 @@ bool _isVideoWorkKind(String kind) => VideoWorkKind.isVideo(kind);
 
 IconData _workKindIcon(String kind) => switch (kind) {
   'audiobook' => Icons.music_note,
-  'movie' || 'tv' || 'video' => Icons.movie_outlined,
+  'movie' ||
+  'tv' ||
+  'video' ||
+  'anime_movie' ||
+  'anime_tv' ||
+  'hhh_movie' ||
+  'hhh_tv' => Icons.movie_outlined,
   'ebook' => Icons.menu_book_outlined,
   'webnovel' => Icons.chrome_reader_mode_outlined,
   'manga' => Icons.auto_stories_outlined,
