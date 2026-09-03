@@ -1513,6 +1513,19 @@ class _LibraryShellState extends State<LibraryShell> {
     for (final work in widget.offlineWorks) _offlineSummaryId(work): work,
   };
 
+  /// Resolves the catalog origin for a summary so every layout can render the
+  /// same provenance indicator. The catalog is the source of truth; the
+  /// summary itself intentionally stays origin-agnostic for compatibility with
+  /// local and remote APIs.
+  FundusCatalogSource? _sourceForWork(LibraryWorkSummary work) {
+    for (final entry in widget.catalog?.entries ?? const []) {
+      if (identical(entry.work, work) || entry.work.id == work.id) {
+        return entry.source;
+      }
+    }
+    return null;
+  }
+
   List<FundusCatalogSource> get _catalogSources {
     final sources = <String, FundusCatalogSource>{};
     for (final entry in widget.catalog?.entries ?? const []) {
@@ -1791,6 +1804,19 @@ class _LibraryShellState extends State<LibraryShell> {
                           : () => _openServerSettings(context),
                       onOpenCollections:
                           widget.onOpenCollections ?? _openCollections,
+                      onOpenSeries: () =>
+                          _openDiscoverGrouping(_LibraryGrouping.series),
+                      onOpenPeople: () =>
+                          _openDiscoverGrouping(_LibraryGrouping.authors),
+                      onOpenTags: () => _openTagPicker(context),
+                      onOpenFolders: () => setState(() {
+                        _section = _LibrarySection.library;
+                        _grouping = _LibraryGrouping.books;
+                        _layout = _LibraryLayout.folder;
+                        _inlineDetailWork = null;
+                        _selectedIndex = 0;
+                        _scheduleViewPreferencesSave();
+                      }),
                     ),
                   ),
                   _ResizeHandle(
@@ -2000,6 +2026,17 @@ class _LibraryShellState extends State<LibraryShell> {
                     unawaited(_openServerSettings(context));
                   },
             onOpenCollections: widget.onOpenCollections ?? _openCollections,
+            onOpenSeries: () => _openDiscoverGrouping(_LibraryGrouping.series),
+            onOpenPeople: () => _openDiscoverGrouping(_LibraryGrouping.authors),
+            onOpenTags: () => _openTagPicker(context),
+            onOpenFolders: () => setState(() {
+              _section = _LibrarySection.library;
+              _grouping = _LibraryGrouping.books;
+              _layout = _LibraryLayout.folder;
+              _inlineDetailWork = null;
+              _selectedIndex = 0;
+              _scheduleViewPreferencesSave();
+            }),
           ),
         ),
       ),
@@ -2673,6 +2710,7 @@ class _LibraryShellState extends State<LibraryShell> {
                     final work = works[index];
                     return _WorkCard(
                       work: work,
+                      source: _sourceForWork(work),
                       player: widget.player,
                       selected: !detailAsDialog && index == _selectedIndex,
                       selectionMode: _selectionMode,
@@ -3348,6 +3386,7 @@ class _LibraryShellState extends State<LibraryShell> {
               columns: const [
                 DataColumn(label: Text('Cover')),
                 DataColumn(label: Text('Titel')),
+                DataColumn(label: Text('Quelle')),
                 DataColumn(label: Text('Status')),
                 DataColumn(label: Text('Autor')),
                 DataColumn(label: Text('Serie')),
@@ -3372,6 +3411,12 @@ class _LibraryShellState extends State<LibraryShell> {
                         ),
                       ),
                       DataCell(Text(works[index].title)),
+                      DataCell(
+                        _CatalogSourceBadge(
+                          source: _sourceForWork(works[index]),
+                          compact: true,
+                        ),
+                      ),
                       DataCell(
                         works[index].offline
                             ? Row(
@@ -3579,6 +3624,59 @@ class _LibraryShellState extends State<LibraryShell> {
     _selectedSeries = null;
     _selectedIndex = 0;
   });
+
+  void _openDiscoverGrouping(_LibraryGrouping grouping) => setState(() {
+    _section = _LibrarySection.library;
+    _grouping = grouping;
+    _selectedAuthor = null;
+    _selectedNarrator = null;
+    _selectedPerson = null;
+    _selectedSeries = null;
+    _activeCollectionId = null;
+    _inlineDetailWork = null;
+    _selectedIndex = 0;
+  });
+
+  Future<void> _openTagPicker(BuildContext context) async {
+    final tags = <String>{for (final work in _allWorks) ...work.tags}.toList()
+      ..sort(
+        (left, right) => left.toLowerCase().compareTo(right.toLowerCase()),
+      );
+    if (tags.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('In dieser Bibliothek sind noch keine Tags vorhanden.'),
+        ),
+      );
+      return;
+    }
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Tags durchsuchen'),
+        content: SizedBox(
+          width: 420,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: tags.length,
+            itemBuilder: (context, index) => ListTile(
+              leading: const Icon(Icons.tag),
+              title: Text(tags[index]),
+              onTap: () => Navigator.pop(dialogContext, tags[index]),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Schließen'),
+          ),
+        ],
+      ),
+    );
+    if (selected != null && mounted) _showTag(selected);
+  }
 
   void _showAuthor(String author) => setState(() {
     _playerExpanded = false;
@@ -4638,6 +4736,10 @@ class _Sidebar extends StatelessWidget {
     this.collapsed = false,
     this.onToggleCollapsed,
     this.onOpenCollections,
+    this.onOpenSeries,
+    this.onOpenPeople,
+    this.onOpenTags,
+    this.onOpenFolders,
   });
 
   final _LibrarySection selectedSection;
@@ -4647,6 +4749,10 @@ class _Sidebar extends StatelessWidget {
   final bool collapsed;
   final VoidCallback? onToggleCollapsed;
   final VoidCallback? onOpenCollections;
+  final VoidCallback? onOpenSeries;
+  final VoidCallback? onOpenPeople;
+  final VoidCallback? onOpenTags;
+  final VoidCallback? onOpenFolders;
 
   @override
   Widget build(BuildContext context) {
@@ -4724,23 +4830,30 @@ class _Sidebar extends StatelessWidget {
           ),
         const SizedBox(height: 12),
         const _SectionLabel('Entdecken'),
-        const ListTile(
+        ListTile(
           leading: Icon(Icons.account_tree_outlined),
           title: Text('Serien'),
+          onTap: onOpenSeries,
         ),
-        const ListTile(
+        ListTile(
           leading: Icon(Icons.people_outline),
           title: Text('Personen'),
+          onTap: onOpenPeople,
         ),
-        const ListTile(leading: Icon(Icons.tag), title: Text('Tags')),
+        ListTile(
+          leading: const Icon(Icons.tag),
+          title: const Text('Tags'),
+          onTap: onOpenTags,
+        ),
         ListTile(
           leading: Icon(Icons.star_outline),
           title: Text('Sammlungen'),
           onTap: onOpenCollections,
         ),
-        const ListTile(
+        ListTile(
           leading: Icon(Icons.folder_outlined),
           title: Text('Ordner'),
+          onTap: onOpenFolders,
         ),
         const SizedBox(height: 12),
         const _SectionLabel('System'),
@@ -4839,11 +4952,66 @@ class _ResizeHandle extends StatelessWidget {
   );
 }
 
+class _CatalogSourceBadge extends StatelessWidget {
+  const _CatalogSourceBadge({this.source, this.work, this.compact = false});
+
+  final FundusCatalogSource? source;
+  final LibraryWorkSummary? work;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final resolved = source;
+    final kind = resolved?.kind;
+    final icon = switch (kind) {
+      FundusCatalogSourceKind.offline => Icons.download_done,
+      FundusCatalogSourceKind.remote => Icons.cloud_outlined,
+      FundusCatalogSourceKind.local => Icons.devices_outlined,
+      null when work?.offline == true => Icons.download_done,
+      _ => Icons.storage_outlined,
+    };
+    final label = switch (kind) {
+      FundusCatalogSourceKind.offline => 'Offline · ${resolved!.displayName}',
+      FundusCatalogSourceKind.remote => 'Remote · ${resolved!.displayName}',
+      FundusCatalogSourceKind.local => 'Lokal · ${resolved!.displayName}',
+      null when work?.offline == true => [
+        work?.sourceServerName,
+        work?.sourceLibraryName,
+      ].whereType<String>().where((value) => value.isNotEmpty).join(' · '),
+      _ => 'Lokal',
+    };
+    final availability = resolved?.availability;
+    final suffix = switch (availability) {
+      FundusCatalogAvailability.unreachable => ' · nicht erreichbar',
+      FundusCatalogAvailability.missing => ' · fehlt',
+      _ => '',
+    };
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: compact ? 16 : 14),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            '$label$suffix',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: compact
+                ? Theme.of(context).textTheme.bodySmall
+                : Theme.of(context).textTheme.labelSmall,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _WorkCard extends StatelessWidget {
   const _WorkCard({
     required this.work,
     required this.selected,
     required this.onTap,
+    this.source,
     this.player,
     this.selectionMode = false,
     this.checked = false,
@@ -4853,6 +5021,7 @@ class _WorkCard extends StatelessWidget {
   final LibraryWorkSummary work;
   final bool selected;
   final VoidCallback onTap;
+  final FundusCatalogSource? source;
   final FundusPlayerController? player;
   final bool selectionMode;
   final bool checked;
@@ -4967,13 +5136,10 @@ class _WorkCard extends StatelessWidget {
                             '${work.seriesSequence == null ? '' : ' · Band ${_formatSequence(work.seriesSequence!)}'}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
-                if (work.offline)
-                  Text(
-                    '${work.sourceServerName ?? 'Unbekannter Server'} · '
-                    '${work.sourceLibraryName ?? 'Unbekannte Bibliothek'}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelSmall,
+                if (source != null || work.offline)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: _CatalogSourceBadge(source: source, work: work),
                   ),
               ],
             ),
