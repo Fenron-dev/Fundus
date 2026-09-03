@@ -220,6 +220,7 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       // Media.start hint is intentionally avoided here: on resumed files it
       // can position the audio decoder while leaving the video texture on a
       // black frame. An explicit paused seek primes both decoders reliably.
+      await _waitForVideoParameters();
       if (resume > Duration.zero) {
         final nativeDuration = _player.state.duration;
         final target = nativeDuration > Duration.zero && resume > nativeDuration
@@ -471,6 +472,21 @@ final class FundusVideoPlayerController extends ChangeNotifier {
         return;
       }
       await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+  }
+
+  /// A paused seek can update the audio clock before mpv has exposed the
+  /// decoded video dimensions. Waiting for the first real video parameters
+  /// keeps resumed files from starting with audio and a black texture.
+  Future<void> _waitForVideoParameters() async {
+    final current = _player.state.videoParams;
+    if (current.w != null && current.h != null) return;
+    try {
+      await _player.stream.videoParams
+          .firstWhere((value) => value.w != null && value.h != null)
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {
+      // Audio-only files and some network streams do not expose video params.
     }
   }
 

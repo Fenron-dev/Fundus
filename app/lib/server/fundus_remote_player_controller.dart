@@ -607,6 +607,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
         // paused. Supplying Media.start can advance audio without priming the
         // video texture, especially for an already visited MKV/MP4. An
         // explicit verified seek keeps remote and offline playback aligned.
+        await _waitForVideoParameters();
         _position = await _seekAndVerify(resumePosition);
         notifyListeners();
       }
@@ -1236,6 +1237,20 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       if ((actual - target).abs() <= const Duration(seconds: 2)) return actual;
     }
     throw StateError('Fortsetzungsposition konnte nicht gesetzt werden.');
+  }
+
+  /// Do not seek a resumed video until the native output knows its dimensions.
+  /// Otherwise mpv may advance audio while the attached texture remains black.
+  Future<void> _waitForVideoParameters() async {
+    final current = _player.state.videoParams;
+    if (current.w != null && current.h != null) return;
+    try {
+      await _player.stream.videoParams
+          .firstWhere((value) => value.w != null && value.h != null)
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {
+      // Some remote containers expose no video parameters before playback.
+    }
   }
 
   Future<void> _recordRemoteResume({
