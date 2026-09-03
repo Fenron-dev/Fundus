@@ -4045,9 +4045,18 @@ extension on _LibrarySection {
 
   Set<String>? get workKinds => switch (this) {
     _LibrarySection.library => const {'audiobook'},
-    _LibrarySection.videos => const {'movie', 'tv', 'video'},
-    _LibrarySection.movies => const {'movie'},
-    _LibrarySection.series || _LibrarySection.anime => const {'tv', 'video'},
+    _LibrarySection.videos => const {
+      'movie',
+      'tv',
+      'video',
+      'anime_movie',
+      'anime_tv',
+      'hhh_movie',
+      'hhh_tv',
+    },
+    _LibrarySection.movies => const {'movie', 'anime_movie', 'hhh_movie'},
+    _LibrarySection.series ||
+    _LibrarySection.anime => const {'tv', 'video', 'anime_tv', 'hhh_tv'},
     _LibrarySection.hhh => null,
     _LibrarySection.manga => const {'manga'},
     _LibrarySection.ttrpg => const {'ttrpg_product'},
@@ -4565,6 +4574,12 @@ class _MediaFilterButton extends StatelessWidget {
   static const kinds = {
     'audiobook': 'Hörbücher',
     'video': 'Videos',
+    'movie': 'Filme',
+    'tv': 'Serien',
+    'anime_movie': 'Anime-Filme',
+    'anime_tv': 'Anime-Serien',
+    'hhh_movie': 'HHH-Filme',
+    'hhh_tv': 'HHH-Serien',
     'ebook': 'E-Books',
     'webnovel': 'Webnovels',
     'manga': 'Manga & Comics',
@@ -7968,11 +7983,7 @@ class _DetailPanelState extends State<_DetailPanel> {
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(context, (
-                  selected.endsWith('_movie')
-                      ? 'movie'
-                      : selected.endsWith('_tv')
-                      ? 'tv'
-                      : selected,
+                  selected,
                   selected.startsWith('anime_') ? 'anime' : null,
                   selected.startsWith('hhh_') ? 'adult_explicit' : null,
                 )),

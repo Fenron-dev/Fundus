@@ -504,9 +504,10 @@ void main() {
 
       final hhh = await library.updateWorkKind(
         workId: original.id,
-        kind: 'tv',
+        kind: 'hhh_tv',
         contentSensitivity: 'adult_explicit',
       );
+      expect(hhh.kind, 'hhh_tv');
       expect(hhh.isHhh, isTrue);
       expect(hhh.contentSensitivity, 'adult_explicit');
       final sidecars = <String>[];
