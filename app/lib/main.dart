@@ -1514,14 +1514,36 @@ class _LibraryShellState extends State<LibraryShell> {
                   : collectionWorkIds!.contains(work.id)),
         )
         .toList(growable: false);
-    final kinds = _section.workKinds;
+    // A collection is an explicit cross-media view. Its own rules or work
+    // membership determine the result, so the currently selected sidebar
+    // section must not hide matching films, books, comics, etc.
+    final kinds = _activeCollectionId == null ? _section.workKinds : null;
     return works
         .where(
           (work) =>
               (kinds == null || kinds.contains(work.kind)) &&
-              _section.matchesWork(work),
+              (_activeCollectionId != null || _section.matchesWork(work)),
         )
         .toList(growable: false);
+  }
+
+  void _showCollection(String name) {
+    final library = widget.library;
+    if (library == null) return;
+    final collection = library
+        .listCollections()
+        .where((candidate) => candidate.name == name)
+        .firstOrNull;
+    if (collection == null) return;
+    setState(() {
+      _activeCollectionId = collection.id;
+      _selectedIndex = 0;
+      _selectedAuthor = null;
+      _selectedNarrator = null;
+      _selectedPerson = null;
+      _selectedSeries = null;
+      _inlineDetailWork = null;
+    });
   }
 
   bool get _showingGroups => _section.isDocumentSection
@@ -1770,6 +1792,7 @@ class _LibraryShellState extends State<LibraryShell> {
                         onSelectNarrator: _showNarrator,
                         onSelectPerson: _showPerson,
                         onSelectTag: _showTag,
+                        onSelectCollection: _showCollection,
                       ),
                     ),
                   ],
@@ -3385,6 +3408,7 @@ class _LibraryShellState extends State<LibraryShell> {
               onSelectNarrator: _showNarrator,
               onSelectPerson: _showPerson,
               onSelectTag: _showTag,
+              onSelectCollection: _showCollection,
             ),
           ),
         ),
@@ -3422,6 +3446,7 @@ class _LibraryShellState extends State<LibraryShell> {
           onSelectNarrator: _showNarrator,
           onSelectPerson: _showPerson,
           onSelectTag: _showTag,
+          onSelectCollection: _showCollection,
         ),
       ),
     ],
@@ -5171,6 +5196,7 @@ class _VideoHero extends StatelessWidget {
     this.onChangeType,
     this.onSelectPerson,
     this.onSelectTag,
+    this.onSelectCollection,
     this.collectionNames = const [],
   });
 
@@ -5181,6 +5207,7 @@ class _VideoHero extends StatelessWidget {
   final VoidCallback? onChangeType;
   final ValueChanged<String>? onSelectPerson;
   final ValueChanged<String>? onSelectTag;
+  final ValueChanged<String>? onSelectCollection;
   final List<String> collectionNames;
 
   @override
@@ -5263,9 +5290,12 @@ class _VideoHero extends StatelessWidget {
               runSpacing: 4,
               children: [
                 for (final collection in collectionNames)
-                  Chip(
+                  ActionChip(
                     avatar: const Icon(Icons.folder_special_outlined, size: 18),
                     label: Text(collection),
+                    onPressed: onSelectCollection == null
+                        ? null
+                        : () => onSelectCollection!(collection),
                   ),
               ],
             ),
@@ -5852,6 +5882,7 @@ class _DetailPanel extends StatefulWidget {
     this.onSelectNarrator,
     this.onSelectPerson,
     this.onSelectTag,
+    this.onSelectCollection,
   });
 
   final LibraryWorkSummary? work;
@@ -5864,6 +5895,7 @@ class _DetailPanel extends StatefulWidget {
   final ValueChanged<String>? onSelectNarrator;
   final ValueChanged<String>? onSelectPerson;
   final ValueChanged<String>? onSelectTag;
+  final ValueChanged<String>? onSelectCollection;
 
   @override
   State<_DetailPanel> createState() => _DetailPanelState();
@@ -6019,6 +6051,7 @@ class _DetailPanelState extends State<_DetailPanel> {
             work: selectedWork,
             directoryPath: directoryPath,
             collectionNames: _collectionsFor(selectedWork),
+            onSelectCollection: widget.onSelectCollection,
             onOpen: workFiles == null || workFiles.isEmpty
                 ? null
                 : () => _openDocumentWork(selectedWork, workFiles),
