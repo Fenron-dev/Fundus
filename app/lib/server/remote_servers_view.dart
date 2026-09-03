@@ -2435,6 +2435,45 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                                   ),
                                 ],
                               ),
+                              if (_remoteVideoCredits(
+                                work.providerMetadata,
+                              ).isNotEmpty) ...[
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Besetzung & Crew',
+                                  style: Theme.of(context).textTheme.titleSmall,
+                                ),
+                                const SizedBox(height: 6),
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 6,
+                                  children: [
+                                    for (final credit in _remoteVideoCredits(
+                                      work.providerMetadata,
+                                    ))
+                                      Chip(
+                                        avatar: _remoteCreditAvatar(credit),
+                                        label: Text(
+                                          credit.role == null ||
+                                                  credit.role!.trim().isEmpty
+                                              ? credit.name
+                                              : '${credit.name} · ${credit.role}',
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ],
+                              if (_remoteTrailerUrl(work.providerMetadata)
+                                  case final trailer?)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 10),
+                                  child: TextButton.icon(
+                                    onPressed: () =>
+                                        _copyRemoteTrailer(context, trailer),
+                                    icon: const Icon(Icons.ondemand_video),
+                                    label: const Text('Trailer-Link kopieren'),
+                                  ),
+                                ),
                             ],
                           ),
                         ),
@@ -4719,6 +4758,46 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     };
   }
 
+  static List<VideoProviderCredit> _remoteVideoCredits(
+    Map<String, Object?> providerMetadata,
+  ) => (providerMetadata['credits'] as List? ?? const [])
+      .map(VideoProviderCredit.fromJson)
+      .whereType<VideoProviderCredit>()
+      .take(12)
+      .toList(growable: false);
+
+  static String? _remoteTrailerUrl(Map<String, Object?> providerMetadata) {
+    final value = providerMetadata['trailer_url'];
+    final url = value is String ? value.trim() : '';
+    return url.isEmpty ? null : url;
+  }
+
+  static Widget _remoteCreditAvatar(VideoProviderCredit credit) {
+    final imageUrl = credit.imageUrl?.trim();
+    if (imageUrl == null || imageUrl.isEmpty) {
+      return const Icon(Icons.person_outline, size: 16);
+    }
+    return CircleAvatar(
+      radius: 12,
+      backgroundImage: NetworkImage(imageUrl),
+      onBackgroundImageError: (_, _) {},
+      child: const SizedBox.shrink(),
+    );
+  }
+
+  static Future<void> _copyRemoteTrailer(
+    BuildContext context,
+    String url,
+  ) async {
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Trailer-Link in die Zwischenablage kopiert.'),
+      ),
+    );
+  }
+
   Future<void> _showOfflineWork(FundusOfflineWork offline) async {
     final isDocument = _isDocumentKind(offline.kind);
     if (isDocument) {
@@ -4886,6 +4965,41 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                     ),
                 ],
               ),
+              if (_remoteVideoCredits(offline.providerMetadata).isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'Besetzung & Crew',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final credit in _remoteVideoCredits(
+                      offline.providerMetadata,
+                    ))
+                      Chip(
+                        avatar: _remoteCreditAvatar(credit),
+                        label: Text(
+                          credit.role == null || credit.role!.trim().isEmpty
+                              ? credit.name
+                              : '${credit.name} · ${credit.role}',
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+              if (_remoteTrailerUrl(offline.providerMetadata)
+                  case final trailer?)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: TextButton.icon(
+                    onPressed: () => _copyRemoteTrailer(context, trailer),
+                    icon: const Icon(Icons.ondemand_video),
+                    label: const Text('Trailer-Link kopieren'),
+                  ),
+                ),
               if (progress != null &&
                   !progress.finished &&
                   progress.position > Duration.zero) ...[
