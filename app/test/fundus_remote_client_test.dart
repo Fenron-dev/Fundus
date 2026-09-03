@@ -77,6 +77,17 @@ void main() {
 
     final works = await client.works(profile, libraries.single.id);
     expect(works.single.kind, 'audiobook');
+    final localWork = library.listWorks().single;
+    library.saveCollection(
+      name: 'Test-Sammlung',
+      workIds: [localWork.id],
+    );
+    final collections = await client.collections(
+      profile,
+      libraries.single.id,
+    );
+    expect(collections.single.name, 'Test-Sammlung');
+    expect(collections.single.workIds, [localWork.id]);
     final detail = await client.work(
       profile,
       libraries.single.id,

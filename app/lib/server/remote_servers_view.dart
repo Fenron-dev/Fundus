@@ -10,6 +10,7 @@ import 'package:path/path.dart' as p;
 
 import '../diagnostics/fundus_diagnostics.dart';
 import '../library/comic_book_viewer.dart';
+import '../library/collection_rules.dart';
 import '../library/comic_page_source.dart';
 import '../library/document_file_opener.dart';
 import '../library/document_preview.dart';
@@ -44,7 +45,7 @@ enum _RemoteLayout { grid, list }
 
 enum _RemoteGrouping { books, authors, series, narrators }
 
-enum _RemoteLibrarySection { media, playlists }
+enum _RemoteLibrarySection { media, collections, playlists }
 
 enum _DocumentTrackSort {
   oldestFirst,
@@ -188,7 +189,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   String? _offlineLibraryFilter;
   List<FundusRemoteWork> _works = const [];
   List<FundusRemotePlaylist> _playlists = const [];
+  List<FundusRemoteCollection> _collections = const [];
   _RemoteLibrarySection _librarySection = _RemoteLibrarySection.media;
+  String? _selectedCollectionId;
   LibraryWorkQuery _query = const LibraryWorkQuery(sort: LibraryWorkSort.title);
   List<LibrarySavedView> _savedViews = const [];
   _RemoteLayout _layout = _RemoteLayout.grid;
@@ -466,6 +469,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       _offlineLibraryFilter = null;
       _works = const [];
       _playlists = const [];
+      _collections = const [];
+      _selectedCollectionId = null;
     });
     try {
       final result = await _runWithReconnect(
@@ -526,6 +531,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       _query = const LibraryWorkQuery(sort: LibraryWorkSort.title);
       _searchController.clear();
       _librarySection = _RemoteLibrarySection.media;
+      _selectedCollectionId = null;
       _selectedGroup = null;
       _selectedCredit = null;
     });
@@ -535,12 +541,14 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         (active) async => (
           works: await _client.works(active, library.id),
           playlists: await _client.playlists(active, library.id),
+          collections: await _client.collections(active, library.id),
           views: await _savedViewStore.load(active.id, library.id),
         ),
       );
       final activeServer = result.server;
       final works = _visibleWorks(result.value.works);
       final playlists = result.value.playlists;
+      final collections = result.value.collections;
       final views = result.value.views;
       final offline = await Future.wait([
         for (final work in works)
@@ -555,6 +563,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         _selectedServer = activeServer;
         _works = works;
         _playlists = playlists;
+        _collections = collections;
+        _selectedCollectionId = null;
         _savedViews = views;
         _offlineKeys
           ..removeWhere(
@@ -602,6 +612,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         _libraries = const [];
         _works = const [];
         _playlists = const [];
+        _collections = const [];
+        _selectedCollectionId = null;
       }
     });
   }
@@ -1087,6 +1099,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     if (_librarySection == _RemoteLibrarySection.playlists) {
       return _remotePlaylistsView(library);
     }
+    if (_librarySection == _RemoteLibrarySection.collections) {
+      return _remoteCollectionsView(library);
+    }
     final server = _selectedServer!;
     final kinds = _works.map((work) => work.kind).toSet().toList()..sort();
     final byId = {for (final work in _works) work.id: work};
@@ -1094,6 +1109,27 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       _works.map(_remoteSummary),
       _query,
     ).map((work) => byId[work.id]!).toList();
+    if (_selectedCollectionId case final collectionId?) {
+      final collection = _collections
+          .where((item) => item.id == collectionId)
+          .firstOrNull;
+      if (collection != null) {
+        final summaries = {
+          for (final work in _works) work.id: _remoteSummary(work),
+        };
+        works = works
+            .where(
+              (work) => collection.isSmart
+                  ? summaries[work.id] != null &&
+                        matchesCollectionRules(
+                          summaries[work.id]!,
+                          collection.rules,
+                        )
+                  : collection.workIds.contains(work.id),
+            )
+            .toList();
+      }
+    }
     if (_selectedGroup case final group?) {
       works = works
           .where((work) => _remoteGroupValues(work).contains(group))
@@ -1118,6 +1154,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
               onPressed: () => setState(() {
                 if (_selectedGroup != null) {
                   _selectedGroup = null;
+                } else if (_selectedCollectionId != null) {
+                  _selectedCollectionId = null;
                 } else {
                   _selectedLibrary = null;
                 }
@@ -1473,6 +1511,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           label: Text('Medien'),
         ),
         ButtonSegment(
+          value: _RemoteLibrarySection.collections,
+          icon: Icon(Icons.collections_bookmark_outlined),
+          label: Text('Sammlungen'),
+        ),
+        ButtonSegment(
           value: _RemoteLibrarySection.playlists,
           icon: Icon(Icons.playlist_play),
           label: Text('Playlisten'),
@@ -1483,6 +1526,69 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           setState(() => _librarySection = value.first),
     ),
   );
+
+  Widget _remoteCollectionsView(FundusRemoteLibrary library) {
+    final visibleWorkIds = _works.map((work) => work.id).toSet();
+    final collections = _collections
+        .where(
+          (collection) =>
+              collection.isSmart ||
+              collection.workIds.any(visibleWorkIds.contains),
+        )
+        .toList(growable: false);
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 16),
+      children: [
+        ListTile(
+          leading: BackButton(
+            onPressed: () => setState(() {
+              _selectedLibrary = null;
+              _selectedGroup = null;
+              _selectedCredit = null;
+              _selectedCollectionId = null;
+            }),
+          ),
+          title: Text(library.name),
+          subtitle: Text('${collections.length} Sammlung(en)'),
+        ),
+        _librarySectionSelector(),
+        if (collections.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(32),
+            child: Center(
+              child: Text(
+                'Auf diesem Server wurden noch keine Sammlungen gespeichert.',
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        for (final collection in collections)
+          Card(
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+            child: ListTile(
+              leading: Icon(
+                collection.isSmart
+                    ? Icons.auto_awesome_outlined
+                    : Icons.collections_bookmark_outlined,
+              ),
+              title: Text(collection.name),
+              subtitle: Text(
+                collection.isSmart
+                    ? 'Smart-Sammlung'
+                    : '${collection.workIds.where(visibleWorkIds.contains).length} Werk(e)',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => setState(() {
+                _librarySection = _RemoteLibrarySection.media;
+                _selectedCollectionId = collection.id;
+                _selectedGroup = null;
+                _selectedCredit = null;
+              }),
+            ),
+          ),
+      ],
+    );
+  }
 
   Widget _remotePlaylistsView(FundusRemoteLibrary library) {
     final server = _selectedServer!;

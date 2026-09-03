@@ -140,6 +140,7 @@ final class FundusServerHandler {
         '/v1/libraries/<libraryId>/playlists/<playlistId>',
         _deletePlaylist,
       )
+      ..get('/v1/libraries/<libraryId>/collections', _collections)
       ..get('/v1/libraries/<libraryId>/playback-session', _playbackSession)
       ..put('/v1/libraries/<libraryId>/playback-session', _savePlaybackSession)
       ..get('/v1/libraries/<libraryId>/progress/<workId>', _progress)
@@ -207,6 +208,7 @@ final class FundusServerHandler {
     if (segments.contains('content')) return 'content';
     if (segments.contains('cover')) return 'cover';
     if (segments.contains('playlists')) return 'playlists';
+    if (segments.contains('collections')) return 'collections';
     if (segments.contains('playback-session')) return 'playback_session';
     if (segments.contains('progress')) return 'progress';
     if (segments.contains('annotations')) return 'annotations';
@@ -282,6 +284,7 @@ final class FundusServerHandler {
       'progress',
       'progress_history',
       'playlists',
+      'collections',
       'playlist_revisions',
       'playback_session',
       'playback_session_revisions',
@@ -501,6 +504,19 @@ final class FundusServerHandler {
         for (final playlist in entry.library.listPlaylists())
           if (_canViewPlaylist(request, entry, playlist))
             _playlistJson(playlist),
+      ],
+    });
+  }
+
+  Response _collections(Request request, String libraryId) {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    return _json({
+      'library_id': libraryId,
+      'collections': [
+        for (final collection in entry.library.listCollections())
+          if (_canViewCollection(request, entry, collection))
+            _collectionJson(collection),
       ],
     });
   }
@@ -1323,6 +1339,13 @@ final class FundusServerHandler {
     LibraryPlaylist playlist,
   ) => _canViewWorkIds(request, entry, playlist.workIds);
 
+  bool _canViewCollection(
+    Request request,
+    SharedFundusLibrary entry,
+    LibraryCollection collection,
+  ) =>
+      collection.isSmart || _canViewWorkIds(request, entry, collection.workIds);
+
   bool _canViewPlaybackSession(
     Request request,
     SharedFundusLibrary entry,
@@ -1473,6 +1496,16 @@ final class FundusServerHandler {
     'revision': playlist.revision,
     'created_at': playlist.createdAt.toUtc().toIso8601String(),
     'updated_at': playlist.updatedAt.toUtc().toIso8601String(),
+  };
+
+  static Map<String, Object?> _collectionJson(LibraryCollection collection) => {
+    'id': collection.id,
+    'name': collection.name,
+    'parent_id': collection.parentId,
+    'kind': collection.kind,
+    if (collection.rules != null) 'rules': collection.rules,
+    'work_ids': collection.workIds,
+    'created_at': collection.createdAt.toUtc().toIso8601String(),
   };
 
   static Map<String, Object?> _playbackSessionJson(PlaybackSession session) => {

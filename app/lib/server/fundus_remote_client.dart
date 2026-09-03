@@ -201,6 +201,30 @@ final class FundusRemotePlaylist {
   final DateTime updatedAt;
 }
 
+/// A collection exposed by a remote Fundus library. Collections are
+/// provider-neutral virtual folders and may contain works of different kinds.
+final class FundusRemoteCollection {
+  const FundusRemoteCollection({
+    required this.id,
+    required this.name,
+    required this.kind,
+    required this.workIds,
+    required this.createdAt,
+    this.parentId,
+    this.rules,
+  });
+
+  final String id;
+  final String name;
+  final String kind;
+  final String? parentId;
+  final Map<String, Object?>? rules;
+  final List<String> workIds;
+  final DateTime createdAt;
+
+  bool get isSmart => kind == 'smart';
+}
+
 final class FundusRemotePlaylistConflict implements Exception {
   const FundusRemotePlaylistConflict(this.current);
 
@@ -707,6 +731,41 @@ final class FundusRemoteClient {
         .map(_playlistFromJson)
         .whereType<FundusRemotePlaylist>()
         .toList();
+  }
+
+  Future<List<FundusRemoteCollection>> collections(
+    FundusRemoteServer server,
+    String libraryId,
+  ) async {
+    final value = await _json(server, '/v1/libraries/$libraryId/collections');
+    final items = value['collections'];
+    if (items is! List) return const [];
+    return items
+        .map(_collectionFromJson)
+        .whereType<FundusRemoteCollection>()
+        .toList(growable: false);
+  }
+
+  static FundusRemoteCollection? _collectionFromJson(Object? value) {
+    if (value is! Map || value['id'] is! String || value['name'] is! String) {
+      return null;
+    }
+    final rules = value['rules'];
+    return FundusRemoteCollection(
+      id: value['id'] as String,
+      name: value['name'] as String,
+      kind: value['kind'] is String ? value['kind'] as String : 'manual',
+      parentId: value['parent_id'] is String
+          ? value['parent_id'] as String
+          : null,
+      rules: rules is Map ? Map<String, Object?>.from(rules) : null,
+      workIds: (value['work_ids'] as List? ?? const [])
+          .whereType<String>()
+          .toList(growable: false),
+      createdAt:
+          DateTime.tryParse('${value['created_at'] ?? ''}') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+    );
   }
 
   Future<PlaybackSession?> playbackSession(
