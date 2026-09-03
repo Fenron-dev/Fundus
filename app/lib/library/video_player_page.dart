@@ -78,6 +78,8 @@ final class _FundusVideoPlayerPage extends StatefulWidget {
 }
 
 final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
+  var _fitMode = _VideoFitMode.contain;
+
   @override
   void initState() {
     super.initState();
@@ -147,6 +149,20 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
       foregroundColor: Colors.white,
       title: Text(widget.title),
       actions: [
+        PopupMenuButton<_VideoFitMode>(
+          tooltip: 'Darstellung',
+          initialValue: _fitMode,
+          onSelected: (value) => setState(() => _fitMode = value),
+          itemBuilder: (context) => [
+            for (final mode in _VideoFitMode.values)
+              CheckedPopupMenuItem(
+                value: mode,
+                checked: mode == _fitMode,
+                child: Text(mode.label),
+              ),
+          ],
+          icon: const Icon(Icons.fit_screen_outlined),
+        ),
         IconButton(
           tooltip: 'Tonspur und Untertitel',
           onPressed: () => _showTracks(context),
@@ -164,7 +180,7 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
         aspectRatio: 16 / 9,
         child: Video(
           controller: widget.videoController,
-          fit: BoxFit.contain,
+          fit: _fitMode.fit,
           controls: AdaptiveVideoControls,
         ),
       ),
@@ -280,4 +296,15 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
     String two(int n) => n.toString().padLeft(2, '0');
     return '${two(value.inHours)}:${two(value.inMinutes.remainder(60))}:${two(value.inSeconds.remainder(60))}';
   }
+}
+
+enum _VideoFitMode {
+  contain('Einpassen', BoxFit.contain),
+  cover('Ausfüllen', BoxFit.cover),
+  fill('Strecken', BoxFit.fill);
+
+  const _VideoFitMode(this.label, this.fit);
+
+  final String label;
+  final BoxFit fit;
 }
