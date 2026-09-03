@@ -118,6 +118,9 @@ final class FundusServerHandler {
     final router = Router()
       ..get('/health', _health)
       ..get('/api/v1/info', _capabilities)
+      // Keep the capabilities probe compatible with older clients and
+      // reverse proxies that still publish the historical /api/v1 prefix.
+      ..get('/api/v1/capabilities', _capabilities)
       ..get('/v1/health', _health)
       ..post('/v1/pairing/claim', _claimPairing)
       ..get('/v1/capabilities', _capabilities)

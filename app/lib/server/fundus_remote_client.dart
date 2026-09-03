@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -6,6 +7,8 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:fundus_core/fundus_core.dart';
+
+import '../diagnostics/fundus_diagnostics.dart';
 
 final class FundusPairingInvitation {
   const FundusPairingInvitation({
@@ -250,11 +253,16 @@ final class FundusRemoteCollectionConflict implements Exception {
 }
 
 final class FundusRemoteRequestException extends HttpException {
-  FundusRemoteRequestException(this.statusCode, this.responseBody)
-    : super('Serverfehler $statusCode.');
+  FundusRemoteRequestException(this.statusCode, this.responseBody, {this.uri})
+    : super(
+        uri == null
+            ? 'Serverfehler $statusCode.'
+            : 'Serverfehler $statusCode bei ${uri.path}.',
+      );
 
   final int statusCode;
   final String responseBody;
+  final Uri? uri;
 }
 
 final class FundusRemotePlaybackSessionConflict implements Exception {
@@ -586,7 +594,24 @@ final class FundusRemoteClient {
     Uri baseUri,
   ) async {
     final candidate = server.copyWith(baseUri: baseUri);
-    final value = await _json(candidate, '/v1/capabilities');
+    Map<String, dynamic> value;
+    try {
+      value = await _json(candidate, '/v1/capabilities');
+    } on FundusRemoteRequestException catch (error) {
+      // Older desktop builds exposed the same endpoint as /api/v1/info.
+      // Keep reconnects after an update/sleep resilient while the server is
+      // upgraded, and make the fallback visible in diagnostics.
+      if (error.statusCode != HttpStatus.notFound) rethrow;
+      value = await _json(candidate, '/api/v1/info');
+      unawaited(
+        FundusDiagnostics.instance.record('remote.endpoint_fallback', {
+          'base_url': baseUri.toString(),
+          'from': '/v1/capabilities',
+          'to': '/api/v1/info',
+          'status': error.statusCode,
+        }),
+      );
+    }
     if (value['server_id'] != server.id) {
       throw const HttpException(
         'Gefundene Geräteidentität stimmt nicht überein.',
@@ -1831,7 +1856,11 @@ final class FundusRemoteClient {
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final responseBody = await utf8.decoder.bind(response).join();
-        throw FundusRemoteRequestException(response.statusCode, responseBody);
+        throw FundusRemoteRequestException(
+          response.statusCode,
+          responseBody,
+          uri: uri,
+        );
       }
       return FundusRemoteStream(client, response);
     } catch (_) {

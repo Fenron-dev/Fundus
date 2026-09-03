@@ -57,6 +57,20 @@ void main() {
     expect(body.containsKey('library_count'), isFalse);
   });
 
+  test('capabilities remain available on the historical api prefix', () async {
+    final response = await server.handler(
+      Request(
+        'GET',
+        Uri.parse('http://localhost/api/v1/capabilities'),
+        headers: {'authorization': 'Bearer secret'},
+      ),
+    );
+    final body = await _json(response);
+    expect(response.statusCode, 200);
+    expect(body['server_id'], 'server-test');
+    expect(body['api_version'], 1);
+  });
+
   test('API rejects missing token', () async {
     final response = await server.handler(
       Request('GET', Uri.parse('http://localhost/v1/libraries')),
