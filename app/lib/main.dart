@@ -31,6 +31,7 @@ import 'library/work_content_list.dart';
 import 'library/work_annotation_list.dart';
 import 'library/fundus_breadcrumbs.dart';
 import 'library/fundus_library_catalog.dart';
+import 'library/collection_rules.dart';
 import 'library/media_content_schema.dart';
 import 'library/video_player_page.dart';
 import 'library/zip_archive_browser.dart';
@@ -1507,7 +1508,10 @@ class _LibraryShellState extends State<LibraryShell> {
     final works = LibraryWorkSearch.apply(_allWorks, _query)
         .where(
           (work) =>
-              collectionWorkIds == null || collectionWorkIds.contains(work.id),
+              collection == null ||
+              (collection.isSmart
+                  ? matchesCollectionRules(work, collection.rules)
+                  : collectionWorkIds!.contains(work.id)),
         )
         .toList(growable: false);
     final kinds = _section.workKinds;
@@ -3665,7 +3669,9 @@ class _LibraryShellState extends State<LibraryShell> {
                           ),
                           title: Text(collection.name),
                           subtitle: Text(
-                            '${collection.workIds.length} Werk(e)',
+                            collection.isSmart
+                                ? '${_allWorks.where((work) => matchesCollectionRules(work, collection.rules)).length} Werk(e) · Smart-Sammlung'
+                                : '${collection.workIds.length} Werk(e)',
                           ),
                           onTap: () {
                             setState(() {
@@ -3682,7 +3688,8 @@ class _LibraryShellState extends State<LibraryShell> {
                               IconButton(
                                 tooltip: 'Werke zuordnen',
                                 icon: const Icon(Icons.playlist_add_check),
-                                onPressed: library.isReadOnly
+                                onPressed:
+                                    library.isReadOnly || collection.isSmart
                                     ? null
                                     : () async {
                                         await _editCollectionWorks(collection);
@@ -3712,6 +3719,63 @@ class _LibraryShellState extends State<LibraryShell> {
                     ),
             ),
             actions: [
+              TextButton.icon(
+                onPressed: library.isReadOnly
+                    ? null
+                    : () async {
+                        final controller = TextEditingController();
+                        final name = await showDialog<String>(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Neue Smart-Sammlung'),
+                            content: TextField(
+                              controller: controller,
+                              autofocus: true,
+                              decoration: const InputDecoration(
+                                labelText: 'Name',
+                                helperText:
+                                    'Die aktuellen Filter werden automatisch als Regeln gespeichert.',
+                              ),
+                              onSubmitted: (_) =>
+                                  Navigator.pop(context, controller.text),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text('Abbrechen'),
+                              ),
+                              FilledButton(
+                                onPressed: () =>
+                                    Navigator.pop(context, controller.text),
+                                child: const Text('Anlegen'),
+                              ),
+                            ],
+                          ),
+                        );
+                        controller.dispose();
+                        if (name?.trim().isNotEmpty == true) {
+                          final rules = collectionRulesFromQuery(
+                            _query,
+                            sectionKinds: _section.workKinds,
+                            contentStyle: _section == _LibrarySection.anime
+                                ? 'anime'
+                                : null,
+                            sensitivity: _section == _LibrarySection.hhh
+                                ? 'adult_explicit'
+                                : null,
+                          );
+                          final collection = library.saveCollection(
+                            name: name!.trim(),
+                            kind: 'smart',
+                            rules: rules,
+                          );
+                          setState(() => _activeCollectionId = collection.id);
+                          setDialogState(() {});
+                        }
+                      },
+                icon: const Icon(Icons.auto_awesome),
+                label: const Text('Neue Smart-Sammlung'),
+              ),
               TextButton.icon(
                 onPressed: library.isReadOnly
                     ? null
@@ -5868,7 +5932,11 @@ class _DetailPanelState extends State<_DetailPanel> {
     if (library == null) return const [];
     return library
         .listCollections()
-        .where((collection) => collection.workIds.contains(work.id))
+        .where(
+          (collection) => collection.isSmart
+              ? matchesCollectionRules(work, collection.rules)
+              : collection.workIds.contains(work.id),
+        )
         .map((collection) => collection.name)
         .where((name) => name.trim().isNotEmpty)
         .toList(growable: false);
