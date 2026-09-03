@@ -5546,7 +5546,26 @@ final class _VideoFileTechnicalSubtitle extends StatelessWidget {
       final sizeLabel = size == null
           ? 'Größe wird geladen …'
           : _formatBytes(size);
-      return Text('$extension · $sizeLabel · ${file.relativePath}');
+      final details = <String>[extension];
+      if (file.mimeType case final mime? when mime.trim().isNotEmpty) {
+        details.add(mime);
+      }
+      if (file.duration case final duration?) {
+        details.add('Dauer ${_formatMediaDuration(duration)}');
+      }
+      if (file.audioMetadata case final audio?) {
+        details
+          ..add('Audio ${audio.codec}')
+          ..add(
+            audio.channels == null
+                ? audio.container
+                : audio.channels == 1
+                ? 'Mono'
+                : '${audio.channels} Kanäle',
+          );
+      }
+      details.add(sizeLabel);
+      return Text('${details.join(' · ')}\n${file.relativePath}');
     },
   );
 
@@ -5557,6 +5576,13 @@ final class _VideoFileTechnicalSubtitle extends StatelessWidget {
     }
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
+}
+
+String _formatMediaDuration(Duration value) {
+  final hours = value.inHours;
+  final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
+  final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
+  return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
 }
 
 class _AudioCompatibilityPanel extends StatelessWidget {
@@ -9046,6 +9072,7 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
   Widget? _mobileTrackSubtitle(LibraryPlaybackTrack track) {
     final metadata = track.audioMetadata;
     final parts = <String>[
+      if (track.mimeType case final mime? when mime.trim().isNotEmpty) mime,
       if (metadata != null) ...[
         metadata.container,
         metadata.codec,
@@ -9055,9 +9082,19 @@ class _ExpandedPlayerState extends State<_ExpandedPlayer> {
         if (metadata.sampleRateHz case final sampleRate?)
           '${(sampleRate / 1000).toStringAsFixed(sampleRate % 1000 == 0 ? 0 : 1)} kHz',
       ],
-      if (track.duration case final duration?) _PlayerBar._time(duration),
+      if (track.duration case final duration?)
+        'Dauer ${_formatMediaDuration(duration)}',
+      if (track.size case final bytes?) _formatBytesForDisplay(bytes),
     ];
     return parts.isEmpty ? null : Text(parts.join(' · '));
+  }
+
+  String _formatBytesForDisplay(int bytes) {
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 
   Widget _mainPager(LibraryWorkSummary? work) {

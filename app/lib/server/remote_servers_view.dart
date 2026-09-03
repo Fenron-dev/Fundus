@@ -6141,7 +6141,9 @@ String _remoteChapterSubtitle(FundusRemoteChapter chapter, int trackCount) {
 
 Widget? _remoteTechnicalSubtitle(FundusRemoteTrack track) {
   final metadata = track.audioMetadata;
-  if (metadata == null && track.size == null) return null;
+  if (metadata == null && track.size == null && track.duration == null) {
+    return null;
+  }
   final target = Platform.isAndroid
       ? AudioPlaybackTarget.android
       : AudioPlaybackTarget.desktop;
@@ -6149,6 +6151,9 @@ Widget? _remoteTechnicalSubtitle(FundusRemoteTrack track) {
   final parts = <String>[
     p.extension(track.title).replaceFirst('.', '').toUpperCase(),
   ];
+  if (track.mimeType case final mime? when mime.trim().isNotEmpty) {
+    parts.add(mime);
+  }
   if (metadata != null) {
     parts
       ..add(metadata.container)
@@ -6160,6 +6165,9 @@ Widget? _remoteTechnicalSubtitle(FundusRemoteTrack track) {
         if (metadata.sampleRateHz case final value?)
           '${(value / 1000).toStringAsFixed(value % 1000 == 0 ? 0 : 1)} kHz',
       ]);
+  }
+  if (track.duration case final duration?) {
+    parts.add('Dauer ${_formatRemoteDuration(duration)}');
   }
   if (track.size case final bytes?) parts.add(_formatRemoteBytes(bytes));
   final label = switch (assessment?.status) {
