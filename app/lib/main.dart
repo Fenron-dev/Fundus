@@ -5069,6 +5069,7 @@ class _VideoHero extends StatelessWidget {
     required this.onLoadMetadata,
     this.onChangeType,
     this.onSelectPerson,
+    this.collectionNames = const [],
   });
 
   final LibraryWorkSummary work;
@@ -5077,6 +5078,7 @@ class _VideoHero extends StatelessWidget {
   final VoidCallback? onLoadMetadata;
   final VoidCallback? onChangeType;
   final ValueChanged<String>? onSelectPerson;
+  final List<String> collectionNames;
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
@@ -5136,6 +5138,22 @@ class _VideoHero extends StatelessWidget {
               runSpacing: 4,
               children: [
                 for (final genre in work.genres) Chip(label: Text(genre)),
+              ],
+            ),
+          ],
+          if (collectionNames.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text('Sammlungen', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                for (final collection in collectionNames)
+                  Chip(
+                    avatar: const Icon(Icons.folder_special_outlined, size: 18),
+                    label: Text(collection),
+                  ),
               ],
             ),
           ],
@@ -5794,6 +5812,17 @@ class _DetailPanelState extends State<_DetailPanel> {
     _syncPlayer(notify: false);
   }
 
+  List<String> _collectionsFor(LibraryWorkSummary work) {
+    final library = widget.library;
+    if (library == null) return const [];
+    return library
+        .listCollections()
+        .where((collection) => collection.workIds.contains(work.id))
+        .map((collection) => collection.name)
+        .where((name) => name.trim().isNotEmpty)
+        .toList(growable: false);
+  }
+
   void _syncPlayer({bool notify = true}) {
     final current =
         widget.library != null &&
@@ -5870,6 +5899,7 @@ class _DetailPanelState extends State<_DetailPanel> {
           _VideoHero(
             work: selectedWork,
             directoryPath: directoryPath,
+            collectionNames: _collectionsFor(selectedWork),
             onOpen: workFiles == null || workFiles.isEmpty
                 ? null
                 : () => _openDocumentWork(selectedWork, workFiles),
