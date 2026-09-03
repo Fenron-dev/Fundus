@@ -931,6 +931,7 @@ final class FundusDatabase {
       finished: selected.finished,
       deviceId: deviceId,
       operationId: operationId,
+      forceRevision: true,
     );
   }
 
@@ -982,6 +983,7 @@ final class FundusDatabase {
     required bool finished,
     required String deviceId,
     required String operationId,
+    bool forceRevision = false,
   }) {
     return transaction(() {
       final processed = _database.select(
@@ -1014,7 +1016,8 @@ final class FundusDatabase {
       // This keeps progress history useful instead of filling it with
       // duplicates and avoids unnecessary sync traffic on network vaults.
       final current = loadProgress(workId);
-      if (current != null &&
+      if (!forceRevision &&
+          current != null &&
           current.fileId == fileId &&
           current.finished == finished &&
           jsonEncode(current.position.toJson()) ==

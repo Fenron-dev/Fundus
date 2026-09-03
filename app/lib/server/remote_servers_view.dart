@@ -194,6 +194,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   _RemoteLayout _layout = _RemoteLayout.grid;
   _RemoteGrouping _grouping = _RemoteGrouping.books;
   String? _selectedGroup;
+  String? _selectedCredit;
   bool _busy = true;
   String? _error;
   FundusRemotePlayerController? _remotePlayer;
@@ -461,6 +462,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       _error = null;
       _selectedServer = server;
       _selectedLibrary = null;
+      _selectedCredit = null;
       _offlineLibraryFilter = null;
       _works = const [];
       _playlists = const [];
@@ -524,6 +526,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       _query = const LibraryWorkQuery(sort: LibraryWorkSort.title);
       _searchController.clear();
       _librarySection = _RemoteLibrarySection.media;
+      _selectedGroup = null;
+      _selectedCredit = null;
     });
     try {
       final result = await _runWithReconnect(
@@ -1095,6 +1099,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           .where((work) => _remoteGroupValues(work).contains(group))
           .toList();
     }
+    if (_selectedCredit case final credit?) {
+      final needle = credit.toLowerCase();
+      works = works
+          .where(
+            (work) => _remoteVideoCredits(
+              work.providerMetadata,
+            ).any((item) => item.name.toLowerCase() == needle),
+          )
+          .toList();
+    }
     final groups = _remoteGroups(works);
     return CustomScrollView(
       slivers: [
@@ -1126,6 +1140,20 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             ),
           ),
         ),
+        if (_selectedCredit case final credit?)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: InputChip(
+                  avatar: const Icon(Icons.person_outline, size: 18),
+                  label: Text('Besetzung: $credit'),
+                  onDeleted: () => setState(() => _selectedCredit = null),
+                ),
+              ),
+            ),
+          ),
         SliverToBoxAdapter(
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -1470,7 +1498,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       children: [
         ListTile(
           leading: BackButton(
-            onPressed: () => setState(() => _selectedLibrary = null),
+            onPressed: () => setState(() {
+              _selectedLibrary = null;
+              _selectedGroup = null;
+              _selectedCredit = null;
+            }),
           ),
           title: Text(library.name),
           subtitle: Text('${playlists.length} Playlist(en)'),
@@ -1824,6 +1856,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     _query = view.query;
     _searchController.text = view.query.text;
     _selectedGroup = null;
+    _selectedCredit = null;
   });
 
   Future<void> _manageRemoteViews() async {
@@ -2451,13 +2484,17 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                                     for (final credit in _remoteVideoCredits(
                                       work.providerMetadata,
                                     ))
-                                      Chip(
+                                      ActionChip(
                                         avatar: _remoteCreditAvatar(credit),
                                         label: Text(
                                           credit.role == null ||
                                                   credit.role!.trim().isEmpty
                                               ? credit.name
                                               : '${credit.name} · ${credit.role}',
+                                        ),
+                                        onPressed: () => Navigator.pop(
+                                          context,
+                                          'credit:${credit.name}',
                                         ),
                                       ),
                                   ],
@@ -2691,6 +2728,16 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         );
       } else {
         await _showWork(server, library, work);
+      }
+      return;
+    }
+    if (action.startsWith('credit:')) {
+      final credit = action.substring('credit:'.length).trim();
+      if (credit.isNotEmpty && mounted) {
+        setState(() {
+          _selectedCredit = credit;
+          _selectedGroup = null;
+        });
       }
       return;
     }
