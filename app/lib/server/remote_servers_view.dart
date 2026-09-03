@@ -1595,6 +1595,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     FundusRemoteLibrary library,
     FundusRemoteWork work, {
     FundusOfflineWork? offlineWork,
+    String? startFileId,
+    Duration? startPosition,
   }) async {
     final player =
         _remotePlayer ??
@@ -1609,13 +1611,26 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       setState(() => _remotePlayer = player);
     }
     if (offlineWork != null) {
-      await player.open(server, library, work, offlineWork: offlineWork);
+      await player.open(
+        server,
+        library,
+        work,
+        offlineWork: offlineWork,
+        startFileId: startFileId,
+        startPosition: startPosition,
+      );
     } else {
       final result = await _runWithReconnect(
         server,
         (active) => _client.verifyEndpoint(active, active.baseUri),
       );
-      await player.open(result.server, library, work);
+      await player.open(
+        result.server,
+        library,
+        work,
+        startFileId: startFileId,
+        startPosition: startPosition,
+      );
     }
     if (mounted) {
       // Pause the already-opened remote player while the fullscreen route
@@ -2305,6 +2320,14 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             final orderedTracks = _orderedRemoteTracks(detailTracks, trackSort);
             final trackRows = <Widget>[];
             int? lastSeason;
+            final detail = WorkDetailViewModel.fromRemote(
+              work,
+              serverId: server.id,
+              libraryId: library.id,
+              serverName: server.name,
+              libraryName: library.name,
+              offlineAvailable: isOffline,
+            );
             for (final entry in orderedTracks) {
               final episode =
                   entry.track.episode ?? parseVideoEpisode(entry.track.title);
@@ -2348,12 +2371,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                       : entry.track.duration == null
                       ? null
                       : Text(_formatRemoteDuration(entry.track.duration!)),
-                  onTap: isDocument
-                      ? () => Navigator.pop(
-                          context,
-                          'open:${entry.originalIndex}',
-                        )
-                      : null,
+                  onTap: () =>
+                      Navigator.pop(context, 'open:${entry.originalIndex}'),
                 ),
               );
             }
@@ -2363,159 +2382,101 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox(
-                          width: 120,
-                          height: 170,
-                          child: work.hasCover
-                              ? _remoteCover(
-                                  server,
-                                  library,
-                                  work,
-                                  borderRadius: BorderRadius.circular(10),
-                                )
-                              : const Icon(Icons.audiotrack, size: 72),
-                        ),
-                        const SizedBox(width: 18),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                work.title,
-                                style: Theme.of(
-                                  context,
-                                ).textTheme.headlineSmall,
+                    WorkDetailHeader(
+                      detail: detail,
+                      coverBuilder: (_) => work.hasCover
+                          ? _remoteCover(
+                              server,
+                              library,
+                              work,
+                              borderRadius: BorderRadius.circular(14),
+                            )
+                          : Icon(_kindIcon(work.kind), size: 72),
+                      primaryAction: WorkDetailHeaderAction(
+                        label: isDocument
+                            ? (documentPosition == null
+                                  ? 'Lesen'
+                                  : 'Fortsetzen')
+                            : (work.progressPosition == null
+                                  ? 'Abspielen'
+                                  : 'Fortsetzen'),
+                        icon: isDocument
+                            ? Icons.menu_book_outlined
+                            : Icons.play_arrow,
+                        onPressed: detailTracks.isEmpty
+                            ? null
+                            : () => Navigator.pop(
+                                context,
+                                isDocument ? 'open:resume' : 'play',
                               ),
-                              const SizedBox(height: 6),
-                              Text(work.authors.join(', ')),
-                              if (work.subtitle case final subtitle?) ...[
-                                const SizedBox(height: 4),
-                                Text(subtitle),
-                              ],
-                              if (work.series case final series?) ...[
-                                const SizedBox(height: 6),
-                                Text(
-                                  work.seriesSequence == null
-                                      ? series
-                                      : '$series · Band '
-                                            '${_formatRemoteSequence(work.seriesSequence!)}',
-                                ),
-                              ],
-                              const SizedBox(height: 10),
-                              Wrap(
-                                spacing: 6,
-                                runSpacing: 6,
-                                children: [
-                                  for (final narrator in work.narrators)
-                                    Chip(
-                                      avatar: const Icon(
-                                        Icons.mic_none,
-                                        size: 16,
-                                      ),
-                                      label: Text(narrator),
-                                    ),
-                                  if (work.language case final language?)
-                                    Chip(
-                                      label: Text(_remoteLanguage(language)),
-                                    ),
-                                  if (work.publisher case final publisher?)
-                                    Chip(
-                                      label: Text(
-                                        work.publishedYear == null
-                                            ? publisher
-                                            : '$publisher · ${work.publishedYear}',
-                                      ),
-                                    )
-                                  else if (work.publishedYear case final year?)
-                                    Chip(label: Text('$year')),
-                                  if (work.providerMetadata['provider']
-                                      case final provider?
-                                      when provider is String)
-                                    Chip(
-                                      avatar: const Icon(
-                                        Icons.cloud_done_outlined,
-                                        size: 16,
-                                      ),
-                                      label: Text(
-                                        'Quelle: ${provider.toUpperCase()}',
-                                      ),
-                                    ),
-                                  if (work.providerMetadata['runtime_minutes']
-                                      case final minutes?
-                                      when minutes is num && minutes > 0)
-                                    Chip(
-                                      label: Text(
-                                        _formatRemoteVideoRuntime(
-                                          minutes.round(),
-                                        ),
-                                      ),
-                                    ),
-                                  if (work.providerMetadata['season']
-                                      case final season? when season is num)
-                                    Chip(
-                                      label: Text('Staffel ${season.round()}'),
-                                    ),
-                                  if (work.providerMetadata['episode_count']
-                                      case final count? when count is num)
-                                    Chip(
-                                      label: Text('${count.round()} Folgen'),
-                                    ),
-                                  Chip(
-                                    label: Text('${work.fileCount} Datei(en)'),
-                                  ),
-                                ],
-                              ),
-                              if (_remoteVideoCredits(
-                                work.providerMetadata,
-                              ).isNotEmpty) ...[
-                                const SizedBox(height: 12),
-                                Text(
-                                  'Besetzung & Crew',
-                                  style: Theme.of(context).textTheme.titleSmall,
-                                ),
-                                const SizedBox(height: 6),
-                                Wrap(
-                                  spacing: 6,
-                                  runSpacing: 6,
-                                  children: [
-                                    for (final credit in _remoteVideoCredits(
-                                      work.providerMetadata,
-                                    ))
-                                      ActionChip(
-                                        avatar: _remoteCreditAvatar(credit),
-                                        label: Text(
-                                          credit.role == null ||
-                                                  credit.role!.trim().isEmpty
-                                              ? credit.name
-                                              : '${credit.name} · ${credit.role}',
-                                        ),
-                                        onPressed: () => Navigator.pop(
-                                          context,
-                                          'credit:${credit.name}',
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ],
-                              if (_remoteTrailerUrl(work.providerMetadata)
-                                  case final trailer?)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 10),
-                                  child: TextButton.icon(
-                                    onPressed: () =>
-                                        _copyRemoteTrailer(context, trailer),
-                                    icon: const Icon(Icons.ondemand_video),
-                                    label: const Text('Trailer-Link kopieren'),
-                                  ),
-                                ),
-                            ],
-                          ),
+                      ),
+                      secondaryAction: WorkDetailHeaderAction(
+                        label: isOffline
+                            ? 'Download verwalten'
+                            : 'Offline speichern',
+                        icon: isOffline
+                            ? Icons.download_done
+                            : Icons.download_outlined,
+                        onPressed: () => Navigator.pop(
+                          context,
+                          isOffline ? 'remove_download' : 'download',
                         ),
-                      ],
+                      ),
                     ),
+                    if (isDocument && !forceOffline)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () =>
+                              Navigator.pop(context, 'progress_history'),
+                          icon: const Icon(Icons.history),
+                          label: const Text('Gerätestände'),
+                        ),
+                      ),
+                    const SizedBox(height: 18),
+                    WorkDetailFacts(detail: detail, progress: documentPosition),
+                    if (_remoteVideoCredits(
+                      work.providerMetadata,
+                    ).isNotEmpty) ...[
+                      const SizedBox(height: 18),
+                      Text(
+                        'Besetzung & Crew',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          for (final credit in _remoteVideoCredits(
+                            work.providerMetadata,
+                          ))
+                            ActionChip(
+                              avatar: _remoteCreditAvatar(credit),
+                              label: Text(
+                                credit.role == null ||
+                                        credit.role!.trim().isEmpty
+                                    ? credit.name
+                                    : '${credit.name} · ${credit.role}',
+                              ),
+                              onPressed: () => Navigator.pop(
+                                context,
+                                'credit:${credit.name}',
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                    if (_remoteTrailerUrl(work.providerMetadata)
+                        case final trailer?)
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () => _copyRemoteTrailer(context, trailer),
+                          icon: const Icon(Icons.ondemand_video),
+                          label: const Text('Trailer-Link kopieren'),
+                        ),
+                      ),
                     if (work.progressPosition case final position?) ...[
                       const SizedBox(height: 16),
                       Text(
@@ -2631,37 +2592,6 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                       ...trackRows,
                     ],
                     const SizedBox(height: 24),
-                    Row(
-                      children: [
-                        if (!isDocument) ...[
-                          Expanded(
-                            child: FilledButton.icon(
-                              onPressed: detailTracks.isEmpty
-                                  ? null
-                                  : () => Navigator.pop(context, 'play'),
-                              icon: const Icon(Icons.play_arrow),
-                              label: const Text('Abspielen / fortsetzen'),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                        ],
-                        if (!isDocument)
-                          IconButton.filledTonal(
-                            onPressed: () => Navigator.pop(
-                              context,
-                              isOffline ? 'remove_download' : 'download',
-                            ),
-                            tooltip: isOffline
-                                ? 'Offline-Kopie löschen'
-                                : 'Offline speichern',
-                            icon: Icon(
-                              isOffline
-                                  ? Icons.download_done
-                                  : Icons.download_outlined,
-                            ),
-                          ),
-                      ],
-                    ),
                   ],
                 ),
               ),
@@ -2844,7 +2774,21 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     }
     if (action.startsWith('open:')) {
       if (_isRemoteVideoWork(work)) {
-        await _playRemoteVideo(server, library, work, offlineWork: offlineWork);
+        final index = int.tryParse(action.substring('open:'.length));
+        final selected =
+            index == null || index < 0 || index >= detailTracks.length
+            ? null
+            : detailTracks[index];
+        await _playRemoteVideo(
+          server,
+          library,
+          work,
+          offlineWork: offlineWork,
+          startFileId: selected?.id,
+          // An explicit episode click must not reuse the work-level resume
+          // position from another episode.
+          startPosition: selected == null ? null : Duration.zero,
+        );
         return;
       }
       final target = action.substring(5);
@@ -6120,13 +6064,6 @@ String _formatRemoteDuration(Duration value) {
   final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
   final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
   return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
-}
-
-String _formatRemoteVideoRuntime(int minutes) {
-  if (minutes < 60) return '$minutes Min.';
-  final hours = minutes ~/ 60;
-  final remainder = minutes % 60;
-  return remainder == 0 ? '$hours Std.' : '$hours Std. $remainder Min.';
 }
 
 String _remoteChapterSubtitle(FundusRemoteChapter chapter, int trackCount) {

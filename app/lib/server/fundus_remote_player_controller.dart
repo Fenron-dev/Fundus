@@ -238,6 +238,8 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     FundusRemoteLibrary library,
     FundusRemoteWork work, {
     FundusOfflineWork? offlineWork,
+    String? startFileId,
+    Duration? startPosition,
   }) {
     _workQueue = [work];
     _workQueueIndex = 0;
@@ -245,7 +247,14 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     _playlistRevision = null;
     _repeatMode = RepeatMode.none;
     _shuffleOrder = const [];
-    return _openWork(server, library, work, offlineWork: offlineWork);
+    return _openWork(
+      server,
+      library,
+      work,
+      offlineWork: offlineWork,
+      startFileId: startFileId,
+      startPosition: startPosition,
+    );
   }
 
   Future<void> openQueue(
@@ -550,10 +559,20 @@ final class FundusRemotePlayerController extends ChangeNotifier {
             Media(proxy.urls[index].toString()),
         ];
       } else {
+        // Keep the native playlist aligned with `_tracks`. Offline works may
+        // contain a cover or other sidecar files before the playable videos;
+        // using the raw offline order here shifts every resume index by one
+        // and can attach audio to the wrong (or non-video) file.
+        final pathsById = {
+          for (final item in offlineWork.tracks) item.id: item.path,
+        };
         media = [
-          for (var index = 0; index < offlineWork.tracks.length; index++)
-            Media(offlineWork.tracks[index].path),
+          for (final item in _tracks)
+            if (pathsById[item.id] case final path?) Media(path),
         ];
+        if (media.length != _tracks.length) {
+          throw StateError('Offline-Playlist enthält nicht alle Videodateien.');
+        }
       }
       await _player.open(Playlist(media, index: _currentIndex), play: false);
       playerReadyMs = openStarted.elapsedMilliseconds;
