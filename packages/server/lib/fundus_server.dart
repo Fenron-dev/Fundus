@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
@@ -348,6 +349,18 @@ final class FundusServerHandler {
     final visible = entry.works
         .where((work) => _canViewWork(request, work))
         .toList(growable: false);
+    final etag = _catalogEtag(visible);
+    if (request.url.queryParameters['etag'] == etag) {
+      return _json({
+        'library_id': libraryId,
+        'works': const <Object?>[],
+        'deleted': const <String>[],
+        'next_cursor': 0,
+        'has_more': false,
+        'etag': etag,
+        'not_modified': true,
+      });
+    }
     // Cursors address the visible snapshot, not the underlying unfiltered
     // list. Otherwise hiding an HHH work before the cursor would silently
     // skip a normal work on the next page.
@@ -368,7 +381,20 @@ final class FundusServerHandler {
       'deleted': const <String>[],
       'next_cursor': nextCursor,
       'has_more': nextCursor < visible.length,
+      'etag': etag,
+      'not_modified': false,
     });
+  }
+
+  String _catalogEtag(List<LibraryWorkSummary> works) {
+    // Work ids alone are insufficient: a metadata edit must invalidate the
+    // client mirror as well. Sorting keeps the fingerprint stable even when
+    // the scanner returns the same works in a different order.
+    final payload = [
+      for (final work in [...works]..sort((a, b) => a.id.compareTo(b.id)))
+        _workJson(work),
+    ];
+    return sha256.convert(utf8.encode(jsonEncode(payload))).toString();
   }
 
   Future<Response> _work(

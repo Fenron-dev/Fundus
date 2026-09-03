@@ -718,15 +718,32 @@ class _FundusAppState extends State<FundusApp> {
           continue;
         }
         try {
-          final works = await _fetchRemoteCatalog(server, reference.libraryId);
+          final fetched = await _fetchRemoteCatalog(
+            server,
+            reference.libraryId,
+            etag: previous?.etag,
+          );
+          if (fetched.notModified && previous != null) {
+            existing[previous.key] = FundusRemoteCatalogSnapshot(
+              serverId: previous.serverId,
+              libraryId: previous.libraryId,
+              serverName: server.name,
+              libraryName: reference.name,
+              works: previous.works,
+              fetchedAt: DateTime.now(),
+              etag: fetched.etag ?? previous.etag,
+            );
+            continue;
+          }
           existing['${server.id}\u0000${reference.libraryId}'] =
               FundusRemoteCatalogSnapshot(
                 serverId: server.id,
                 libraryId: reference.libraryId,
                 serverName: server.name,
                 libraryName: reference.name,
-                works: works,
+                works: fetched.works,
                 fetchedAt: DateTime.now(),
+                etag: fetched.etag,
               );
         } catch (_) {
           // Keep the last known catalog when a peer is unreachable.
@@ -741,10 +758,12 @@ class _FundusAppState extends State<FundusApp> {
     }
   }
 
-  Future<List<FundusRemoteWork>> _fetchRemoteCatalog(
+  Future<({List<FundusRemoteWork> works, String? etag, bool notModified})>
+  _fetchRemoteCatalog(
     FundusRemoteServer server,
-    String libraryId,
-  ) async {
+    String libraryId, {
+    String? etag,
+  }) async {
     final result = <FundusRemoteWork>[];
     var cursor = 0;
     try {
@@ -754,16 +773,29 @@ class _FundusAppState extends State<FundusApp> {
           libraryId,
           since: cursor,
           limit: 1000,
+          etag: cursor == 0 ? etag : null,
         );
+        if (page.notModified) {
+          return (
+            works: const <FundusRemoteWork>[],
+            etag: page.etag,
+            notModified: true,
+          );
+        }
         result.addAll(page.works);
+        etag = page.etag ?? etag;
         if (!page.hasMore || page.nextCursor <= cursor) break;
         cursor = page.nextCursor;
       } while (result.length < 100000);
-      return result;
+      return (works: result, etag: etag, notModified: false);
     } on FundusRemoteRequestException catch (error) {
       // Older paired servers do not expose /catalog yet.
       if (error.statusCode != HttpStatus.notFound) rethrow;
-      return _remoteClient.works(server, libraryId);
+      return (
+        works: await _remoteClient.works(server, libraryId),
+        etag: null,
+        notModified: false,
+      );
     }
   }
 

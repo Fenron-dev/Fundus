@@ -213,31 +213,38 @@ void main() {
     expect(body['capabilities'], contains('catalog_delta'));
   });
 
-  test(
-    'catalog endpoint pages visible works with a resumable cursor',
-    () async {
-      final libraryId = firstLibrary.manifest.libraryId;
-      final first = await _get(
-        server,
-        '/v1/libraries/$libraryId/catalog?since=0&limit=1',
-      );
-      final firstBody = await _json(first);
-      expect(first.statusCode, 200);
-      expect(firstBody['works'], hasLength(1));
-      expect(firstBody['next_cursor'], 1);
-      expect(firstBody['has_more'], isFalse);
-      expect(firstBody['deleted'], isEmpty);
+  test('catalog endpoint pages visible works with a resumable cursor', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final first = await _get(
+      server,
+      '/v1/libraries/$libraryId/catalog?since=0&limit=1',
+    );
+    final firstBody = await _json(first);
+    expect(first.statusCode, 200);
+    expect(firstBody['works'], hasLength(1));
+    expect(firstBody['next_cursor'], 1);
+    expect(firstBody['has_more'], isFalse);
+    expect(firstBody['deleted'], isEmpty);
+    expect(firstBody['etag'], isA<String>());
 
-      final resumed = await _get(
-        server,
-        '/v1/libraries/$libraryId/catalog?since=1&limit=1000',
-      );
-      final resumedBody = await _json(resumed);
-      expect(resumed.statusCode, 200);
-      expect(resumedBody['works'], isEmpty);
-      expect(resumedBody['next_cursor'], 1);
-    },
-  );
+    final unchanged = await _get(
+      server,
+      '/v1/libraries/$libraryId/catalog?since=0&limit=1000&etag=${firstBody['etag']}',
+    );
+    final unchangedBody = await _json(unchanged);
+    expect(unchanged.statusCode, 200);
+    expect(unchangedBody['not_modified'], isTrue);
+    expect(unchangedBody['works'], isEmpty);
+
+    final resumed = await _get(
+      server,
+      '/v1/libraries/$libraryId/catalog?since=1&limit=1000',
+    );
+    final resumedBody = await _json(resumed);
+    expect(resumed.statusCode, 200);
+    expect(resumedBody['works'], isEmpty);
+    expect(resumedBody['next_cursor'], 1);
+  });
 
   test('lists multiple libraries without exposing local paths', () async {
     final response = await _get(server, '/v1/libraries');

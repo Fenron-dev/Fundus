@@ -433,12 +433,16 @@ final class FundusRemoteCatalogPage {
     required this.deleted,
     required this.nextCursor,
     required this.hasMore,
+    this.etag,
+    this.notModified = false,
   });
 
   final List<FundusRemoteWork> works;
   final List<String> deleted;
   final int nextCursor;
   final bool hasMore;
+  final String? etag;
+  final bool notModified;
 }
 
 final class FundusRemoteTrack {
@@ -866,11 +870,15 @@ final class FundusRemoteClient {
     String libraryId, {
     int since = 0,
     int limit = 1000,
+    String? etag,
   }) async {
-    final value = await _json(
-      server,
+    final query = StringBuffer(
       '/v1/libraries/$libraryId/catalog?since=$since&limit=$limit',
     );
+    if (etag != null && etag.isNotEmpty) {
+      query.write('&etag=${Uri.encodeQueryComponent(etag)}');
+    }
+    final value = await _json(server, query.toString());
     final items = value['works'];
     final works = items is List
         ? items
@@ -889,6 +897,8 @@ final class FundusRemoteClient {
           ? value['next_cursor'] as int
           : since,
       hasMore: value['has_more'] == true,
+      etag: value['etag'] is String ? value['etag'] as String : null,
+      notModified: value['not_modified'] == true,
     );
   }
 

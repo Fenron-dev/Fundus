@@ -19,6 +19,7 @@ final class FundusRemoteCatalogSnapshot {
     required this.libraryName,
     required this.works,
     required this.fetchedAt,
+    this.etag,
   });
 
   final String serverId;
@@ -28,6 +29,9 @@ final class FundusRemoteCatalogSnapshot {
   final List<FundusRemoteWork> works;
   final DateTime fetchedAt;
 
+  /// Stable server fingerprint for conditional catalog refreshes.
+  final String? etag;
+
   String get key => '$serverId\u0000$libraryId';
 
   Map<String, Object?> toJson() => {
@@ -36,6 +40,7 @@ final class FundusRemoteCatalogSnapshot {
     'server_name': serverName,
     'library_name': libraryName,
     'fetched_at': fetchedAt.toUtc().toIso8601String(),
+    if (etag != null) 'etag': etag,
     'works': works.map((work) => work.toJson()).toList(growable: false),
   };
 
@@ -60,6 +65,7 @@ final class FundusRemoteCatalogSnapshot {
           .whereType<FundusRemoteWork>()
           .toList(growable: false),
       fetchedAt: fetchedAt.toLocal(),
+      etag: value['etag'] is String ? value['etag'] as String : null,
     );
   }
 }

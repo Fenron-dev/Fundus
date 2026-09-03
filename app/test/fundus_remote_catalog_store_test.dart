@@ -10,6 +10,7 @@ void main() {
       serverName: 'Wohnzimmer-Mac',
       libraryName: 'Anime',
       fetchedAt: DateTime.utc(2026, 9, 3, 12),
+      etag: 'catalog-fingerprint-1',
       works: [
         FundusRemoteWork(
           id: 'work-1',
@@ -35,6 +36,7 @@ void main() {
     expect(decoded!.key, original.key);
     expect(decoded.serverName, 'Wohnzimmer-Mac');
     expect(decoded.libraryName, 'Anime');
+    expect(decoded.etag, 'catalog-fingerprint-1');
     expect(decoded.works.single.title, 'Chainsaw Man');
     expect(decoded.works.single.progressPosition, const Duration(seconds: 42));
     expect(decoded.works.single.providerMetadata['genres'], ['Action']);
