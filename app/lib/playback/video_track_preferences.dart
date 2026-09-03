@@ -102,13 +102,22 @@ abstract final class VideoTrackPreferences {
     String? fileId,
     int? season,
   }) async {
-    final keys = <String>[_key(_baseKind(kind))];
-    if (workId != null) keys.add(_key(_baseKind(kind), workId));
+    // Read the generic family first, then the concrete variant.  This keeps
+    // existing `movie`/`tv` settings as a fallback while allowing e.g.
+    // `anime_tv` and `hhh_tv` to diverge without overwriting one another.
+    final families = _preferenceKinds(kind);
+    final keys = <String>[];
+    keys.addAll(families.map(_key));
+    if (workId != null) {
+      keys.addAll(families.map((family) => _key(family, workId)));
+    }
     if (season != null && workId != null) {
-      keys.add(_key(_baseKind(kind), workId, 'season-$season'));
+      keys.addAll(
+        families.map((family) => _key(family, workId, 'season-$season')),
+      );
     }
     if (fileId != null) {
-      keys.add(_key(_baseKind(kind), workId, fileId));
+      keys.addAll(families.map((family) => _key(family, workId, fileId)));
     }
     var result = const VideoTrackPreference();
     for (final key in keys) {
@@ -313,6 +322,12 @@ abstract final class VideoTrackPreferences {
     final base = VideoWorkKind.base(kind);
     return base == 'movie' || base == 'tv' ? base : 'video';
   }
+
+  static List<String> _preferenceKinds(String kind) {
+    final normalized = kind.trim().toLowerCase();
+    final base = _baseKind(normalized);
+    return normalized == base ? [base] : [base, normalized];
+  }
 }
 
 final class VideoTrackPreferenceSettingTile extends StatefulWidget {
@@ -328,7 +343,11 @@ final class _VideoTrackPreferenceSettingTileState
   static const _kinds = [
     ('video', 'Videos'),
     ('movie', 'Filme'),
-    ('tv', 'Serien und Anime'),
+    ('tv', 'Serien'),
+    ('anime_movie', 'Anime-Filme'),
+    ('anime_tv', 'Anime-Serien'),
+    ('hhh_movie', 'HHH-Filme'),
+    ('hhh_tv', 'HHH-Serien'),
   ];
   final Map<String, VideoTrackPreference> _values = {};
 
