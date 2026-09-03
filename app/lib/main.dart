@@ -5271,9 +5271,17 @@ class _DocumentFilesPanel extends StatefulWidget {
 }
 
 class _DocumentFilesPanelState extends State<_DocumentFilesPanel> {
-  _DocumentFileSort _sort = _DocumentFileSort.oldestFirst;
+  late _DocumentFileSort _sort;
   bool _selectionMode = false;
   final Set<String> _selectedFileIds = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _sort = widget.isVideo
+        ? _DocumentFileSort.seasonEpisode
+        : _DocumentFileSort.oldestFirst;
+  }
 
   List<LibraryPlaybackTrack> get _files {
     final result = widget.files.toList();

@@ -1319,6 +1319,77 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     );
   }
 
+  /// Stores a timestamp bookmark for screenshots and the shared video
+  /// player. Remote and offline playback use the same annotation contract so
+  /// a bookmark created on one device is available after reconnecting.
+  Future<void> addBookmarkAtCurrent({String? label, String? note}) async {
+    final server = _server;
+    final library = _library;
+    final work = _work;
+    final current = track;
+    if (server == null || library == null || work == null || current == null) {
+      return;
+    }
+    final position = MediaPosition(
+      kind: MediaPositionKind.time,
+      numericValue: _position.inMilliseconds / 1000,
+      total: _duration > Duration.zero
+          ? _duration.inMilliseconds / 1000
+          : current.duration?.inMilliseconds == null
+          ? null
+          : current.duration!.inMilliseconds / 1000,
+      fileId: current.id,
+      label: current.title,
+    );
+    if (_offlineWork != null) {
+      final annotations = await _offlineStore.loadAnnotations(
+        serverId: server.id,
+        libraryId: library.id,
+        workId: work.id,
+      );
+      await _offlineStore.cacheAnnotations(
+        serverId: server.id,
+        libraryId: library.id,
+        workId: work.id,
+        annotations: WorkAnnotations(
+          tags: annotations.tags,
+          notes: annotations.notes,
+          bookmarks: [
+            ...annotations.bookmarks,
+            LibraryBookmark(
+              id: FundusId.generate(),
+              workId: work.id,
+              fileId: current.id,
+              mediaPosition: position,
+              label: label,
+              note: note,
+              createdAt: DateTime.now(),
+            ),
+          ],
+          highlights: annotations.highlights,
+        ),
+      );
+      return;
+    }
+    final result = await _withReconnect(
+      (active) => _client.saveBookmark(
+        active,
+        libraryId: library.id,
+        workId: work.id,
+        fileId: current.id,
+        position: position,
+        label: label,
+        note: note,
+      ),
+    );
+    await _offlineStore.cacheAnnotations(
+      serverId: server.id,
+      libraryId: library.id,
+      workId: work.id,
+      annotations: result,
+    );
+  }
+
   Future<Map<String, Object?>?> _loadVideoTrackProfile({
     required FundusRemoteServer server,
     required FundusRemoteLibrary library,

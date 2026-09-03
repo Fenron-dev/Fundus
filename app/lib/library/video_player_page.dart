@@ -30,6 +30,7 @@ Future<void> showFundusVideoPlayerForPlayer(
   Future<void> Function(AudioTrack track)? onAudioTrackSelected,
   Future<void> Function(bool enabled, SubtitleTrack? track)?
   onSubtitleTrackSelected,
+  Future<void> Function({String? label, String? note})? onBookmarkAtCurrent,
 }) => Navigator.of(context).push<void>(
   MaterialPageRoute(
     fullscreenDialog: true,
@@ -41,6 +42,7 @@ Future<void> showFundusVideoPlayerForPlayer(
       resumePlayback: resumePlayback,
       onAudioTrackSelected: onAudioTrackSelected,
       onSubtitleTrackSelected: onSubtitleTrackSelected,
+      onBookmarkAtCurrent: onBookmarkAtCurrent,
     ),
   ),
 );
@@ -54,6 +56,7 @@ final class _FundusVideoPlayerPage extends StatefulWidget {
     required this.resumePlayback,
     this.onAudioTrackSelected,
     this.onSubtitleTrackSelected,
+    this.onBookmarkAtCurrent,
   });
   final Player player;
   final VideoController videoController;
@@ -63,6 +66,8 @@ final class _FundusVideoPlayerPage extends StatefulWidget {
   final Future<void> Function(AudioTrack track)? onAudioTrackSelected;
   final Future<void> Function(bool enabled, SubtitleTrack? track)?
   onSubtitleTrackSelected;
+  final Future<void> Function({String? label, String? note})?
+  onBookmarkAtCurrent;
   @override
   State<_FundusVideoPlayerPage> createState() => _FundusVideoPlayerPageState();
 }
@@ -207,10 +212,15 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
       );
       if (path == null) return;
       await File(path).writeAsBytes(bytes, flush: true);
-      await widget.fundusController?.addBookmarkAtCurrent(
-        label: 'Screenshot ${_format(widget.player.state.position)}',
-        note: path,
-      );
+      final label = 'Screenshot ${_format(widget.player.state.position)}';
+      if (widget.onBookmarkAtCurrent case final saveBookmark?) {
+        await saveBookmark(label: label, note: path);
+      } else {
+        await widget.fundusController?.addBookmarkAtCurrent(
+          label: label,
+          note: path,
+        );
+      }
       if (context.mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
