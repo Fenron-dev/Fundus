@@ -130,6 +130,62 @@ void main() {
     );
   });
 
+  test('TMDB enriches a result with credits and trailer details', () async {
+    final client = _SequenceClient([
+      jsonEncode({
+        'results': [
+          {
+            'id': 7,
+            'media_type': 'movie',
+            'title': 'Der Film',
+            'release_date': '2024-03-01',
+          },
+        ],
+      }),
+      jsonEncode({
+        'id': 7,
+        'title': 'Der Film',
+        'runtime': 101,
+        'overview': 'Beschreibung',
+        'genres': [
+          {'name': 'Action'},
+        ],
+        'credits': {
+          'cast': [
+            {
+              'id': 88,
+              'name': 'Jane Voice',
+              'character': 'Alex',
+              'profile_path': '/jane.jpg',
+            },
+          ],
+          'crew': [
+            {'id': 99, 'name': 'Pat Director', 'job': 'Director'},
+          ],
+        },
+        'videos': {
+          'results': [
+            {'site': 'YouTube', 'type': 'Trailer', 'key': 'abc123'},
+          ],
+        },
+      }),
+    ]);
+
+    final result = (await TmdbVideoProvider(
+      apiKey: 'runtime-only-key',
+      client: client,
+    ).search('film')).single;
+
+    expect(result.runtimeMinutes, 101);
+    expect(result.credits, hasLength(2));
+    expect(result.credits.first.name, 'Jane Voice');
+    expect(result.credits.first.role, 'Alex');
+    expect(result.credits.last.name, 'Pat Director');
+    expect(result.trailerUrl, 'https://www.youtube.com/watch?v=abc123');
+    expect(client.requests, hasLength(2));
+    expect(client.requests.last.url.path, '/3/movie/7');
+  });
+
   test('provider errors do not echo credentials', () async {
     final client = _StubClient('{}', statusCode: 500);
     expect(
@@ -176,6 +232,25 @@ final class _StubClient extends http.BaseClient {
     return http.StreamedResponse(
       Stream<List<int>>.value(utf8.encode(body)),
       statusCode,
+      headers: const {'content-type': 'application/json'},
+    );
+  }
+}
+
+final class _SequenceClient extends http.BaseClient {
+  _SequenceClient(this.bodies);
+
+  final List<String> bodies;
+  final requests = <http.BaseRequest>[];
+  var _index = 0;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    requests.add(request);
+    final body = bodies[_index < bodies.length ? _index++ : bodies.length - 1];
+    return http.StreamedResponse(
+      Stream<List<int>>.value(utf8.encode(body)),
+      200,
       headers: const {'content-type': 'application/json'},
     );
   }

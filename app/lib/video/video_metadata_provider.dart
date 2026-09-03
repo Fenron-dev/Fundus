@@ -272,6 +272,7 @@ final class TmdbVideoProvider implements VideoMetadataProvider {
     : _client = client ?? http.Client();
 
   static const _endpoint = 'https://api.themoviedb.org/3/search/multi';
+  static const _detailsEndpoint = 'https://api.themoviedb.org/3';
   final String apiKey;
   final http.Client _client;
 
@@ -307,8 +308,11 @@ final class TmdbVideoProvider implements VideoMetadataProvider {
     final candidates = <VideoProviderCandidate>[];
     for (final value in results.take(limit.clamp(1, 50))) {
       if (value is Map) {
-        final candidate = _candidate(value);
-        if (candidate != null) candidates.add(candidate);
+        final candidate = _candidate(value, language: language);
+        if (candidate == null) continue;
+        candidates.add(
+          await _loadDetails(candidate, language: language) ?? candidate,
+        );
       }
     }
     return candidates;
@@ -324,7 +328,7 @@ final class TmdbVideoProvider implements VideoMetadataProvider {
     }
   }
 
-  VideoProviderCandidate? _candidate(Map value) {
+  VideoProviderCandidate? _candidate(Map value, {String? language}) {
     final id = value['id'];
     final mediaType = value['media_type'];
     if (id is! num || (mediaType != 'movie' && mediaType != 'tv')) return null;
@@ -355,6 +359,143 @@ final class TmdbVideoProvider implements VideoMetadataProvider {
       posterUrl: _imageUrl(value['poster_path'], 'w500'),
       backdropUrl: _imageUrl(value['backdrop_path'], 'w1280'),
       externalIds: {'tmdb': '${id.round()}'},
+    );
+  }
+
+  Future<VideoProviderCandidate?> _loadDetails(
+    VideoProviderCandidate candidate, {
+    String? language,
+  }) async {
+    final kind = candidate.videoKind;
+    if (kind != 'movie' && kind != 'tv') return null;
+    final endpoint = '$_detailsEndpoint/$kind/${candidate.providerId}';
+    try {
+      final response = await _request(
+        _client.get(
+          Uri.parse(endpoint).replace(
+            queryParameters: {
+              'api_key': apiKey,
+              'language': language?.trim().isNotEmpty == true
+                  ? language!.trim()
+                  : 'de-DE',
+              'append_to_response': 'credits,videos',
+            },
+          ),
+          headers: const {'accept': 'application/json'},
+        ),
+      );
+      final value = _decodeObject(response, provider);
+      return _mergeDetails(candidate, value);
+    } on Object {
+      // Search results remain useful when a provider disallows a details
+      // request, is rate limited, or the item was removed in the meantime.
+      return null;
+    }
+  }
+
+  VideoProviderCandidate _mergeDetails(VideoProviderCandidate base, Map value) {
+    final credits = <VideoProviderCredit>[];
+    final seen = <String>{};
+    void add(Object? raw, {String? role}) {
+      if (raw is! Map || raw['name'] is! String) return;
+      final name = (raw['name'] as String).trim();
+      if (name.isEmpty || !seen.add(name.toLowerCase())) return;
+      final id = raw['id'];
+      final imagePath = raw['profile_path'];
+      credits.add(
+        VideoProviderCredit(
+          name: name,
+          role: role,
+          providerId: id is num ? '${id.round()}' : null,
+          imageUrl: imagePath is String && imagePath.isNotEmpty
+              ? 'https://image.tmdb.org/t/p/w185$imagePath'
+              : null,
+        ),
+      );
+    }
+
+    final creditValue = value['credits'];
+    if (creditValue is Map) {
+      final cast = creditValue['cast'];
+      if (cast is List) {
+        for (final item in cast.take(12)) {
+          if (item is Map) add(item, role: item['character'] as String?);
+        }
+      }
+      final crew = creditValue['crew'];
+      if (crew is List) {
+        for (final item in crew.take(16)) {
+          if (item is Map) {
+            final job = item['job'] as String? ?? item['department'] as String?;
+            if (job == 'Director' || job == 'Writer' || job == 'Screenplay') {
+              add(item, role: job);
+            }
+          }
+        }
+      }
+    }
+
+    String? trailerUrl;
+    final videoValue = value['videos'];
+    final videoResults = videoValue is Map ? videoValue['results'] : null;
+    if (videoResults is List) {
+      for (final item in videoResults) {
+        if (item is! Map || item['site'] != 'YouTube') continue;
+        final type = item['type'];
+        if (type != 'Trailer' && type != 'Teaser') continue;
+        final key = item['key'];
+        if (key is String && key.trim().isNotEmpty) {
+          trailerUrl = 'https://www.youtube.com/watch?v=${key.trim()}';
+          break;
+        }
+      }
+    }
+
+    final detailGenres = value['genres'];
+    final genres = detailGenres is List
+        ? detailGenres
+              .whereType<Map>()
+              .map((item) => item['name'])
+              .whereType<String>()
+              .where((name) => name.trim().isNotEmpty)
+              .map((name) => name.trim())
+              .toList(growable: false)
+        : base.genres;
+    final runtime = value['runtime'] is num
+        ? (value['runtime'] as num).round()
+        : value['episode_run_time'] is List &&
+              (value['episode_run_time'] as List).isNotEmpty &&
+              (value['episode_run_time'] as List).first is num
+        ? ((value['episode_run_time'] as List).first as num).round()
+        : base.runtimeMinutes;
+    final episodes = value['number_of_episodes'] is num
+        ? (value['number_of_episodes'] as num).round()
+        : base.episodeCount;
+    final date = value['release_date'] ?? value['first_air_date'];
+    final year = date is String
+        ? int.tryParse(date.split('-').first)
+        : base.releaseYear;
+    return VideoProviderCandidate(
+      provider: base.provider,
+      providerId: base.providerId,
+      title: _firstString([value['title'], value['name']]) ?? base.title,
+      alternateTitles: base.alternateTitles,
+      videoKind: base.videoKind,
+      contentStyle: base.contentStyle,
+      contentSensitivity: base.contentSensitivity,
+      releaseYear: year,
+      runtimeMinutes: runtime,
+      season: base.season,
+      episodeCount: episodes,
+      isAdult: value['adult'] is bool ? value['adult'] as bool : base.isAdult,
+      description: _cleanDescription(value['overview']) ?? base.description,
+      genres: genres,
+      posterUrl: _imageUrl(value['poster_path'], 'w500') ?? base.posterUrl,
+      backdropUrl:
+          _imageUrl(value['backdrop_path'], 'w1280') ?? base.backdropUrl,
+      credits: credits.isEmpty ? base.credits : credits,
+      trailerUrl: trailerUrl ?? base.trailerUrl,
+      externalIds: base.externalIds,
     );
   }
 }
