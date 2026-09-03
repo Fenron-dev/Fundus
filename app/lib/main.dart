@@ -1439,6 +1439,7 @@ class _LibraryShellState extends State<LibraryShell> {
   String? _playlistTypeFilter;
   String? _sourceFilter;
   String? _activeCollectionId;
+  bool _discoverAllMedia = false;
   List<LibrarySavedView> _savedViews = const [];
   String? _lastTappedWorkId;
   DateTime? _lastWorkTapAt;
@@ -1581,12 +1582,16 @@ class _LibraryShellState extends State<LibraryShell> {
     // A collection is an explicit cross-media view. Its own rules or work
     // membership determine the result, so the currently selected sidebar
     // section must not hide matching films, books, comics, etc.
-    final kinds = _activeCollectionId == null ? _section.workKinds : null;
+    final kinds = _activeCollectionId == null && !_discoverAllMedia
+        ? _section.workKinds
+        : null;
     return works
         .where(
           (work) =>
               (kinds == null || kinds.contains(work.kind)) &&
-              (_activeCollectionId != null || _section.matchesWork(work)),
+              (_activeCollectionId != null ||
+                  _discoverAllMedia ||
+                  _section.matchesWork(work)),
         )
         .toList(growable: false);
   }
@@ -1675,6 +1680,7 @@ class _LibraryShellState extends State<LibraryShell> {
         icon: Icons.storage_outlined,
         onTap: () => setState(() {
           _section = _LibrarySection.library;
+          _discoverAllMedia = false;
           _selectedAuthor = null;
           _selectedNarrator = null;
           _selectedPerson = null;
@@ -1793,6 +1799,7 @@ class _LibraryShellState extends State<LibraryShell> {
                       }),
                       onSelectSection: (section) => setState(() {
                         _section = section;
+                        _discoverAllMedia = false;
                         if (section.isDocumentSection) {
                           _grouping = _LibraryGrouping.books;
                         }
@@ -1811,6 +1818,7 @@ class _LibraryShellState extends State<LibraryShell> {
                       onOpenTags: () => _openTagPicker(context),
                       onOpenFolders: () => setState(() {
                         _section = _LibrarySection.library;
+                        _discoverAllMedia = false;
                         _grouping = _LibraryGrouping.books;
                         _layout = _LibraryLayout.folder;
                         _inlineDetailWork = null;
@@ -1926,6 +1934,7 @@ class _LibraryShellState extends State<LibraryShell> {
                         .clamp(0, _availableSections.length - 1),
                     onDestinationSelected: (value) => setState(() {
                       _section = _availableSections[value];
+                      _discoverAllMedia = false;
                       if (_section.isDocumentSection) {
                         _grouping = _LibraryGrouping.books;
                       }
@@ -2011,6 +2020,7 @@ class _LibraryShellState extends State<LibraryShell> {
             onSelectSection: (section) {
               setState(() {
                 _section = section;
+                _discoverAllMedia = false;
                 if (section.isDocumentSection) {
                   _grouping = _LibraryGrouping.books;
                 }
@@ -2031,6 +2041,7 @@ class _LibraryShellState extends State<LibraryShell> {
             onOpenTags: () => _openTagPicker(context),
             onOpenFolders: () => setState(() {
               _section = _LibrarySection.library;
+              _discoverAllMedia = false;
               _grouping = _LibraryGrouping.books;
               _layout = _LibraryLayout.folder;
               _inlineDetailWork = null;
@@ -2219,6 +2230,7 @@ class _LibraryShellState extends State<LibraryShell> {
                   borderRadius: BorderRadius.circular(12),
                   onTap: () => setState(() {
                     _section = section;
+                    _discoverAllMedia = false;
                     if (section.isDocumentSection) {
                       _grouping = _LibraryGrouping.books;
                     }
@@ -3627,6 +3639,7 @@ class _LibraryShellState extends State<LibraryShell> {
 
   void _openDiscoverGrouping(_LibraryGrouping grouping) => setState(() {
     _section = _LibrarySection.library;
+    _discoverAllMedia = true;
     _grouping = grouping;
     _selectedAuthor = null;
     _selectedNarrator = null;
