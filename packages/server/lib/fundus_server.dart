@@ -126,6 +126,7 @@ final class FundusServerHandler {
       ..get('/v1/capabilities', _capabilities)
       ..get('/v1/libraries', _libraries)
       ..get('/v1/libraries/<libraryId>/works', _works)
+      ..get('/v1/libraries/<libraryId>/catalog', _catalog)
       ..get('/v1/libraries/<libraryId>/works/<workId>', _work)
       ..get('/v1/libraries/<libraryId>/works/<workId>/cover', _cover)
       ..get('/v1/libraries/<libraryId>/files/<fileId>', _file)
@@ -289,6 +290,7 @@ final class FundusServerHandler {
     'capabilities': [
       'multiple_libraries',
       'work_browse',
+      'catalog_delta',
       'cover',
       'chapters',
       'range_streaming',
@@ -328,6 +330,41 @@ final class FundusServerHandler {
                   : '/v1/libraries/$libraryId/works/${work.id}/cover',
             },
       ],
+    });
+  }
+
+  /// Paginated catalog snapshot used by clients that keep a local metadata
+  /// mirror. `since` is a stable offset into the current visible snapshot;
+  /// callers can resume after a timeout without requesting the first page
+  /// again. Visibility is evaluated before slicing so protected HHH works are
+  /// never leaked through the cursor or the total count.
+  Response _catalog(Request request, String libraryId) {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    final since = int.tryParse(request.url.queryParameters['since'] ?? '') ?? 0;
+    final requestedLimit =
+        int.tryParse(request.url.queryParameters['limit'] ?? '') ?? 1000;
+    final offset = since.clamp(0, entry.works.length);
+    final limit = requestedLimit.clamp(1, 1000);
+    final visible = entry.works
+        .where((work) => _canViewWork(request, work))
+        .toList(growable: false);
+    final page = visible.skip(offset).take(limit).toList(growable: false);
+    final nextCursor = offset + page.length;
+    return _json({
+      'library_id': libraryId,
+      'works': [
+        for (final work in page)
+          {
+            ..._workJson(work),
+            'cover_url': work.coverPath == null
+                ? null
+                : '/v1/libraries/$libraryId/works/${work.id}/cover',
+          },
+      ],
+      'deleted': const <String>[],
+      'next_cursor': nextCursor,
+      'has_more': nextCursor < visible.length,
     });
   }
 

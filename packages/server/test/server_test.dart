@@ -210,7 +210,34 @@ void main() {
     expect(body['capabilities'], contains('playlist_revisions'));
     expect(body['capabilities'], contains('playback_session_revisions'));
     expect(body['capabilities'], contains('progress_history'));
+    expect(body['capabilities'], contains('catalog_delta'));
   });
+
+  test(
+    'catalog endpoint pages visible works with a resumable cursor',
+    () async {
+      final libraryId = firstLibrary.manifest.libraryId;
+      final first = await _get(
+        server,
+        '/v1/libraries/$libraryId/catalog?since=0&limit=1',
+      );
+      final firstBody = await _json(first);
+      expect(first.statusCode, 200);
+      expect(firstBody['works'], hasLength(1));
+      expect(firstBody['next_cursor'], 1);
+      expect(firstBody['has_more'], isFalse);
+      expect(firstBody['deleted'], isEmpty);
+
+      final resumed = await _get(
+        server,
+        '/v1/libraries/$libraryId/catalog?since=1&limit=1000',
+      );
+      final resumedBody = await _json(resumed);
+      expect(resumed.statusCode, 200);
+      expect(resumedBody['works'], isEmpty);
+      expect(resumedBody['next_cursor'], 1);
+    },
+  );
 
   test('lists multiple libraries without exposing local paths', () async {
     final response = await _get(server, '/v1/libraries');

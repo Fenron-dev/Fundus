@@ -695,7 +695,7 @@ class _FundusAppState extends State<FundusApp> {
           continue;
         }
         try {
-          final works = await _remoteClient.works(server, reference.libraryId);
+          final works = await _fetchRemoteCatalog(server, reference.libraryId);
           existing['${server.id}\u0000${reference.libraryId}'] =
               FundusRemoteCatalogSnapshot(
                 serverId: server.id,
@@ -715,6 +715,32 @@ class _FundusAppState extends State<FundusApp> {
         setState(() => _remoteCatalog = List.unmodifiable(snapshots));
     } finally {
       _refreshingRemoteCatalog = false;
+    }
+  }
+
+  Future<List<FundusRemoteWork>> _fetchRemoteCatalog(
+    FundusRemoteServer server,
+    String libraryId,
+  ) async {
+    final result = <FundusRemoteWork>[];
+    var cursor = 0;
+    try {
+      do {
+        final page = await _remoteClient.catalog(
+          server,
+          libraryId,
+          since: cursor,
+          limit: 1000,
+        );
+        result.addAll(page.works);
+        if (!page.hasMore || page.nextCursor <= cursor) break;
+        cursor = page.nextCursor;
+      } while (result.length < 100000);
+      return result;
+    } on FundusRemoteRequestException catch (error) {
+      // Older paired servers do not expose /catalog yet.
+      if (error.statusCode != HttpStatus.notFound) rethrow;
+      return _remoteClient.works(server, libraryId);
     }
   }
 

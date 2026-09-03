@@ -427,6 +427,20 @@ final class FundusRemoteWork {
   }
 }
 
+final class FundusRemoteCatalogPage {
+  const FundusRemoteCatalogPage({
+    required this.works,
+    required this.deleted,
+    required this.nextCursor,
+    required this.hasMore,
+  });
+
+  final List<FundusRemoteWork> works;
+  final List<String> deleted;
+  final int nextCursor;
+  final bool hasMore;
+}
+
 final class FundusRemoteTrack {
   const FundusRemoteTrack({
     required this.id,
@@ -845,6 +859,37 @@ final class FundusRemoteClient {
             providerMetadata: _providerMetadata(item['provider_metadata']),
           ),
     ];
+  }
+
+  Future<FundusRemoteCatalogPage> catalog(
+    FundusRemoteServer server,
+    String libraryId, {
+    int since = 0,
+    int limit = 1000,
+  }) async {
+    final value = await _json(
+      server,
+      '/v1/libraries/$libraryId/catalog?since=$since&limit=$limit',
+    );
+    final items = value['works'];
+    final works = items is List
+        ? items
+              .whereType<Map>()
+              .map(FundusRemoteWork.fromJson)
+              .whereType<FundusRemoteWork>()
+              .toList(growable: false)
+        : const <FundusRemoteWork>[];
+    final deleted = value['deleted'] is List
+        ? (value['deleted'] as List).whereType<String>().toList(growable: false)
+        : const <String>[];
+    return FundusRemoteCatalogPage(
+      works: works,
+      deleted: deleted,
+      nextCursor: value['next_cursor'] is int
+          ? value['next_cursor'] as int
+          : since,
+      hasMore: value['has_more'] == true,
+    );
   }
 
   static Map<String, Object?> _providerMetadata(Object? value) => value is Map
