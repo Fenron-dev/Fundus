@@ -20,7 +20,15 @@ final class FundusVideoPlayerController extends ChangeNotifier {
     // Attach the native video output before a medium is opened. Creating it
     // only in the fullscreen route lets audio decode and seek correctly while
     // the resumed video decoder has no texture to render into.
-    _videoController = VideoController(_player);
+    _videoController = VideoController(
+      _player,
+      // On Android the surface must be attached after the decoder has
+      // reported its video parameters. Attaching it earlier can leave a
+      // resumed file with audio and a black texture until the next seek.
+      configuration: const VideoControllerConfiguration(
+        androidAttachSurfaceAfterVideoParameters: true,
+      ),
+    );
     _subscriptions.addAll([
       _player.stream.playing.listen((value) {
         _playing = value;

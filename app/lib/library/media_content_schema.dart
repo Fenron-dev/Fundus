@@ -469,19 +469,29 @@ abstract final class FundusMediaTypeRegistry {
     final normalizedKind = kind.trim().toLowerCase();
     final style = contentStyle?.trim().toLowerCase();
     final adult =
-        contentSensitivity == 'adult_explicit' || contentSensitivity == 'adult';
+        contentSensitivity == 'adult_explicit' ||
+        contentSensitivity == 'adult' ||
+        normalizedKind.startsWith('hhh_');
     final anime =
         style == 'anime' || style == 'anime_series' || style == 'anime_film';
     switch (normalizedKind) {
       case 'movie':
+      case 'anime_movie':
+      case 'hhh_movie':
         return adult
             ? FundusMediaTypes.hhhFilm
-            : (anime ? FundusMediaTypes.animeFilm : FundusMediaTypes.film);
+            : (normalizedKind == 'anime_movie' || anime
+                  ? FundusMediaTypes.animeFilm
+                  : FundusMediaTypes.film);
       case 'tv':
       case 'video':
+      case 'anime_tv':
+      case 'hhh_tv':
         return adult
             ? FundusMediaTypes.hhhSeries
-            : (anime ? FundusMediaTypes.animeSeries : FundusMediaTypes.series);
+            : (normalizedKind == 'anime_tv' || anime
+                  ? FundusMediaTypes.animeSeries
+                  : FundusMediaTypes.series);
       case 'audiobook':
         return FundusMediaTypes.audiobook;
       case 'manga':

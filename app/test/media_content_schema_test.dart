@@ -26,6 +26,14 @@ void main() {
       same(FundusMediaTypes.hhhSeries),
     );
     expect(
+      FundusMediaTypeRegistry.forWork(kind: 'anime_tv'),
+      same(FundusMediaTypes.animeSeries),
+    );
+    expect(
+      FundusMediaTypeRegistry.forWork(kind: 'hhh_movie'),
+      same(FundusMediaTypes.hhhFilm),
+    );
+    expect(
       FundusMediaTypeRegistry.forWork(kind: 'ttrpg_product')?.contentTabLabel,
       'Dateien',
     );

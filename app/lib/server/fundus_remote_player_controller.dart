@@ -79,7 +79,15 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   }) : _client = client,
        _offlineStore = offlineStore ?? FundusOfflineStore(),
        _player = Player() {
-    _videoController = VideoController(_player);
+    _videoController = VideoController(
+      _player,
+      // Keep remote and offline playback on the same Android surface
+      // lifecycle. This avoids the audio-only/black-texture state that can
+      // occur when a resumed stream is attached before its dimensions exist.
+      configuration: const VideoControllerConfiguration(
+        androidAttachSurfaceAfterVideoParameters: true,
+      ),
+    );
     _sleepTimer = PlaybackSleepTimer(onElapsed: _pauseForSleepTimer);
     _sleepTimer.addListener(notifyListeners);
     _shakeRestart = PlaybackShakeRestartController(
