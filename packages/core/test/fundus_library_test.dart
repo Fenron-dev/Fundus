@@ -63,6 +63,16 @@ void main() {
     );
     expect(progressSummary.progressDuration, const Duration(minutes: 30));
     expect(progressSummary.progressTrackIndex, 1);
+    final unchanged = library.saveProgress(
+      workId: works.single.id,
+      fileId: tracks[1].fileId,
+      position: const Duration(minutes: 12, seconds: 7),
+      duration: const Duration(minutes: 30),
+      operationId: 'playback-operation-unchanged',
+      deviceId: 'another-device',
+    );
+    expect(unchanged.revision, 1);
+    expect(library.listProgressRevisions(works.single.id), hasLength(1));
     final duplicate = library.saveProgress(
       workId: works.single.id,
       fileId: tracks[1].fileId,

@@ -1008,6 +1008,19 @@ final class FundusDatabase {
         scrollOffset: position.scrollOffset,
         label: position.label,
       );
+      // Autosave ticks may arrive even though the playback position has not
+      // changed since the last write. Treat those updates as idempotent too:
+      // only a real position/finished change should create a revision.
+      // This keeps progress history useful instead of filling it with
+      // duplicates and avoids unnecessary sync traffic on network vaults.
+      final current = loadProgress(workId);
+      if (current != null &&
+          current.fileId == fileId &&
+          current.finished == finished &&
+          jsonEncode(current.position.toJson()) ==
+              jsonEncode(mediaPosition.toJson())) {
+        return current;
+      }
       final snapshot = jsonEncode({
         'work_id': workId,
         'position': mediaPosition.toJson(),
