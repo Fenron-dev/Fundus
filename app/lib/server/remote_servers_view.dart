@@ -161,6 +161,7 @@ Future<void> showFundusRemoteServers(
   FundusPeerServerController? peerServer,
   FundusOfflineStore? offlineStore,
   FundusOfflineWork? initialOfflineWork,
+  String? initialWorkId,
   bool closeAfterInitialOfflineWork = false,
   bool showHhh = false,
 }) => Navigator.of(context).push(
@@ -171,6 +172,7 @@ Future<void> showFundusRemoteServers(
       peerServer: peerServer,
       offlineStore: offlineStore,
       initialOfflineWork: initialOfflineWork,
+      initialWorkId: initialWorkId,
       closeAfterInitialOfflineWork: closeAfterInitialOfflineWork,
       showHhh: showHhh,
     ),
@@ -185,6 +187,7 @@ class FundusRemoteServersView extends StatefulWidget {
     this.peerServer,
     this.offlineStore,
     this.initialOfflineWork,
+    this.initialWorkId,
     this.closeAfterInitialOfflineWork = false,
     this.showHhh = false,
   });
@@ -194,6 +197,7 @@ class FundusRemoteServersView extends StatefulWidget {
   final FundusPeerServerController? peerServer;
   final FundusOfflineStore? offlineStore;
   final FundusOfflineWork? initialOfflineWork;
+  final String? initialWorkId;
   final bool closeAfterInitialOfflineWork;
   final bool showHhh;
 
@@ -332,7 +336,23 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         final initialLibrary = _libraries
             .where((library) => library.id == widget.initialLibraryId)
             .firstOrNull;
-        if (initialLibrary != null) await _selectLibrary(initialLibrary);
+        if (initialLibrary != null) {
+          await _selectLibrary(initialLibrary);
+          if (widget.initialWorkId case final workId?) {
+            final initialWork = _works
+                .where((work) => work.id == workId)
+                .firstOrNull;
+            if (initialWork != null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  unawaited(
+                    _showWork(initialServer, initialLibrary, initialWork),
+                  );
+                }
+              });
+            }
+          }
+        }
       }
     } catch (_) {
       if (!mounted) return;

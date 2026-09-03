@@ -49,6 +49,7 @@ import 'server/fundus_peer_server_controller.dart';
 import 'server/fundus_peer_discovery.dart';
 import 'server/fundus_offline_store.dart';
 import 'server/fundus_remote_client.dart';
+import 'server/fundus_remote_catalog_store.dart';
 import 'server/remote_servers_view.dart';
 import 'server/server_settings.dart';
 import 'video/video_metadata_dialog.dart';
@@ -57,6 +58,15 @@ const _favoriteTag = 'Favorit';
 const _sourceFilterLocal = 'kind:local';
 const _sourceFilterRemote = 'kind:remote';
 const _sourceFilterOffline = 'kind:offline';
+
+String _sourceDisplayName(String? server, String? library) {
+  final serverLabel = server?.trim() ?? '';
+  final libraryLabel = library?.trim() ?? '';
+  if (serverLabel.isEmpty)
+    return libraryLabel.isEmpty ? 'Unbekannte Quelle' : libraryLabel;
+  if (libraryLabel.isEmpty) return serverLabel;
+  return '$serverLabel · $libraryLabel';
+}
 
 typedef WorkPlaybackCallback =
     Future<void> Function(
@@ -69,6 +79,8 @@ typedef MissingWorkDeleteCallback =
     Future<void> Function(LibraryWorkSummary work);
 typedef WorkMetadataChangedCallback = void Function(LibraryWorkSummary work);
 typedef OfflineWorkOpenCallback = void Function(FundusOfflineWork work);
+typedef CatalogWorkOpenCallback =
+    Future<void> Function(FundusCatalogEntry entry);
 
 const _publicationFormats = PublicationFormatRegistry();
 
@@ -150,6 +162,7 @@ class _FundusAppState extends State<FundusApp> {
   late final Future<void> _recentStoreReady;
   final _remoteStore = FundusRemoteServerStore();
   final _remoteClient = const FundusRemoteClient();
+  final _remoteCatalogStore = const FundusRemoteCatalogStore();
   FundusOfflineStore _deviceOfflineStore = FundusOfflineStore();
   late FundusOfflineStore _offlineStore;
   final _peerDiscovery = FundusPeerDiscovery();
@@ -157,6 +170,8 @@ class _FundusAppState extends State<FundusApp> {
   List<RecentLibraryEntry> _recentLibraries = const [];
   List<_RemoteLibraryChoice> _remoteLibraries = const [];
   List<FundusOfflineWork> _offlineWorks = const [];
+  List<FundusRemoteCatalogSnapshot> _remoteCatalog = const [];
+  bool _refreshingRemoteCatalog = false;
   Set<String> _reachableServerIds = const {};
   Set<String> _unauthorizedServerIds = const {};
   bool _loadingRemoteLibraries = false;
@@ -172,6 +187,7 @@ class _FundusAppState extends State<FundusApp> {
     _peerServer = FundusPeerServerController();
     _recentStoreReady = _initializeRecentStore();
     _works = widget.initialWorks;
+    unawaited(_loadRemoteCatalogCache());
     if (widget.initialWorks == null) {
       unawaited(_peerServer.initialize());
       unawaited(_loadRemoteLibraries());
@@ -275,13 +291,43 @@ class _FundusAppState extends State<FundusApp> {
                     source: FundusLibraryCatalog.offlineSource(
                       serverId: offline.serverId,
                       libraryId: offline.libraryId,
-                      displayName:
-                          offline.sourceLibraryName ??
-                          offline.sourceServerName ??
-                          'Offline',
+                      displayName: _sourceDisplayName(
+                        offline.sourceServerName,
+                        offline.sourceLibraryName,
+                      ),
                     ),
                   ),
                 ),
+                ..._remoteCatalog.expand((snapshot) {
+                  final reachable = _reachableServerIds.contains(
+                    snapshot.serverId,
+                  );
+                  final workSummaries = snapshot.works.map(
+                    (work) => WorkDetailViewModel.fromRemote(
+                      work,
+                      serverId: snapshot.serverId,
+                      libraryId: snapshot.libraryId,
+                      serverName: snapshot.serverName,
+                      libraryName: snapshot.libraryName,
+                    ).summary,
+                  );
+                  return workSummaries.map(
+                    (work) => FundusCatalogEntry(
+                      work: work,
+                      source: FundusLibraryCatalog.remoteSource(
+                        serverId: snapshot.serverId,
+                        libraryId: snapshot.libraryId,
+                        displayName: _sourceDisplayName(
+                          snapshot.serverName,
+                          snapshot.libraryName,
+                        ),
+                        availability: reachable
+                            ? FundusCatalogAvailability.available
+                            : FundusCatalogAvailability.unreachable,
+                      ),
+                    ),
+                  );
+                }),
               ]),
               library: _library,
               libraryName: _library?.root.path
@@ -307,6 +353,7 @@ class _FundusAppState extends State<FundusApp> {
               offlineWorks: _offlineWorks,
               onOpenDownloads: _openOfflineMedia,
               onOpenOfflineWork: _openOfflineWork,
+              onOpenCatalogWork: _openCatalogWork,
               showHhh: _showHhh,
               onHhhEnabledChanged: (enabled) async {
                 await HhhContentSettings.setEnabled(enabled);
@@ -468,6 +515,14 @@ class _FundusAppState extends State<FundusApp> {
         securityBookmark: securityBookmark,
       );
       await _syncPeerSources();
+      // Populate the unified library in the background. The local catalog is
+      // shown immediately; remote metadata arrives without blocking the first
+      // frame or the network-vault open path.
+      unawaited(() async {
+        final servers = await _remoteStore.load();
+        final references = await _remoteStore.loadLibraryReferences();
+        await _refreshRemoteCatalog(servers, references);
+      }());
       if (mounted) setState(() {});
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && identical(_library, library)) {
@@ -583,6 +638,9 @@ class _FundusAppState extends State<FundusApp> {
           }(),
       ]);
       references = await _remoteStore.loadLibraryReferences();
+      if (_library != null) {
+        unawaited(_refreshRemoteCatalog(servers, references));
+      }
       offline = await _resolveOfflineSourceLabels(offline, servers, references);
       if (!mounted) return;
       setState(() {
@@ -602,6 +660,82 @@ class _FundusAppState extends State<FundusApp> {
     } finally {
       _loadingRemoteLibraries = false;
     }
+  }
+
+  Future<void> _loadRemoteCatalogCache() async {
+    try {
+      final cached = await _remoteCatalogStore.load();
+      if (!mounted || cached.isEmpty) return;
+      setState(() => _remoteCatalog = List.unmodifiable(cached));
+    } catch (_) {
+      // A corrupt or unavailable cache must never prevent local startup.
+    }
+  }
+
+  Future<void> _refreshRemoteCatalog(
+    List<FundusRemoteServer> servers,
+    List<FundusRemoteLibraryReference> references,
+  ) async {
+    if (_refreshingRemoteCatalog) return;
+    _refreshingRemoteCatalog = true;
+    try {
+      final serversById = {for (final server in servers) server.id: server};
+      final existing = {
+        for (final snapshot in _remoteCatalog) snapshot.key: snapshot,
+      };
+      for (final reference in references) {
+        final server = serversById[reference.serverId];
+        if (server == null) continue;
+        final previous = existing['${server.id}\u0000${reference.libraryId}'];
+        // Avoid a network roundtrip on every heartbeat. Cached metadata is
+        // refreshed when it is older than five minutes or absent.
+        if (previous != null &&
+            DateTime.now().difference(previous.fetchedAt) <
+                const Duration(minutes: 5)) {
+          continue;
+        }
+        try {
+          final works = await _remoteClient.works(server, reference.libraryId);
+          existing['${server.id}\u0000${reference.libraryId}'] =
+              FundusRemoteCatalogSnapshot(
+                serverId: server.id,
+                libraryId: reference.libraryId,
+                serverName: server.name,
+                libraryName: reference.name,
+                works: works,
+                fetchedAt: DateTime.now(),
+              );
+        } catch (_) {
+          // Keep the last known catalog when a peer is unreachable.
+        }
+      }
+      final snapshots = existing.values.toList(growable: false);
+      await _remoteCatalogStore.save(snapshots);
+      if (mounted)
+        setState(() => _remoteCatalog = List.unmodifiable(snapshots));
+    } finally {
+      _refreshingRemoteCatalog = false;
+    }
+  }
+
+  Future<void> _openCatalogWork(FundusCatalogEntry entry) async {
+    if (!entry.source.isRemote) return;
+    final sourceId = entry.source.id;
+    if (!sourceId.startsWith('remote:')) return;
+    final source = sourceId.substring('remote:'.length).split('/');
+    if (source.length != 2) return;
+    final context = _navigatorKey.currentContext;
+    if (context == null) return;
+    await showFundusRemoteServers(
+      context,
+      initialServerId: source[0],
+      initialLibraryId: source[1],
+      initialWorkId: entry.work.id,
+      peerServer: _peerServer,
+      offlineStore: _offlineStore,
+      showHhh: _showHhh,
+    );
+    await _loadRemoteLibraries();
   }
 
   Future<List<FundusOfflineWork>> _resolveOfflineSourceLabels(
@@ -1379,6 +1513,7 @@ class LibraryShell extends StatefulWidget {
     this.offlineWorks = const [],
     this.onOpenDownloads,
     this.onOpenOfflineWork,
+    this.onOpenCatalogWork,
     this.showHhh = false,
     this.onHhhEnabledChanged,
     this.onOpenCollections,
@@ -1406,6 +1541,7 @@ class LibraryShell extends StatefulWidget {
   final List<FundusOfflineWork> offlineWorks;
   final VoidCallback? onOpenDownloads;
   final OfflineWorkOpenCallback? onOpenOfflineWork;
+  final CatalogWorkOpenCallback? onOpenCatalogWork;
   final bool showHhh;
   final ValueChanged<bool>? onHhhEnabledChanged;
   final VoidCallback? onOpenCollections;
@@ -3491,6 +3627,18 @@ class _LibraryShellState extends State<LibraryShell> {
       widget.onOpenOfflineWork?.call(offline);
       return;
     }
+    final source = _sourceForWork(work);
+    if (source?.isRemote == true) {
+      final entry = widget.catalog?.entries
+          .where(
+            (item) => identical(item.work, work) || item.work.id == work.id,
+          )
+          .firstOrNull;
+      if (entry != null) {
+        unawaited(widget.onOpenCatalogWork?.call(entry));
+        return;
+      }
+    }
     setState(() => _selectedIndex = index);
     if (!detailAsDialog && _detailPaneVisible) return;
     _openWorkDetails(work);
@@ -3506,6 +3654,17 @@ class _LibraryShellState extends State<LibraryShell> {
     _lastTappedWorkId = work.id;
     _lastWorkTapAt = now;
     if (isDoubleTap) {
+      if (_sourceForWork(work)?.isRemote == true) {
+        final entry = widget.catalog?.entries
+            .where(
+              (item) => identical(item.work, work) || item.work.id == work.id,
+            )
+            .firstOrNull;
+        if (entry != null) {
+          unawaited(widget.onOpenCatalogWork?.call(entry));
+          return;
+        }
+      }
       _openInlineWorkDetails(work, index);
       return;
     }

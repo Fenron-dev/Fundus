@@ -332,6 +332,99 @@ final class FundusRemoteWork {
   final Map<String, Object?> providerMetadata;
 
   bool get isHhh => contentSensitivity == 'adult_explicit';
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'title': title,
+    'authors': authors,
+    'has_cover': hasCover,
+    'kind': kind,
+    if (subtitle != null) 'subtitle': subtitle,
+    if (series != null) 'series': series,
+    if (seriesSequence != null) 'series_sequence': seriesSequence,
+    'narrators': narrators,
+    if (language != null) 'language': language,
+    if (description != null) 'description': description,
+    if (publisher != null) 'publisher': publisher,
+    if (publishedYear != null) 'published_year': publishedYear,
+    'file_count': fileCount,
+    if (progressPosition != null)
+      'progress_position_seconds': progressPosition!.inMilliseconds / 1000,
+    if (progressDuration != null)
+      'progress_duration_seconds': progressDuration!.inMilliseconds / 1000,
+    if (progressTrackIndex != null) 'progress_track_index': progressTrackIndex,
+    'progress_finished': progressFinished,
+    if (contentSensitivity != null) 'content_sensitivity': contentSensitivity,
+    if (contentStyle != null) 'content_style': contentStyle,
+    'tags': tags,
+    if (addedAt != null) 'added_at': addedAt!.toUtc().toIso8601String(),
+    if (lastListenedAt != null)
+      'last_listened_at': lastListenedAt!.toUtc().toIso8601String(),
+    'provider_metadata': providerMetadata,
+  };
+
+  static FundusRemoteWork? fromJson(Object? value) {
+    if (value is! Map || value['id'] is! String || value['title'] is! String) {
+      return null;
+    }
+    List<String> strings(Object? raw) => raw is List
+        ? raw.whereType<String>().toList(growable: false)
+        : const [];
+    Duration? duration(Object? raw) => raw is num
+        ? Duration(milliseconds: (raw.toDouble() * 1000).round())
+        : null;
+    final provider = value['provider_metadata'];
+    return FundusRemoteWork(
+      id: value['id'] as String,
+      title: value['title'] as String,
+      authors: strings(value['authors']),
+      hasCover: value['has_cover'] == true,
+      kind: value['kind'] is String ? value['kind'] as String : 'unknown',
+      subtitle: value['subtitle'] is String
+          ? value['subtitle'] as String
+          : null,
+      series: value['series'] is String ? value['series'] as String : null,
+      seriesSequence: value['series_sequence'] is num
+          ? value['series_sequence'] as num
+          : null,
+      narrators: strings(value['narrators']),
+      language: value['language'] is String
+          ? value['language'] as String
+          : null,
+      description: value['description'] is String
+          ? value['description'] as String
+          : null,
+      publisher: value['publisher'] is String
+          ? value['publisher'] as String
+          : null,
+      publishedYear: value['published_year'] is int
+          ? value['published_year'] as int
+          : null,
+      fileCount: value['file_count'] is int ? value['file_count'] as int : 0,
+      progressPosition: duration(value['progress_position_seconds']),
+      progressDuration: duration(value['progress_duration_seconds']),
+      progressTrackIndex: value['progress_track_index'] is int
+          ? value['progress_track_index'] as int
+          : null,
+      progressFinished: value['progress_finished'] == true,
+      contentSensitivity: value['content_sensitivity'] is String
+          ? value['content_sensitivity'] as String
+          : null,
+      contentStyle: value['content_style'] is String
+          ? value['content_style'] as String
+          : null,
+      tags: strings(value['tags']),
+      addedAt: DateTime.tryParse('${value['added_at'] ?? ''}'),
+      lastListenedAt: DateTime.tryParse('${value['last_listened_at'] ?? ''}'),
+      providerMetadata: provider is Map
+          ? {
+              for (final entry in provider.entries)
+                if (entry.key is String && entry.value != null)
+                  entry.key as String: entry.value,
+            }
+          : const {},
+    );
+  }
 }
 
 final class FundusRemoteTrack {
