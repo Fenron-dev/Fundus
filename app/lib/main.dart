@@ -1537,6 +1537,7 @@ class _LibraryShellState extends State<LibraryShell> {
     if (collection == null) return;
     setState(() {
       _activeCollectionId = collection.id;
+      _grouping = _LibraryGrouping.books;
       _selectedIndex = 0;
       _selectedAuthor = null;
       _selectedNarrator = null;
@@ -3090,6 +3091,10 @@ class _LibraryShellState extends State<LibraryShell> {
   }
 
   String get _browserTitle {
+    if (_activeCollectionId case final collectionId?) {
+      final collection = widget.library?.loadCollection(collectionId);
+      if (collection != null) return collection.name;
+    }
     if (_selectedSeries != null) {
       return _selectedSeries!.isEmpty ? 'Einzelbände' : _selectedSeries!;
     }
@@ -3703,6 +3708,12 @@ class _LibraryShellState extends State<LibraryShell> {
                               _activeCollectionId = selected
                                   ? null
                                   : collection.id;
+                              if (!selected) _grouping = _LibraryGrouping.books;
+                              _selectedAuthor = null;
+                              _selectedNarrator = null;
+                              _selectedPerson = null;
+                              _selectedSeries = null;
+                              _inlineDetailWork = null;
                               _selectedIndex = 0;
                             });
                             Navigator.pop(context);
@@ -3794,7 +3805,10 @@ class _LibraryShellState extends State<LibraryShell> {
                             kind: 'smart',
                             rules: rules,
                           );
-                          setState(() => _activeCollectionId = collection.id);
+                          setState(() {
+                            _activeCollectionId = collection.id;
+                            _grouping = _LibraryGrouping.books;
+                          });
                           setDialogState(() {});
                         }
                       },
@@ -3843,7 +3857,10 @@ class _LibraryShellState extends State<LibraryShell> {
                               localWorkIds.contains,
                             ),
                           );
-                          setState(() => _activeCollectionId = collection.id);
+                          setState(() {
+                            _activeCollectionId = collection.id;
+                            _grouping = _LibraryGrouping.books;
+                          });
                           setDialogState(() {});
                         }
                       },
