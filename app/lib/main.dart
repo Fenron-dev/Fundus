@@ -683,6 +683,18 @@ class _FundusAppState extends State<FundusApp> {
       final existing = {
         for (final snapshot in _remoteCatalog) snapshot.key: snapshot,
       };
+      // Remove caches for libraries that are no longer paired. A temporary
+      // network outage leaves the paired reference intact, so this does not
+      // discard usable metadata merely because a peer is asleep.
+      if (servers.isNotEmpty && references.isNotEmpty) {
+        final validKeys = references
+            .map(
+              (reference) =>
+                  '${reference.serverId}\u0000${reference.libraryId}',
+            )
+            .toSet();
+        existing.removeWhere((key, _) => !validKeys.contains(key));
+      }
       for (final reference in references) {
         final server = serversById[reference.serverId];
         if (server == null) continue;
