@@ -286,6 +286,8 @@ final class FundusRemoteTrack {
     required this.id,
     required this.title,
     required this.position,
+    this.size,
+    this.mimeType,
     this.duration,
     this.audioMetadata,
     this.episode,
@@ -294,6 +296,8 @@ final class FundusRemoteTrack {
   final String id;
   final String title;
   final int position;
+  final int? size;
+  final String? mimeType;
   final Duration? duration;
   final AudioTechnicalMetadata? audioMetadata;
   final VideoEpisodeIdentity? episode;
@@ -946,6 +950,8 @@ final class FundusRemoteClient {
               id: item['id'] as String,
               title: item['title'] as String,
               position: item['position'] is int ? item['position'] as int : 0,
+              size: item['size'] is int ? item['size'] as int : null,
+              mimeType: item['mime_type'] as String?,
               duration: item['duration_seconds'] is num
                   ? Duration(
                       milliseconds: ((item['duration_seconds'] as num) * 1000)

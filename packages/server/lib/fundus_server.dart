@@ -1400,6 +1400,8 @@ final class FundusServerHandler {
       'id': track.fileId,
       'title': track.title,
       'position': track.index,
+      'size': track.size,
+      'mime_type': track.mimeType,
       'duration_seconds': track.duration?.inMilliseconds == null
           ? null
           : track.duration!.inMilliseconds / 1000,

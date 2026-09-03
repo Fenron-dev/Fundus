@@ -176,7 +176,8 @@ final class FundusVideoPlayerController extends ChangeNotifier {
       _loading = false;
       _lastPersistedAt = DateTime.now();
       notifyListeners();
-      final trackPreference = await VideoTrackPreferences.load(
+      final trackPreference = await VideoTrackPreferences.loadForLibrary(
+        library: library,
         kind: work.kind,
         workId: work.id,
         fileId: track?.fileId,
@@ -310,14 +311,17 @@ final class FundusVideoPlayerController extends ChangeNotifier {
   Future<void> rememberAudioTrack(AudioTrack selected) async {
     final work = _work;
     final current = track;
-    if (work == null || current == null) return;
-    final preference = await VideoTrackPreferences.load(
+    final library = _library;
+    if (work == null || current == null || library == null) return;
+    final preference = await VideoTrackPreferences.loadForLibrary(
+      library: library,
       kind: work.kind,
       workId: work.id,
       fileId: current.fileId,
       season: current.episode?.season,
     );
-    await VideoTrackPreferences.save(
+    await VideoTrackPreferences.saveForLibrary(
+      library: library,
       kind: work.kind,
       workId: work.id,
       fileId: current.fileId,
@@ -336,14 +340,17 @@ final class FundusVideoPlayerController extends ChangeNotifier {
   }) async {
     final work = _work;
     final current = track;
-    if (work == null || current == null) return;
-    final preference = await VideoTrackPreferences.load(
+    final library = _library;
+    if (work == null || current == null || library == null) return;
+    final preference = await VideoTrackPreferences.loadForLibrary(
+      library: library,
       kind: work.kind,
       workId: work.id,
       fileId: current.fileId,
       season: current.episode?.season,
     );
-    await VideoTrackPreferences.save(
+    await VideoTrackPreferences.saveForLibrary(
+      library: library,
       kind: work.kind,
       workId: work.id,
       fileId: current.fileId,

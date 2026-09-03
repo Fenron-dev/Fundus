@@ -9,6 +9,8 @@ final class LibraryPlaybackTrack {
     required this.absolutePath,
     required this.title,
     required this.index,
+    this.size,
+    this.mimeType,
     this.duration,
     this.audioMetadata,
     this.episode,
@@ -19,6 +21,8 @@ final class LibraryPlaybackTrack {
   final String absolutePath;
   final String title;
   final int index;
+  final int? size;
+  final String? mimeType;
   final Duration? duration;
   final AudioTechnicalMetadata? audioMetadata;
   final VideoEpisodeIdentity? episode;

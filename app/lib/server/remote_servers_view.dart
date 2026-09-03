@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:fundus_core/fundus_core.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:path/path.dart' as p;
 
 import '../diagnostics/fundus_diagnostics.dart';
 import '../library/comic_book_viewer.dart';
@@ -5922,29 +5923,48 @@ String _remoteChapterSubtitle(FundusRemoteChapter chapter, int trackCount) {
 
 Widget? _remoteTechnicalSubtitle(FundusRemoteTrack track) {
   final metadata = track.audioMetadata;
-  if (metadata == null) return null;
+  if (metadata == null && track.size == null) return null;
   final target = Platform.isAndroid
       ? AudioPlaybackTarget.android
       : AudioPlaybackTarget.desktop;
-  final assessment = metadata.assess(target);
+  final assessment = metadata?.assess(target);
   final parts = <String>[
-    metadata.container,
-    metadata.codec,
-    ?metadata.profile,
-    if (metadata.channels case final value?)
-      value == 1 ? 'Mono' : '$value Kanäle',
-    if (metadata.sampleRateHz case final value?)
-      '${(value / 1000).toStringAsFixed(value % 1000 == 0 ? 0 : 1)} kHz',
+    p.extension(track.title).replaceFirst('.', '').toUpperCase(),
   ];
-  final label = switch (assessment.status) {
+  if (metadata != null) {
+    parts
+      ..add(metadata.container)
+      ..add(metadata.codec)
+      ..addAll([
+        if (metadata.profile case final value?) value,
+        if (metadata.channels case final value?)
+          value == 1 ? 'Mono' : '$value Kanäle',
+        if (metadata.sampleRateHz case final value?)
+          '${(value / 1000).toStringAsFixed(value % 1000 == 0 ? 0 : 1)} kHz',
+      ]);
+  }
+  if (track.size case final bytes?) parts.add(_formatRemoteBytes(bytes));
+  final label = switch (assessment?.status) {
     AudioCompatibilityStatus.compatible => 'geeignet',
     AudioCompatibilityStatus.warning => 'prüfen',
     AudioCompatibilityStatus.unsupported => 'nicht geeignet',
     AudioCompatibilityStatus.unknown => 'unbekannt',
+    null => null,
   };
+  final compatibility = label == null
+      ? null
+      : '${Platform.isAndroid ? 'Android' : 'Desktop'}: $label';
   return Text(
-    '${parts.join(' · ')}\n${Platform.isAndroid ? 'Android' : 'Desktop'}: $label',
+    [parts.join(' · '), if (compatibility != null) compatibility].join('\n'),
   );
+}
+
+String _formatRemoteBytes(int bytes) {
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  if (bytes < 1024 * 1024 * 1024) {
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+  return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
 }
 
 String _remoteTrackLabel(FundusRemoteTrack track) {

@@ -40,4 +40,55 @@ void main() {
     expect(cleared.subtitlesEnabled, isNull);
     expect(cleared.toJson(), isEmpty);
   });
+
+  test('portable profile layers work, season and file overrides', () {
+    final profile = VideoTrackPreferences.updatePortableProfile(
+      null,
+      const VideoTrackPreference(audioLanguage: 'de'),
+    );
+    final withSeason = VideoTrackPreferences.updatePortableProfile(
+      profile,
+      const VideoTrackPreference(
+        subtitlesEnabled: true,
+        subtitleLanguage: 'en',
+      ),
+      season: 2,
+    );
+    final withFile = VideoTrackPreferences.updatePortableProfile(
+      withSeason,
+      const VideoTrackPreference(audioLanguage: 'ja'),
+      season: 2,
+      fileId: 'episode-7',
+    );
+
+    final result = VideoTrackPreferences.overlayPortableProfile(
+      const VideoTrackPreference(),
+      withFile,
+      season: 2,
+      fileId: 'episode-7',
+    );
+    expect(result.audioLanguage, 'ja');
+    expect(result.subtitleLanguage, 'en');
+    expect(result.subtitlesEnabled, isTrue);
+  });
+
+  test('portable profile keeps unrelated file overrides', () {
+    final first = VideoTrackPreferences.updatePortableProfile(
+      null,
+      const VideoTrackPreference(audioLanguage: 'de'),
+      fileId: 'one',
+    );
+    final second = VideoTrackPreferences.updatePortableProfile(
+      first,
+      const VideoTrackPreference(audioLanguage: 'en'),
+      fileId: 'two',
+    );
+
+    final one = VideoTrackPreferences.overlayPortableProfile(
+      const VideoTrackPreference(),
+      second,
+      fileId: 'one',
+    );
+    expect(one.audioLanguage, 'de');
+  });
 }

@@ -788,6 +788,8 @@ final class FundusDatabase {
       String path,
       String title,
       int position,
+      int size,
+      String? mimeType,
       int? durationMs,
       AudioTechnicalMetadata? audioMetadata,
       VideoEpisodeIdentity? episode,
@@ -796,7 +798,8 @@ final class FundusDatabase {
   playbackTracks(String workId) {
     final rows = _database.select(
       '''
-      SELECT f.id, f.path, f.filename, wf.position, f.duration_ms,
+      SELECT f.id, f.path, f.filename, wf.position, f.size, f.mime_type,
+             f.duration_ms,
              f.container, f.audio_codec, f.codec_profile,
              f.audio_channels, f.sample_rate_hz,
              ${columnExists('files', 'video_episode_json') ? 'f.video_episode_json' : 'NULL'} AS video_episode_json
@@ -815,6 +818,8 @@ final class FundusDatabase {
             path: row['path'] as String,
             title: row['filename'] as String,
             position: row['position'] as int,
+            size: row['size'] as int,
+            mimeType: row['mime_type'] as String?,
             durationMs: row['duration_ms'] as int?,
             audioMetadata:
                 row['container'] == null || row['audio_codec'] == null

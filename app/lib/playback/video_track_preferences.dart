@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:fundus_core/fundus_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -91,6 +93,7 @@ final class VideoTrackPreference {
 abstract final class VideoTrackPreferences {
   static const _storage = FlutterSecureStorage();
   static const _prefix = 'fundus.video.track_preferences.v1';
+  static const _portableReaderKind = 'video-tracks';
   static final Map<String, VideoTrackPreference> _cache = {};
 
   static Future<VideoTrackPreference> load({
@@ -140,6 +143,137 @@ abstract final class VideoTrackPreferences {
       fileId ?? (season == null ? null : 'season-$season'),
     ),
     preference,
+  );
+
+  /// Loads the secure device preference and overlays the portable preference
+  /// stored next to the work.  The sidecar is deliberately work-scoped: it
+  /// remains available for offline copies and survives an app reinstall,
+  /// while the secure store still provides the fast media-type default.
+  static Future<VideoTrackPreference> loadForLibrary({
+    required FundusLibrary library,
+    required String kind,
+    required String workId,
+    String? fileId,
+    int? season,
+  }) async {
+    var result = await load(
+      kind: kind,
+      workId: workId,
+      fileId: fileId,
+      season: season,
+    );
+    final profile = await library.loadPortableReaderProfile(
+      workId: workId,
+      deviceKey: Platform.operatingSystem,
+      readerKind: _portableReaderKind,
+    );
+    if (profile == null) return result;
+    return overlayPortableProfile(
+      result,
+      profile,
+      fileId: fileId,
+      season: season,
+    );
+  }
+
+  /// Applies a portable profile returned by either a local library sidecar
+  /// or the remote reader-settings endpoint.
+  static VideoTrackPreference overlayPortableProfile(
+    VideoTrackPreference base,
+    Map<String, Object?>? profile, {
+    String? fileId,
+    int? season,
+  }) {
+    final profiles = profile?['profiles'];
+    if (profiles is! Map) return base;
+    var result = _merge(base, VideoTrackPreference.fromJson(profiles['work']));
+    if (season != null) {
+      result = _merge(
+        result,
+        VideoTrackPreference.fromJson(profiles['season:$season']),
+      );
+    }
+    if (fileId != null) {
+      result = _merge(
+        result,
+        VideoTrackPreference.fromJson(profiles['file:$fileId']),
+      );
+    }
+    return result;
+  }
+
+  /// Returns an updated portable profile without mutating the caller's map.
+  static Map<String, Object?> updatePortableProfile(
+    Map<String, Object?>? existing,
+    VideoTrackPreference preference, {
+    String? fileId,
+    int? season,
+  }) {
+    final profiles = <String, Object?>{
+      if (existing?['profiles'] is Map)
+        ...Map<String, Object?>.from(existing!['profiles'] as Map),
+    };
+    final level = fileId != null
+        ? 'file:$fileId'
+        : season != null
+        ? 'season:$season'
+        : 'work';
+    profiles[level] = preference.toJson();
+    return {'format_version': 1, 'profiles': profiles};
+  }
+
+  /// Persists an episode/season preference both in the secure store and in
+  /// the work's portable reader-settings sidecar.  Sidecar writes are best
+  /// effort so a read-only or remote-mounted library never blocks playback.
+  static Future<void> saveForLibrary({
+    required FundusLibrary library,
+    required String kind,
+    required String workId,
+    String? fileId,
+    int? season,
+    required VideoTrackPreference preference,
+  }) async {
+    await save(
+      kind: kind,
+      workId: workId,
+      fileId: fileId,
+      season: season,
+      preference: preference,
+    );
+    if (library.isReadOnly) return;
+    try {
+      final existing = await library.loadPortableReaderProfile(
+        workId: workId,
+        deviceKey: Platform.operatingSystem,
+        readerKind: _portableReaderKind,
+      );
+      await library.savePortableReaderProfile(
+        workId: workId,
+        deviceKey: Platform.operatingSystem,
+        readerKind: _portableReaderKind,
+        profile: updatePortableProfile(
+          existing,
+          preference,
+          fileId: fileId,
+          season: season,
+        ),
+      );
+    } catch (_) {
+      // Portable preferences are optional and must never prevent playback.
+    }
+  }
+
+  static VideoTrackPreference _merge(
+    VideoTrackPreference parent,
+    VideoTrackPreference child,
+  ) => VideoTrackPreference(
+    audioLanguage: child.audioLanguage ?? parent.audioLanguage,
+    audioTrackId: child.audioTrackId ?? parent.audioTrackId,
+    audioTrackTitle: child.audioTrackTitle ?? parent.audioTrackTitle,
+    subtitleLanguage: child.subtitleLanguage ?? parent.subtitleLanguage,
+    subtitleTrackId: child.subtitleTrackId ?? parent.subtitleTrackId,
+    subtitleTrackTitle: child.subtitleTrackTitle ?? parent.subtitleTrackTitle,
+    subtitlesEnabled: child.subtitlesEnabled ?? parent.subtitlesEnabled,
   );
 
   static Future<VideoTrackPreference?> _read(String key) async {

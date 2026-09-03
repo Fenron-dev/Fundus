@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -359,6 +360,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
               id: track.id,
               title: track.title,
               position: track.position,
+              size: track.size,
               duration: track.duration,
               audioMetadata: track.audioMetadata,
             ),
@@ -546,9 +548,19 @@ final class FundusRemotePlayerController extends ChangeNotifier {
       _lastPersistedAt = DateTime.now();
       notifyListeners();
       if (_isVideoWork(work)) {
-        final preference = await VideoTrackPreferences.load(
-          kind: work.kind,
-          workId: work.id,
+        final profile = await _loadVideoTrackProfile(
+          server: server,
+          library: library,
+          work: work,
+        );
+        final preference = VideoTrackPreferences.overlayPortableProfile(
+          await VideoTrackPreferences.load(
+            kind: work.kind,
+            workId: work.id,
+            fileId: track?.id,
+            season: track?.episode?.season,
+          ),
+          profile,
           fileId: track?.id,
           season: track?.episode?.season,
         );
@@ -1214,23 +1226,46 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   Future<void> rememberVideoAudioTrack(AudioTrack selected) async {
     final work = _work;
     final current = track;
-    if (work == null || current == null) return;
-    final preference = await VideoTrackPreferences.load(
-      kind: work.kind,
-      workId: work.id,
+    final server = _server;
+    final library = _library;
+    if (work == null || current == null || server == null || library == null)
+      return;
+    final profile = await _loadVideoTrackProfile(
+      server: server,
+      library: library,
+      work: work,
+    );
+    final preference = VideoTrackPreferences.overlayPortableProfile(
+      await VideoTrackPreferences.load(
+        kind: work.kind,
+        workId: work.id,
+        fileId: current.id,
+        season: current.episode?.season,
+      ),
+      profile,
       fileId: current.id,
       season: current.episode?.season,
+    );
+    final updated = preference.copyWith(
+      audioLanguage: selected.language,
+      audioTrackId: selected.id,
+      audioTrackTitle: selected.title,
     );
     await VideoTrackPreferences.save(
       kind: work.kind,
       workId: work.id,
       fileId: current.id,
       season: current.episode?.season,
-      preference: preference.copyWith(
-        audioLanguage: selected.language,
-        audioTrackId: selected.id,
-        audioTrackTitle: selected.title,
-      ),
+      preference: updated,
+    );
+    await _saveVideoTrackProfile(
+      server: server,
+      library: library,
+      work: work,
+      existing: profile,
+      preference: updated,
+      fileId: current.id,
+      season: current.episode?.season,
     );
   }
 
@@ -1240,26 +1275,129 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   ) async {
     final work = _work;
     final current = track;
-    if (work == null || current == null) return;
-    final preference = await VideoTrackPreferences.load(
-      kind: work.kind,
-      workId: work.id,
+    final server = _server;
+    final library = _library;
+    if (work == null || current == null || server == null || library == null)
+      return;
+    final profile = await _loadVideoTrackProfile(
+      server: server,
+      library: library,
+      work: work,
+    );
+    final preference = VideoTrackPreferences.overlayPortableProfile(
+      await VideoTrackPreferences.load(
+        kind: work.kind,
+        workId: work.id,
+        fileId: current.id,
+        season: current.episode?.season,
+      ),
+      profile,
       fileId: current.id,
       season: current.episode?.season,
+    );
+    final updated = preference.copyWith(
+      subtitlesEnabled: enabled,
+      subtitleLanguage: selected?.language,
+      subtitleTrackId: selected?.id,
+      subtitleTrackTitle: selected?.title,
     );
     await VideoTrackPreferences.save(
       kind: work.kind,
       workId: work.id,
       fileId: current.id,
       season: current.episode?.season,
-      preference: preference.copyWith(
-        subtitlesEnabled: enabled,
-        subtitleLanguage: selected?.language,
-        subtitleTrackId: selected?.id,
-        subtitleTrackTitle: selected?.title,
-      ),
+      preference: updated,
+    );
+    await _saveVideoTrackProfile(
+      server: server,
+      library: library,
+      work: work,
+      existing: profile,
+      preference: updated,
+      fileId: current.id,
+      season: current.episode?.season,
     );
   }
+
+  Future<Map<String, Object?>?> _loadVideoTrackProfile({
+    required FundusRemoteServer server,
+    required FundusRemoteLibrary library,
+    required FundusRemoteWork work,
+  }) async {
+    final profileDeviceKey = _videoProfileDeviceKey;
+    if (_offlineWork != null) {
+      return _offlineStore.loadReaderProfile(
+        serverId: server.id,
+        libraryId: library.id,
+        workId: work.id,
+        deviceKey: profileDeviceKey,
+        readerKind: 'video-tracks',
+      );
+    }
+    try {
+      return await _withReconnect(
+        (active) => _client.readerProfile(
+          active,
+          libraryId: library.id,
+          workId: work.id,
+          deviceKey: profileDeviceKey,
+          readerKind: 'video-tracks',
+        ),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _saveVideoTrackProfile({
+    required FundusRemoteServer server,
+    required FundusRemoteLibrary library,
+    required FundusRemoteWork work,
+    required Map<String, Object?>? existing,
+    required VideoTrackPreference preference,
+    String? fileId,
+    int? season,
+  }) async {
+    final profileDeviceKey = _videoProfileDeviceKey;
+    final profile = VideoTrackPreferences.updatePortableProfile(
+      existing,
+      preference,
+      fileId: fileId,
+      season: season,
+    );
+    try {
+      if (_offlineWork != null) {
+        await _offlineStore.saveReaderProfile(
+          serverId: server.id,
+          libraryId: library.id,
+          workId: work.id,
+          deviceKey: profileDeviceKey,
+          readerKind: 'video-tracks',
+          profile: profile,
+        );
+      } else {
+        await _withReconnect(
+          (active) => _client.saveReaderProfile(
+            active,
+            libraryId: library.id,
+            workId: work.id,
+            deviceKey: profileDeviceKey,
+            readerKind: 'video-tracks',
+            profile: profile,
+          ),
+        );
+      }
+    } catch (_) {
+      // Stream settings remain available in the secure local store when the
+      // server is temporarily offline.
+    }
+  }
+
+  /// Offline copies use the stable platform key so reader preferences survive
+  /// an app reinstall. Online profiles remain device-specific and can be
+  /// inspected separately on the server.
+  String get _videoProfileDeviceKey =>
+      _offlineWork != null ? Platform.operatingSystem : 'video-$deviceId';
 
   Future<void> _applyVideoTrackPreference(
     VideoTrackPreference preference,

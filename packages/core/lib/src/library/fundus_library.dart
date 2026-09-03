@@ -233,6 +233,8 @@ final class FundusLibrary {
             absolutePath: absolutePath,
             title: track.title,
             index: track.position,
+            size: track.size,
+            mimeType: track.mimeType,
             duration: track.durationMs == null
                 ? null
                 : Duration(milliseconds: track.durationMs!),

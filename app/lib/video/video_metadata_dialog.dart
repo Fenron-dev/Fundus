@@ -8,6 +8,65 @@ const _tmdbKeyStorageKey = 'fundus.video.tmdb_api_key';
 const _metadataLanguageStorageKey = 'fundus.video.metadata_language';
 const _secureStorage = FlutterSecureStorage();
 
+abstract final class VideoMetadataLanguagePreferences {
+  static const defaultLanguage = 'de-DE';
+
+  static Future<String> load() async =>
+      await _secureStorage.read(key: _metadataLanguageStorageKey) ??
+      defaultLanguage;
+
+  static Future<void> save(String language) =>
+      _secureStorage.write(key: _metadataLanguageStorageKey, value: language);
+}
+
+final class VideoMetadataLanguageSettingTile extends StatefulWidget {
+  const VideoMetadataLanguageSettingTile({super.key});
+
+  @override
+  State<VideoMetadataLanguageSettingTile> createState() =>
+      _VideoMetadataLanguageSettingTileState();
+}
+
+final class _VideoMetadataLanguageSettingTileState
+    extends State<VideoMetadataLanguageSettingTile> {
+  String _language = VideoMetadataLanguagePreferences.defaultLanguage;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final language = await VideoMetadataLanguagePreferences.load();
+    if (mounted) setState(() => _language = language);
+  }
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: ListTile(
+      leading: const Icon(Icons.translate_outlined),
+      title: const Text('Sprache für Film- und Seriendetails'),
+      subtitle: const Text(
+        'AniList und TMDB verwenden diese Sprache beim Laden neuer Metadaten.',
+      ),
+      trailing: DropdownButton<String>(
+        value: _language,
+        onChanged: (value) async {
+          if (value == null) return;
+          setState(() => _language = value);
+          await VideoMetadataLanguagePreferences.save(value);
+        },
+        items: const [
+          DropdownMenuItem(value: 'de-DE', child: Text('Deutsch')),
+          DropdownMenuItem(value: 'en-US', child: Text('English')),
+          DropdownMenuItem(value: 'ja-JP', child: Text('Original / Japanisch')),
+        ],
+      ),
+    ),
+  );
+}
+
 /// Searches provider-neutral video metadata and returns the candidate selected
 /// by the user. AniList works without credentials; a TMDB key is kept only in
 /// the platform's secure storage and is never written into a Fundus vault.
@@ -59,8 +118,7 @@ final class _VideoMetadataDialogState extends State<_VideoMetadataDialog> {
 
   Future<void> _loadKey() async {
     _apiKey.text = await _secureStorage.read(key: _tmdbKeyStorageKey) ?? '';
-    _language =
-        await _secureStorage.read(key: _metadataLanguageStorageKey) ?? 'de-DE';
+    _language = await VideoMetadataLanguagePreferences.load();
     if (mounted) setState(() {});
   }
 
@@ -147,10 +205,7 @@ final class _VideoMetadataDialogState extends State<_VideoMetadataDialog> {
                 : (value) async {
                     if (value == null) return;
                     setState(() => _language = value);
-                    await _secureStorage.write(
-                      key: _metadataLanguageStorageKey,
-                      value: value,
-                    );
+                    await VideoMetadataLanguagePreferences.save(value);
                   },
           ),
           const SizedBox(height: 12),

@@ -14,6 +14,7 @@ final class FundusOfflineTrack {
     required this.title,
     required this.path,
     required this.position,
+    this.size,
     this.duration,
     this.audioMetadata,
   });
@@ -22,6 +23,7 @@ final class FundusOfflineTrack {
   final String title;
   final String path;
   final int position;
+  final int? size;
   final Duration? duration;
   final AudioTechnicalMetadata? audioMetadata;
 }
@@ -191,6 +193,7 @@ final class FundusOfflineStore {
             title: item['title'] as String,
             path: absolutePath,
             position: item['position'] is int ? item['position'] as int : 0,
+            size: item['size'] is int ? item['size'] as int : null,
             duration: item['duration_ms'] is int
                 ? Duration(milliseconds: item['duration_ms'] as int)
                 : null,
@@ -579,18 +582,23 @@ final class FundusOfflineStore {
           libraryId: library.id,
           fileId: track.id,
         );
+        final expectedSize = remote.response.contentLength > 0
+            ? remote.response.contentLength
+            : null;
         IOSink? sink;
         try {
           sink = partial.openWrite();
           var received = 0;
-          final expected = remote.response.contentLength > 0
-              ? remote.response.contentLength
-              : null;
-          onTransfer?.call(index, pendingTracks.length, received, expected);
+          onTransfer?.call(index, pendingTracks.length, received, expectedSize);
           await sink.addStream(
             remote.response.timeout(const Duration(seconds: 30)).map((chunk) {
               received += chunk.length;
-              onTransfer?.call(index, pendingTracks.length, received, expected);
+              onTransfer?.call(
+                index,
+                pendingTracks.length,
+                received,
+                expectedSize,
+              );
               return chunk;
             }),
           );
@@ -608,6 +616,7 @@ final class FundusOfflineStore {
             title: track.title,
             path: destination.path,
             position: track.position,
+            size: track.size ?? expectedSize,
             duration: track.duration,
             audioMetadata: track.audioMetadata,
           ),
@@ -666,6 +675,7 @@ final class FundusOfflineStore {
                 'title': track.title,
                 'path': p.basename(track.path),
                 'position': track.position,
+                if (track.size != null) 'size': track.size,
                 if (track.duration != null)
                   'duration_ms': track.duration!.inMilliseconds,
                 if (track.audioMetadata != null)

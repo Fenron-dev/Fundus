@@ -9,6 +9,7 @@ import '../playback/playback_conflict_settings.dart';
 import '../playback/playback_autosave_settings.dart';
 import '../playback/playback_shake_restart.dart';
 import '../playback/video_track_preferences.dart';
+import '../video/video_metadata_dialog.dart';
 import '../settings/fundus_settings_snapshot.dart';
 import 'annotation_sync_settings.dart';
 import 'fundus_peer_server_controller.dart';
@@ -104,6 +105,8 @@ class _ServerSettings extends StatelessWidget {
               const PlaybackAutosaveSettingTile(),
               const Divider(),
               const VideoTrackPreferenceSettingTile(),
+              const Divider(),
+              const VideoMetadataLanguageSettingTile(),
               const Divider(),
               const AnnotationSyncSettingTile(),
             ]),

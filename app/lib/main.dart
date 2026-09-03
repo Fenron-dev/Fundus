@@ -5387,13 +5387,13 @@ final class _VideoFileTechnicalSubtitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => FutureBuilder<int>(
-    future: File(file.absolutePath).length(),
+    future: file.size == null ? File(file.absolutePath).length() : null,
     builder: (context, snapshot) {
       final extension = p
           .extension(file.title)
           .replaceFirst('.', '')
           .toUpperCase();
-      final size = snapshot.data;
+      final size = file.size ?? snapshot.data;
       final sizeLabel = size == null
           ? 'Größe wird geladen …'
           : _formatBytes(size);
