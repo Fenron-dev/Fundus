@@ -2729,6 +2729,14 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
               libraryName: library.name,
               offlineAvailable: isOffline,
             );
+            final collectionNames = _collections
+                .where(
+                  (collection) => collection.isSmart
+                      ? matchesCollectionRules(detail.summary, collection.rules)
+                      : collection.workIds.contains(work.id),
+                )
+                .map((collection) => collection.name)
+                .toList(growable: false);
             for (final entry in orderedTracks) {
               final episode =
                   entry.track.episode ?? parseVideoEpisode(entry.track.title);
@@ -2836,6 +2844,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                             : () => Navigator.pop(context, 'play'),
                         onSelectPerson: (name) =>
                             Navigator.pop(context, 'credit:$name'),
+                        collectionNames: collectionNames,
+                        onSelectCollection: (name) => Navigator.pop(
+                          context,
+                          'collection:$name',
+                        ),
                       ),
                     if (isDocument && !forceOffline)
                       Align(
@@ -3087,6 +3100,20 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       if (credit.isNotEmpty && mounted) {
         setState(() {
           _selectedCredit = credit;
+          _selectedGroup = null;
+        });
+      }
+      return;
+    }
+    if (action.startsWith('collection:')) {
+      final name = action.substring('collection:'.length).trim();
+      final collection = _collections
+          .where((item) => item.name == name)
+          .firstOrNull;
+      if (collection != null && mounted) {
+        setState(() {
+          _selectedCollectionId = collection.id;
+          _selectedCredit = null;
           _selectedGroup = null;
         });
       }

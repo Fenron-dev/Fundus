@@ -13,6 +13,10 @@ abstract final class PlaybackAutosaveSettings {
     'video': 30,
     'movie': 30,
     'tv': 30,
+    'anime_movie': 30,
+    'anime_tv': 30,
+    'hhh_movie': 30,
+    'hhh_tv': 30,
     'manga': 0,
     'webnovel': 120,
     'ebook': 120,
@@ -21,8 +25,12 @@ abstract final class PlaybackAutosaveSettings {
   static const _keys = <String, String>{
     'audiobook': 'fundus.playback.autosave.audiobook.v1',
     'video': 'fundus.playback.autosave.video.v1',
-    'movie': 'fundus.playback.autosave.video.v1',
-    'tv': 'fundus.playback.autosave.video.v1',
+    'movie': 'fundus.playback.autosave.movie.v1',
+    'tv': 'fundus.playback.autosave.tv.v1',
+    'anime_movie': 'fundus.playback.autosave.anime_movie.v1',
+    'anime_tv': 'fundus.playback.autosave.anime_tv.v1',
+    'hhh_movie': 'fundus.playback.autosave.hhh_movie.v1',
+    'hhh_tv': 'fundus.playback.autosave.hhh_tv.v1',
     'manga': 'fundus.playback.autosave.manga.v1',
     'webnovel': 'fundus.playback.autosave.webnovel.v1',
     'ebook': 'fundus.playback.autosave.ebook.v1',
@@ -50,17 +58,20 @@ abstract final class PlaybackAutosaveSettings {
     return Map.unmodifiable(_cache);
   }
 
-  static int intervalSeconds(String kind) =>
-      _cache[kind] ?? _cache[_baseKind(kind)] ?? 60;
+  static int intervalSeconds(String kind) {
+    final normalized = kind.trim().toLowerCase();
+    return _cache[normalized] ?? _cache[_baseKind(normalized)] ?? 60;
+  }
 
   static Duration interval(String kind) =>
       Duration(seconds: intervalSeconds(kind));
 
   static Future<void> setInterval(String kind, int seconds) async {
-    final key = _keys[kind] ?? _keys[_baseKind(kind)];
+    final normalized = kind.trim().toLowerCase();
+    final base = _baseKind(normalized);
+    final key = _keys[normalized] ?? _keys[base];
     if (key == null || !_valid(seconds)) return;
-    final base = _baseKind(kind);
-    _cache[base] = seconds;
+    _cache[normalized] = seconds;
     await _storage.write(key: key, value: '$seconds');
     changes.value++;
   }
@@ -68,12 +79,9 @@ abstract final class PlaybackAutosaveSettings {
   static String _baseKind(String kind) {
     final normalized = kind.trim().toLowerCase();
     return switch (normalized) {
-      'movie' ||
-      'tv' ||
-      'anime_movie' ||
-      'anime_tv' ||
-      'hhh_movie' ||
-      'hhh_tv' => 'video',
+      'anime_movie' || 'hhh_movie' => 'movie',
+      'anime_tv' || 'hhh_tv' => 'tv',
+      'movie' || 'tv' => 'video',
       _ => normalized,
     };
   }
@@ -122,7 +130,13 @@ class _PlaybackAutosaveSettingTileState
               ),
               for (final entry in const [
                 ('audiobook', 'Hörbücher'),
-                ('video', 'Filme und Serien'),
+                ('video', 'Videos (Standard)'),
+                ('movie', 'Filme'),
+                ('tv', 'Serien'),
+                ('anime_movie', 'Anime-Filme'),
+                ('anime_tv', 'Anime-Serien'),
+                ('hhh_movie', 'HHH-Filme'),
+                ('hhh_tv', 'HHH-Serien'),
                 ('manga', 'Manga und Comics'),
                 ('webnovel', 'Webnovels'),
                 ('ebook', 'E-Books und PDFs'),
