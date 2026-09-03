@@ -74,6 +74,19 @@ class WorkDetailFacts extends StatelessWidget {
             label: 'Quelle',
             value: source,
           ),
+        if (work.providerMetadata['provider'] case final provider
+            when provider is String && provider.trim().isNotEmpty)
+          _fact(
+            key: const ValueKey('work-detail-metadata-provider'),
+            icon: Icons.auto_awesome_outlined,
+            label: 'Metadatenquelle',
+            value: [
+              provider.toUpperCase(),
+              if (work.providerMetadata['provider_id'] case final id
+                  when id is String && id.trim().isNotEmpty)
+                'ID $id',
+            ].join(' · '),
+          ),
         if (directoryPath case final path? when path.trim().isNotEmpty)
           _fact(
             key: const ValueKey('work-detail-directory'),
