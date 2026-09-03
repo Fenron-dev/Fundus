@@ -4725,6 +4725,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         publisher: offline.publisher,
         publishedYear: offline.publishedYear,
         fileCount: offline.tracks.length,
+        providerMetadata: offline.providerMetadata,
       );
       await _showWork(
         server,

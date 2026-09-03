@@ -544,6 +544,7 @@ final class FundusLibrary {
     String? contentSensitivity,
     List<String>? genres,
     String? contentStyle,
+    Map<String, Object?>? providerMetadata,
   }) async {
     _ensureWritable();
     _database.updateWorkMetadata(
@@ -561,6 +562,7 @@ final class FundusLibrary {
       contentSensitivity: contentSensitivity,
       genres: genres,
       contentStyle: contentStyle,
+      providerMetadata: providerMetadata,
     );
     await _writeMetadataSidecar(workId);
     return listWorks(
@@ -1055,6 +1057,9 @@ final class FundusLibrary {
       tags: work.tags,
       lastListenedAt: work.lastListenedAt,
       offline: work.offline,
+      sourceServerName: work.sourceServerName,
+      sourceLibraryName: work.sourceLibraryName,
+      providerMetadata: work.providerMetadata,
     );
   }
 
@@ -1250,6 +1255,7 @@ final class FundusLibrary {
         'published_year': work.publishedYear,
         'content_sensitivity': work.contentSensitivity,
         'content_style': work.contentStyle,
+        if (work.providerMetadata.isNotEmpty) 'provider_metadata': work.providerMetadata,
         'genres': work.genres,
         'field_sources': {
           for (final entry in work.metadataOrigins.entries) entry.key: {'source': entry.value.source.name, 'updated_at': entry.value.updatedAt.toUtc().toIso8601String()},
@@ -1324,6 +1330,14 @@ final class FundusLibrary {
               value['content_sensitivity'],
             ),
             contentStyle: value['content_style'] as String?,
+            providerMetadata: value['provider_metadata'] is Map
+                ? {
+                    for (final entry
+                        in (value['provider_metadata'] as Map).entries)
+                      if (entry.key is String && entry.value != null)
+                        entry.key as String: entry.value,
+                  }
+                : null,
             genres: value['genres'] is List
                 ? (value['genres'] as List).whereType<String>().toList(
                     growable: false,

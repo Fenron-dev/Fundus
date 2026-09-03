@@ -402,6 +402,12 @@ void main() {
         publisher: 'Testverlag',
         publishedYear: 2026,
         contentSensitivity: 'adult_explicit',
+        providerMetadata: const {
+          'provider': 'tmdb',
+          'provider_id': '12345',
+          'episode_count': 12,
+          'external_ids': {'tmdb': '12345'},
+        },
       );
 
       expect(edited.title, 'Manuell korrigierter Titel');
@@ -413,6 +419,9 @@ void main() {
       expect(edited.description, 'Eine portable Beschreibung.');
       expect(edited.contentSensitivity, 'adult_explicit');
       expect(edited.isHhh, isTrue);
+      expect(edited.providerMetadata['provider'], 'tmdb');
+      expect(edited.providerMetadata['provider_id'], '12345');
+      expect(edited.providerMetadata['episode_count'], 12);
       expect(edited.metadataOrigins['title']?.source, WorkMetadataSource.user);
       expect(
         edited.metadataOrigins['narrators']?.source,
@@ -454,6 +463,8 @@ void main() {
       expect(restored.publishedYear, 2026);
       expect(restored.contentSensitivity, 'adult_explicit');
       expect(restored.isHhh, isTrue);
+      expect(restored.providerMetadata['provider'], 'tmdb');
+      expect(restored.providerMetadata['episode_count'], 12);
       expect(
         restored.metadataOrigins['title']?.source,
         WorkMetadataSource.user,

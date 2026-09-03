@@ -52,6 +52,7 @@ final class FundusOfflineWork {
     this.coverPath,
     this.tags = const [],
     this.contentSensitivity,
+    this.providerMetadata = const {},
     this.progress,
     this.missingTrackTitles = const [],
   });
@@ -78,6 +79,7 @@ final class FundusOfflineWork {
   final String? coverPath;
   final List<String> tags;
   final String? contentSensitivity;
+  final Map<String, Object?> providerMetadata;
   final FundusRemoteProgress? progress;
   final List<String> missingTrackTitles;
 
@@ -281,6 +283,13 @@ final class FundusOfflineStore {
         contentSensitivity: value['content_sensitivity'] is String
             ? value['content_sensitivity'] as String
             : null,
+        providerMetadata: value['provider_metadata'] is Map
+            ? {
+                for (final entry in (value['provider_metadata'] as Map).entries)
+                  if (entry.key is String && entry.value != null)
+                    entry.key as String: entry.value,
+              }
+            : const {},
         downloadedAt:
             DateTime.tryParse('${value['downloaded_at'] ?? ''}') ??
             DateTime.fromMillisecondsSinceEpoch(0),
@@ -491,6 +500,9 @@ final class FundusOfflineStore {
       if (work.contentSensitivity != null) {
         value['content_sensitivity'] = work.contentSensitivity;
       }
+      if (work.providerMetadata.isNotEmpty) {
+        value['provider_metadata'] = work.providerMetadata;
+      }
       value['tags'] = work.tags;
       final partial = File('${manifest.path}.part');
       await partial.writeAsString(
@@ -666,6 +678,8 @@ final class FundusOfflineStore {
           'tags': work.tags,
           if (work.contentSensitivity != null)
             'content_sensitivity': work.contentSensitivity,
+          if (work.providerMetadata.isNotEmpty)
+            'provider_metadata': work.providerMetadata,
           'downloaded_at': downloadedAt.toIso8601String(),
           if (coverPath != null) 'cover_path': p.basename(coverPath),
           'tracks': [

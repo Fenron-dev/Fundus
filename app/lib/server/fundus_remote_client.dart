@@ -253,6 +253,7 @@ final class FundusRemoteWork {
     this.tags = const [],
     this.addedAt,
     this.lastListenedAt,
+    this.providerMetadata = const {},
   });
 
   final String id;
@@ -277,6 +278,7 @@ final class FundusRemoteWork {
   final List<String> tags;
   final DateTime? addedAt;
   final DateTime? lastListenedAt;
+  final Map<String, Object?> providerMetadata;
 
   bool get isHhh => contentSensitivity == 'adult_explicit';
 }
@@ -676,9 +678,18 @@ final class FundusRemoteClient {
             lastListenedAt: DateTime.tryParse(
               '${item['last_listened_at'] ?? ''}',
             ),
+            providerMetadata: _providerMetadata(item['provider_metadata']),
           ),
     ];
   }
+
+  static Map<String, Object?> _providerMetadata(Object? value) => value is Map
+      ? {
+          for (final entry in value.entries)
+            if (entry.key is String && entry.value != null)
+              entry.key as String: entry.value,
+        }
+      : const {};
 
   Future<List<FundusRemotePlaylist>> playlists(
     FundusRemoteServer server,

@@ -5088,6 +5088,26 @@ class _VideoHero extends StatelessWidget {
               ],
             ),
           ],
+          if (work.providerMetadata case final provider
+              when provider.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                if (provider['provider'] case final name? when name is String)
+                  Chip(
+                    avatar: const Icon(Icons.cloud_done_outlined, size: 18),
+                    label: Text('Quelle: ${name.toUpperCase()}'),
+                  ),
+                if (provider['episode_count'] case final count?
+                    when count is num)
+                  Chip(label: Text('${count.round()} Folgen')),
+                if (provider['provider_id'] case final id? when id is String)
+                  Chip(label: Text('ID: $id')),
+              ],
+            ),
+          ],
           if (work.description case final description?) ...[
             const SizedBox(height: 14),
             Text(
@@ -7493,6 +7513,22 @@ class _DetailPanelState extends State<_DetailPanel> {
             candidate.contentSensitivity ?? work.contentSensitivity,
         genres: candidate.genres.isEmpty ? work.genres : candidate.genres,
         contentStyle: candidate.contentStyle ?? work.contentStyle,
+        providerMetadata: {
+          'provider': candidate.provider,
+          'provider_id': candidate.providerId,
+          if (candidate.videoKind != null) 'video_kind': candidate.videoKind,
+          if (candidate.contentStyle != null)
+            'content_style': candidate.contentStyle,
+          if (candidate.releaseYear != null)
+            'release_year': candidate.releaseYear,
+          if (candidate.season != null) 'season': candidate.season,
+          if (candidate.episodeCount != null)
+            'episode_count': candidate.episodeCount,
+          if (candidate.backdropUrl != null)
+            'backdrop_url': candidate.backdropUrl,
+          if (candidate.externalIds.isNotEmpty)
+            'external_ids': candidate.externalIds,
+        },
       );
       final poster = candidate.posterUrl;
       if (poster != null) {

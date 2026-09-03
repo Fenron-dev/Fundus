@@ -53,6 +53,7 @@ final class LibraryWorkSummary {
     this.offline = false,
     this.sourceServerName,
     this.sourceLibraryName,
+    this.providerMetadata = const {},
   });
 
   final String id;
@@ -94,6 +95,9 @@ final class LibraryWorkSummary {
   final bool offline;
   final String? sourceServerName;
   final String? sourceLibraryName;
+
+  /// Provider-neutral enrichment persisted with the work metadata.
+  final Map<String, Object?> providerMetadata;
 
   bool get available => status == 'available';
 
@@ -429,6 +433,7 @@ final class FundusDatabase {
     WorkMetadataSource source = WorkMetadataSource.user,
     DateTime? updatedAt,
     Map<String, WorkMetadataOrigin> fieldOrigins = const {},
+    Map<String, Object?>? providerMetadata,
   }) {
     final normalizedTitle = title.trim();
     final normalizedAuthors = authors
@@ -510,6 +515,9 @@ final class FundusDatabase {
       );
     }
     if (contentStyle != null) write('content_style', contentStyle);
+    if (providerMetadata != null) {
+      write('provider_metadata', _sanitizeProviderMetadata(providerMetadata));
+    }
     write('title', normalizedTitle);
     write('series', series);
     write('series_sequence', seriesSequence);
@@ -690,6 +698,7 @@ final class FundusDatabase {
             contentStyle: metadata['content_style'] is String
                 ? metadata['content_style'] as String
                 : null,
+            providerMetadata: _providerMetadata(metadata),
             abridged: metadata['abridged'] as bool?,
             progressPosition: row['progress_kind'] == 'time'
                 ? _seconds(row['progress_position'])
@@ -730,6 +739,20 @@ final class FundusDatabase {
   static List<String> _metadataStrings(Object? value) => value is List
       ? value.whereType<String>().toList(growable: false)
       : const [];
+
+  static Map<String, Object?> _providerMetadata(Map<String, dynamic> metadata) {
+    final value = metadata['provider_metadata'];
+    if (value is! Map) return const {};
+    return _sanitizeProviderMetadata(Map<String, Object?>.from(value));
+  }
+
+  static Map<String, Object?> _sanitizeProviderMetadata(
+    Map<String, Object?> value,
+  ) => {
+    for (final entry in value.entries)
+      if (entry.key.trim().isNotEmpty && entry.value != null)
+        entry.key: entry.value,
+  };
 
   static int _metadataPriority(WorkMetadataSource source) => switch (source) {
     WorkMetadataSource.filename => 1,
