@@ -511,12 +511,22 @@ final class FundusServerHandler {
   Response _collections(Request request, String libraryId) {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
+    final visibleWorkIds = {
+      for (final work in entry.works)
+        if (_canViewWork(request, work)) work.id,
+    };
     return _json({
       'library_id': libraryId,
       'collections': [
         for (final collection in entry.library.listCollections())
-          if (_canViewCollection(request, entry, collection))
-            _collectionJson(collection),
+          if (_collectionVisibility(
+                request,
+                entry,
+                collection,
+                visibleWorkIds: visibleWorkIds,
+              )
+              case final collectionWorkIds?)
+            _collectionJson(collection, workIds: collectionWorkIds),
       ],
     });
   }
@@ -1339,12 +1349,36 @@ final class FundusServerHandler {
     LibraryPlaylist playlist,
   ) => _canViewWorkIds(request, entry, playlist.workIds);
 
-  bool _canViewCollection(
+  Iterable<String>? _collectionVisibility(
     Request request,
     SharedFundusLibrary entry,
-    LibraryCollection collection,
-  ) =>
-      collection.isSmart || _canViewWorkIds(request, entry, collection.workIds);
+    LibraryCollection collection, {
+    required Set<String> visibleWorkIds,
+  }) {
+    // A smart collection has no materialized membership in many older
+    // libraries. Its rules still form a sensitive side-channel when they
+    // explicitly target HHH, so keep that collection hidden unless the
+    // requesting device is authorized.
+    if (collection.isSmart) {
+      final sensitivities = collection.rules?['sensitivities'];
+      final targetsAdult =
+          sensitivities is List &&
+          sensitivities.whereType<String>().any(
+            (value) => value == 'adult_explicit',
+          );
+      if (targetsAdult && !_canViewAdult(request)) return null;
+      return collection.workIds
+          .where(visibleWorkIds.contains)
+          .toList(growable: false);
+    }
+
+    final allowed = collection.workIds
+        .where(visibleWorkIds.contains)
+        .toList(growable: false);
+    // Do not expose an empty manual collection: it may otherwise reveal that
+    // hidden HHH works exist or preserve a sensitive collection name.
+    return allowed.isEmpty ? null : allowed;
+  }
 
   bool _canViewPlaybackSession(
     Request request,
@@ -1498,13 +1532,16 @@ final class FundusServerHandler {
     'updated_at': playlist.updatedAt.toUtc().toIso8601String(),
   };
 
-  static Map<String, Object?> _collectionJson(LibraryCollection collection) => {
+  static Map<String, Object?> _collectionJson(
+    LibraryCollection collection, {
+    Iterable<String>? workIds,
+  }) => {
     'id': collection.id,
     'name': collection.name,
     'parent_id': collection.parentId,
     'kind': collection.kind,
     if (collection.rules != null) 'rules': collection.rules,
-    'work_ids': collection.workIds,
+    'work_ids': (workIds ?? collection.workIds).toList(growable: false),
     'created_at': collection.createdAt.toUtc().toIso8601String(),
   };
 

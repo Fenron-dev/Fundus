@@ -633,6 +633,53 @@ void main() {
     expect(afterDelete['playlists'], isEmpty);
   });
 
+  test('does not leak HHH collections to an unauthorized device', () async {
+    final adultWork = secondLibrary.listWorks().single;
+    final collection = secondLibrary.saveCollection(
+      name: 'Geschützte Sammlung',
+      workIds: [adultWork.id],
+    );
+    final libraryId = secondLibrary.manifest.libraryId;
+
+    // The server token is the trusted local owner and may see the collection.
+    final owner = await _json(
+      await _get(server, '/v1/libraries/$libraryId/collections'),
+    );
+    expect((owner['collections']! as List).single['id'], collection.id);
+
+    final authority = FundusPairingAuthority();
+    final invitation = authority.begin(lifetime: const Duration(minutes: 1));
+    final pairedServer = FundusServerHandler(
+      token: 'owner-secret',
+      serverId: 'server-test',
+      registry: registry,
+      pairingAuthority: authority,
+    );
+    final claim = await pairedServer.handler(
+      Request(
+        'POST',
+        Uri.parse('https://localhost/v1/pairing/claim'),
+        headers: {'content-type': 'application/json'},
+        body: jsonEncode({
+          'nonce': invitation.nonce,
+          'pin': invitation.pin,
+          'device_id': 'restricted-client',
+          'device_name': 'Restricted client',
+        }),
+      ),
+    );
+    final token = (await _json(claim))['token']! as String;
+    final response = await pairedServer.handler(
+      Request(
+        'GET',
+        Uri.parse('http://localhost/v1/libraries/$libraryId/collections'),
+        headers: {'authorization': 'Bearer $token'},
+      ),
+    );
+    final restricted = await _json(response);
+    expect(restricted['collections'], isEmpty);
+  });
+
   test('syncs a complete playback session with conflict protection', () async {
     final libraryId = firstLibrary.manifest.libraryId;
     final path = '/v1/libraries/$libraryId/playback-session';
