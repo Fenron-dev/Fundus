@@ -143,6 +143,22 @@ final class FundusOfflineStore {
     fallbacks: fallbacks,
   );
 
+  /// Creates the device-wide offline store used when no Fundus library is
+  /// currently open.  The directory deliberately lives below a user-visible
+  /// Fundus folder on shared storage so downloads, progress and reader
+  /// profiles survive an Android app reinstall and remain manageable by the
+  /// user.  [fallbacks] keeps older app-support downloads discoverable while
+  /// they are migrated on the next startup.
+  factory FundusOfflineStore.forDeviceStorage(
+    Directory storageRoot, {
+    List<FundusOfflineStore> fallbacks = const [],
+  }) => FundusOfflineStore(
+    root: Directory(
+      p.join(storageRoot.absolute.path, 'Fundus', 'offline-media'),
+    ),
+    fallbacks: fallbacks,
+  );
+
   final Directory? _configuredRoot;
   final List<FundusOfflineStore> _fallbacks;
 

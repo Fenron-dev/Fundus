@@ -147,7 +147,7 @@ class _FundusAppState extends State<FundusApp> {
   late final Future<void> _recentStoreReady;
   final _remoteStore = FundusRemoteServerStore();
   final _remoteClient = const FundusRemoteClient();
-  final _deviceOfflineStore = FundusOfflineStore();
+  FundusOfflineStore _deviceOfflineStore = FundusOfflineStore();
   late FundusOfflineStore _offlineStore;
   final _peerDiscovery = FundusPeerDiscovery();
   late final FundusPeerServerController _peerServer;
@@ -191,6 +191,27 @@ class _FundusAppState extends State<FundusApp> {
 
   Future<void> _initializeRecentStore() async {
     final androidRoot = await AndroidStorageAccess.storageRoot();
+    if (Platform.isAndroid && androidRoot != null) {
+      final hasStorageAccess = await AndroidStorageAccess.isGranted();
+      if (hasStorageAccess) {
+        final previousStore = _deviceOfflineStore;
+        final durableStore = FundusOfflineStore.forDeviceStorage(
+          Directory(androidRoot),
+          fallbacks: [previousStore],
+        );
+        _deviceOfflineStore = durableStore;
+        if (_library == null) _offlineStore = durableStore;
+        try {
+          // Move legacy app-support downloads (including reader profiles and
+          // progress) into the reinstall-safe location before the first
+          // catalogue refresh. The fallback remains available if a file is
+          // locked or a partial download cannot be copied yet.
+          await durableStore.adoptFallbackDownloads();
+        } on FileSystemException {
+          // Offline media is optional; keep using the fallback for this run.
+        }
+      }
+    }
     _recentStore = RecentLibraryStore.platformDefault(
       androidStorageRoot: androidRoot,
     );
