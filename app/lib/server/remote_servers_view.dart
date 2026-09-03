@@ -27,6 +27,7 @@ import '../library/work_detail_sections.dart';
 import '../library/media_content_schema.dart';
 import '../library/work_content_list.dart';
 import '../library/work_annotation_list.dart';
+import '../library/video_detail_hero.dart';
 import '../library/video_player_page.dart';
 import '../library/zip_archive_browser.dart';
 import '../playback/playback_sleep_timer_button.dart';
@@ -2782,51 +2783,60 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    WorkDetailHeader(
-                      detail: detail,
-                      breadcrumbs: _remoteDetailBreadcrumbs(
-                        detail,
-                        onPrevious: () => Navigator.of(context).maybePop(),
-                      ),
-                      coverBuilder: (_) => work.hasCover
-                          ? _remoteCover(
-                              server,
-                              library,
-                              work,
-                              borderRadius: BorderRadius.circular(14),
-                            )
-                          : Icon(_kindIcon(work.kind), size: 72),
-                      primaryAction: WorkDetailHeaderAction(
-                        label: isDocument
-                            ? (documentPosition == null
-                                  ? 'Lesen'
-                                  : 'Fortsetzen')
-                            : (work.progressPosition == null
-                                  ? 'Abspielen'
-                                  : 'Fortsetzen'),
-                        icon: isDocument
-                            ? Icons.menu_book_outlined
-                            : Icons.play_arrow,
-                        onPressed: detailTracks.isEmpty
-                            ? null
-                            : () => Navigator.pop(
-                                context,
-                                isDocument ? 'open:resume' : 'play',
-                              ),
-                      ),
-                      secondaryAction: WorkDetailHeaderAction(
-                        label: isOffline
-                            ? 'Download verwalten'
-                            : 'Offline speichern',
-                        icon: isOffline
-                            ? Icons.download_done
-                            : Icons.download_outlined,
-                        onPressed: () => Navigator.pop(
-                          context,
-                          isOffline ? 'remove_download' : 'download',
+                    if (isDocument)
+                      WorkDetailHeader(
+                        detail: detail,
+                        breadcrumbs: _remoteDetailBreadcrumbs(
+                          detail,
+                          onPrevious: () => Navigator.of(context).maybePop(),
                         ),
+                        coverBuilder: (_) => work.hasCover
+                            ? _remoteCover(
+                                server,
+                                library,
+                                work,
+                                borderRadius: BorderRadius.circular(14),
+                              )
+                            : Icon(_kindIcon(work.kind), size: 72),
+                        primaryAction: WorkDetailHeaderAction(
+                          label: documentPosition == null
+                              ? 'Lesen'
+                              : 'Fortsetzen',
+                          icon: Icons.menu_book_outlined,
+                          onPressed: detailTracks.isEmpty
+                              ? null
+                              : () => Navigator.pop(context, 'open:resume'),
+                        ),
+                        secondaryAction: WorkDetailHeaderAction(
+                          label: isOffline
+                              ? 'Download verwalten'
+                              : 'Offline speichern',
+                          icon: isOffline
+                              ? Icons.download_done
+                              : Icons.download_outlined,
+                          onPressed: () => Navigator.pop(
+                            context,
+                            isOffline ? 'remove_download' : 'download',
+                          ),
+                        ),
+                      )
+                    else
+                      FundusVideoDetailHero(
+                        work: detail.summary,
+                        coverBuilder: (_) => work.hasCover
+                            ? _remoteCover(
+                                server,
+                                library,
+                                work,
+                                borderRadius: BorderRadius.circular(14),
+                              )
+                            : Icon(_kindIcon(work.kind), size: 72),
+                        onOpen: detailTracks.isEmpty
+                            ? null
+                            : () => Navigator.pop(context, 'play'),
+                        onSelectPerson: (name) =>
+                            Navigator.pop(context, 'credit:$name'),
                       ),
-                    ),
                     if (isDocument && !forceOffline)
                       Align(
                         alignment: Alignment.centerRight,
@@ -2838,10 +2848,15 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                         ),
                       ),
                     const SizedBox(height: 18),
-                    WorkDetailFacts(detail: detail, progress: documentPosition),
-                    if (_remoteVideoCredits(
-                      work.providerMetadata,
-                    ).isNotEmpty) ...[
+                    if (isDocument)
+                      WorkDetailFacts(
+                        detail: detail,
+                        progress: documentPosition,
+                      ),
+                    if (isDocument &&
+                        _remoteVideoCredits(
+                          work.providerMetadata,
+                        ).isNotEmpty) ...[
                       const SizedBox(height: 18),
                       Text(
                         'Besetzung & Crew',
@@ -2881,16 +2896,17 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                           label: const Text('Trailer-Link kopieren'),
                         ),
                       ),
-                    if (work.progressPosition case final position?) ...[
-                      const SizedBox(height: 16),
-                      Text(
-                        work.progressDuration == null
-                            ? 'Fortsetzen bei ${_formatRemoteDuration(position)}'
-                            : '${_formatRemoteDuration(position)} / '
-                                  '${_formatRemoteDuration(work.progressDuration!)}',
-                        style: Theme.of(context).textTheme.labelLarge,
-                      ),
-                    ],
+                    if (isDocument)
+                      if (work.progressPosition case final position?) ...[
+                        const SizedBox(height: 16),
+                        Text(
+                          work.progressDuration == null
+                              ? 'Fortsetzen bei ${_formatRemoteDuration(position)}'
+                              : '${_formatRemoteDuration(position)} / '
+                                    '${_formatRemoteDuration(work.progressDuration!)}',
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                      ],
                     if (isDocument && detailTracks.isNotEmpty) ...[
                       const SizedBox(height: 16),
                       Row(
@@ -2953,10 +2969,11 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                         ),
                       ],
                     ],
-                    if (work.description case final description?) ...[
-                      const SizedBox(height: 20),
-                      Text(description),
-                    ],
+                    if (isDocument)
+                      if (work.description case final description?) ...[
+                        const SizedBox(height: 20),
+                        Text(description),
+                      ],
                     if (detailTracks.isNotEmpty) ...[
                       const SizedBox(height: 20),
                       Row(

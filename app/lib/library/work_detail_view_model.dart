@@ -44,6 +44,7 @@ final class WorkDetailViewModel {
       series: work.series,
       seriesSequence: work.seriesSequence?.toDouble(),
       language: work.language,
+      genres: _providerGenres(work.providerMetadata),
       subtitle: work.subtitle,
       description: work.description,
       narrators: work.narrators,
@@ -126,4 +127,14 @@ final class WorkDetailViewModel {
 
   bool get isOffline => origin == WorkDetailOrigin.offline;
   bool get isRemote => origin == WorkDetailOrigin.remote;
+}
+
+List<String> _providerGenres(Map<String, Object?> metadata) {
+  final value = metadata['genres'];
+  return value is List
+      ? value
+            .whereType<String>()
+            .where((item) => item.trim().isNotEmpty)
+            .toList(growable: false)
+      : const [];
 }
