@@ -301,11 +301,38 @@ final class FundusVideoPlayerController extends ChangeNotifier {
     await persist();
   }
 
-  Future<void> seek(Duration position) => _player.seek(position);
+  Future<void> seek(Duration position) async {
+    if (!_ready) return;
+    final maximum = _duration;
+    final target = position < Duration.zero
+        ? Duration.zero
+        : maximum > Duration.zero && position > maximum
+        ? maximum
+        : position;
+    await _player.seek(target);
+    _position = target;
+    notifyListeners();
+    // A seek while paused is an explicit user action. Persist it immediately
+    // so closing the player or switching apps cannot lose the new resume point.
+    if (!_playing) await persist();
+  }
 
-  Future<void> next() => _player.next();
+  Future<void> next() async {
+    if (!_ready || _currentIndex >= _tracks.length - 1) return;
+    await persist();
+    await _player.next();
+  }
 
-  Future<void> previous() => _player.previous();
+  Future<void> previous() async {
+    if (!_ready) return;
+    if (_position > const Duration(seconds: 5)) {
+      await seek(Duration.zero);
+      return;
+    }
+    if (_currentIndex <= 0) return;
+    await persist();
+    await _player.previous();
+  }
 
   /// Adds a timestamp bookmark for the currently playing episode. This is
   /// also used by the video screenshot action so the captured frame can be

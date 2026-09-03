@@ -117,13 +117,19 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
             // Some streams do not expose a first-frame future; playback can
             // still continue normally in that case.
           }
-          // Seeking once more after the surface is ready prevents the first
-          // decoded frame from snapping back to the beginning on resume.
+          // If the native decoder drifted while the surface was being
+          // attached, correct it while paused. Seeking a running decoder here
+          // causes an audible hiccup and can leave a black/stale frame on
+          // network-mounted files.
           if (restoredPosition > Duration.zero && mounted) {
             final actual = widget.player.state.position;
             if ((actual - restoredPosition).abs() >
                 const Duration(seconds: 2)) {
+              await widget.player.pause();
+              await Future<void>.delayed(const Duration(milliseconds: 80));
               await widget.player.seek(restoredPosition);
+              await Future<void>.delayed(const Duration(milliseconds: 80));
+              if (mounted) await widget.player.play();
             }
           }
         }
