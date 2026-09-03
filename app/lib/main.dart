@@ -6037,6 +6037,26 @@ class _DetailPanelState extends State<_DetailPanel> {
   WorkAnnotationSection _mobileNotesTab = WorkAnnotationSection.notes;
   final Map<String, Future<EpubPublication>> _epubPublicationRequests = {};
 
+  List<FundusBreadcrumb> _detailBreadcrumbs(LibraryWorkSummary work) {
+    final mediaType = FundusMediaTypeRegistry.forWork(
+      kind: work.kind,
+      contentStyle: work.contentStyle,
+      contentSensitivity: work.contentSensitivity,
+      providerMetadata: work.providerMetadata,
+    );
+    return [
+      FundusBreadcrumb(
+        label: work.sourceLibraryName ?? 'Bibliothek',
+        icon: Icons.home_outlined,
+      ),
+      FundusBreadcrumb(
+        label: mediaType?.pluralLabel ?? 'Medien',
+        icon: mediaType == null ? Icons.video_library_outlined : null,
+      ),
+      FundusBreadcrumb(label: work.title),
+    ];
+  }
+
   @override
   void initState() {
     super.initState();
@@ -6499,6 +6519,7 @@ class _DetailPanelState extends State<_DetailPanel> {
             children: [
               WorkDetailHeader(
                 detail: detail,
+                breadcrumbs: _detailBreadcrumbs(work),
                 coverBuilder: (_) => _WorkCover(work: work, iconSize: 58),
                 onCoverTap: () => showDialog<void>(
                   context: context,

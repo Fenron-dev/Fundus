@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'fundus_breadcrumbs.dart';
 import 'media_content_schema.dart';
 import 'work_detail_view_model.dart';
 
@@ -30,6 +31,7 @@ class WorkDetailHeader extends StatelessWidget {
     this.favorite = false,
     this.onToggleFavorite,
     this.onCoverTap,
+    this.breadcrumbs = const [],
   });
 
   final WorkDetailViewModel detail;
@@ -39,6 +41,7 @@ class WorkDetailHeader extends StatelessWidget {
   final bool favorite;
   final VoidCallback? onToggleFavorite;
   final VoidCallback? onCoverTap;
+  final List<FundusBreadcrumb> breadcrumbs;
 
   @override
   Widget build(BuildContext context) {
@@ -54,6 +57,10 @@ class WorkDetailHeader extends StatelessWidget {
     );
     return Column(
       children: [
+        if (breadcrumbs.isNotEmpty) ...[
+          FundusBreadcrumbs(items: breadcrumbs, compact: true),
+          const SizedBox(height: 8),
+        ],
         onCoverTap == null
             ? cover
             : InkWell(

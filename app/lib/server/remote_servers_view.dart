@@ -15,6 +15,7 @@ import '../library/comic_page_source.dart';
 import '../library/document_file_opener.dart';
 import '../library/document_preview.dart';
 import '../library/fixed_document_source.dart';
+import '../library/fundus_breadcrumbs.dart';
 import '../library/epub_reader.dart';
 import '../library/publication_reader_settings.dart';
 import '../library/reflow_text_reader.dart';
@@ -23,6 +24,7 @@ import '../library/work_detail_view_model.dart';
 import '../library/work_detail_facts.dart';
 import '../library/work_detail_header.dart';
 import '../library/work_detail_sections.dart';
+import '../library/media_content_schema.dart';
 import '../library/work_content_list.dart';
 import '../library/work_annotation_list.dart';
 import '../library/video_player_page.dart';
@@ -58,6 +60,27 @@ enum _ChapterSelectionMode { range, individual }
 
 bool _isRemoteVideoWork(FundusRemoteWork work) =>
     VideoWorkKind.isVideo(work.kind);
+
+List<FundusBreadcrumb> _remoteDetailBreadcrumbs(WorkDetailViewModel detail) {
+  final summary = detail.summary;
+  final mediaType = FundusMediaTypeRegistry.forWork(
+    kind: summary.kind,
+    contentStyle: summary.contentStyle,
+    contentSensitivity: summary.contentSensitivity,
+    providerMetadata: summary.providerMetadata,
+  );
+  return [
+    FundusBreadcrumb(
+      label: summary.sourceLibraryName ?? 'Bibliothek',
+      icon: Icons.home_outlined,
+    ),
+    FundusBreadcrumb(
+      label: mediaType?.pluralLabel ?? 'Medien',
+      icon: mediaType == null ? Icons.video_library_outlined : null,
+    ),
+    FundusBreadcrumb(label: summary.title),
+  ];
+}
 
 Set<int> chapterSelectionRange({
   required int total,
@@ -2756,6 +2779,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                   children: [
                     WorkDetailHeader(
                       detail: detail,
+                      breadcrumbs: _remoteDetailBreadcrumbs(detail),
                       coverBuilder: (_) => work.hasCover
                           ? _remoteCover(
                               server,
@@ -5749,6 +5773,7 @@ class _MobileRemotePublicationDetailsState
               children: [
                 WorkDetailHeader(
                   detail: widget.detail,
+                  breadcrumbs: _remoteDetailBreadcrumbs(widget.detail),
                   coverBuilder: (_) => widget.coverBuilder(),
                   onCoverTap: _showCover,
                   favorite: _isFavorite,
