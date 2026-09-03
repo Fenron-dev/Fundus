@@ -310,12 +310,17 @@ final class TmdbVideoProvider implements VideoMetadataProvider {
       if (value is Map) {
         final candidate = _candidate(value, language: language);
         if (candidate == null) continue;
-        candidates.add(
-          await _loadDetails(candidate, language: language) ?? candidate,
-        );
+        candidates.add(candidate);
       }
     }
-    return candidates;
+    // Details requests are independent. Fetch them concurrently so a result
+    // list does not incur one full network round-trip per title.
+    return Future.wait(
+      candidates.map(
+        (candidate) async =>
+            await _loadDetails(candidate, language: language) ?? candidate,
+      ),
+    );
   }
 
   Future<http.Response> _request(Future<http.Response> request) async {
