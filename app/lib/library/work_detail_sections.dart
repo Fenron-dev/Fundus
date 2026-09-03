@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-enum WorkDetailSection { info, files, chapters, notes, similar }
+enum WorkDetailSection { info, files, chapters, notes, similar, devices }
 
 enum WorkAnnotationSection { notes, annotations }
 
@@ -34,6 +34,7 @@ class WorkDetailSectionSelector extends StatelessWidget {
         ),
         ButtonSegment(value: WorkDetailSection.notes, label: Text('Notizen')),
         ButtonSegment(value: WorkDetailSection.similar, label: Text('Ähnlich')),
+        ButtonSegment(value: WorkDetailSection.devices, label: Text('Geräte')),
       ],
       selected: {selected},
       onSelectionChanged: (value) => onChanged(value.single),

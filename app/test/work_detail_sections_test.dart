@@ -25,6 +25,7 @@ void main() {
     expect(find.text('Kapitel'), findsOneWidget);
     expect(find.text('Notizen'), findsOneWidget);
     expect(find.text('Ähnlich'), findsOneWidget);
+    expect(find.text('Geräte'), findsOneWidget);
 
     await tester.tap(find.text('Kapitel'));
     await tester.pump();

@@ -5950,6 +5950,48 @@ class _AudioCompatibilityPanel extends StatelessWidget {
   }
 }
 
+class _MobileDeviceHistoryTab extends StatelessWidget {
+  const _MobileDeviceHistoryTab({
+    required this.available,
+    required this.onOpen,
+  });
+
+  final bool available;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.devices_outlined,
+            size: 46,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            available
+                ? 'Lesestände dieses Werks auf allen Geräten'
+                : 'Noch keine weiteren Gerätestände vorhanden.',
+            textAlign: TextAlign.center,
+          ),
+          if (available) ...[
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              onPressed: onOpen,
+              icon: const Icon(Icons.history),
+              label: const Text('Gerätestände anzeigen'),
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
+}
+
 class _DetailPanel extends StatefulWidget {
   const _DetailPanel({
     required this.work,
@@ -6651,6 +6693,12 @@ class _DetailPanelState extends State<_DetailPanel> {
               ],
             ),
             WorkDetailSection.similar => _similarWorks(work),
+            WorkDetailSection.devices => _MobileDeviceHistoryTab(
+              available:
+                  widget.library?.listProgressRevisions(work.id).isNotEmpty ??
+                  false,
+              onOpen: () => _showLocalReaderProgressHistory(work, files),
+            ),
           },
         ),
       ],

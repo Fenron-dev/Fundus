@@ -5825,6 +5825,15 @@ class _MobileRemotePublicationDetailsState
       ],
     ),
     WorkDetailSection.similar => _similarList(),
+    WorkDetailSection.devices => Center(
+      child: FilledButton.icon(
+        onPressed: widget.progressHistoryAvailable
+            ? () => Navigator.pop(context, 'progress_history')
+            : null,
+        icon: const Icon(Icons.history),
+        label: const Text('Gerätestände anzeigen'),
+      ),
+    ),
   };
 
   Widget _trackList(
