@@ -2062,8 +2062,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       final initialPosition = player.position;
       await showFundusVideoPlayerForPlayer(
         context,
-        player: player.player,
-        videoController: player.videoController,
+        controller: player,
         title: work.title,
         capabilities: player.capabilities,
         initialPosition: initialPosition,
