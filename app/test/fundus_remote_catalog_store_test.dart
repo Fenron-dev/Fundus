@@ -15,6 +15,8 @@ void main() {
       libraryName: 'Anime',
       fetchedAt: DateTime.utc(2026, 9, 3, 12),
       etag: 'catalog-fingerprint-1',
+      availability: LibrarySourceAvailability.unreachable,
+      lastSeenAt: DateTime.utc(2026, 9, 3, 11, 59),
       works: [
         FundusRemoteWork(
           id: 'work-1',
@@ -41,6 +43,8 @@ void main() {
     expect(decoded.serverName, 'Wohnzimmer-Mac');
     expect(decoded.libraryName, 'Anime');
     expect(decoded.etag, 'catalog-fingerprint-1');
+    expect(decoded.availability, LibrarySourceAvailability.unreachable);
+    expect(decoded.lastSeenAt, DateTime.utc(2026, 9, 3, 11, 59));
     expect(decoded.works.single.title, 'Chainsaw Man');
     expect(decoded.works.single.progressPosition, const Duration(seconds: 42));
     expect(decoded.works.single.providerMetadata['genres'], ['Action']);
@@ -64,6 +68,8 @@ void main() {
       libraryName: 'Anime',
       fetchedAt: DateTime.utc(2026, 9, 4, 12),
       etag: 'etag-1',
+      availability: LibrarySourceAvailability.offline,
+      lastSeenAt: DateTime.utc(2026, 9, 4, 11),
       works: [
         FundusRemoteWork(
           id: 'work-1',
@@ -82,6 +88,8 @@ void main() {
     expect(loaded, hasLength(1));
     expect(loaded.single.key, snapshot.key);
     expect(loaded.single.etag, 'etag-1');
+    expect(loaded.single.availability, LibrarySourceAvailability.offline);
+    expect(loaded.single.lastSeenAt, DateTime.utc(2026, 9, 4, 11).toLocal());
     expect(loaded.single.works.single.title, 'Chainsaw Man');
   });
 

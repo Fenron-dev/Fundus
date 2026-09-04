@@ -22,6 +22,8 @@ final class FundusRemoteCatalogSnapshot {
     required this.works,
     required this.fetchedAt,
     this.etag,
+    this.availability = LibrarySourceAvailability.available,
+    this.lastSeenAt,
   });
 
   final String serverId;
@@ -34,7 +36,32 @@ final class FundusRemoteCatalogSnapshot {
   /// Stable server fingerprint for conditional catalog refreshes.
   final String? etag;
 
+  /// Persisted source status.  Keeping this beside the mirror means a cold
+  /// start can render the last known catalog state before discovery finishes.
+  final LibrarySourceAvailability availability;
+  final DateTime? lastSeenAt;
+
   String get key => '$serverId\u0000$libraryId';
+
+  FundusRemoteCatalogSnapshot copyWith({
+    String? serverName,
+    String? libraryName,
+    List<FundusRemoteWork>? works,
+    DateTime? fetchedAt,
+    String? etag,
+    LibrarySourceAvailability? availability,
+    DateTime? lastSeenAt,
+  }) => FundusRemoteCatalogSnapshot(
+    serverId: serverId,
+    libraryId: libraryId,
+    serverName: serverName ?? this.serverName,
+    libraryName: libraryName ?? this.libraryName,
+    works: works ?? this.works,
+    fetchedAt: fetchedAt ?? this.fetchedAt,
+    etag: etag ?? this.etag,
+    availability: availability ?? this.availability,
+    lastSeenAt: lastSeenAt ?? this.lastSeenAt,
+  );
 
   Map<String, Object?> toJson() => {
     'server_id': serverId,
@@ -43,6 +70,9 @@ final class FundusRemoteCatalogSnapshot {
     'library_name': libraryName,
     'fetched_at': fetchedAt.toUtc().toIso8601String(),
     if (etag != null) 'etag': etag,
+    'availability': availability.name,
+    if (lastSeenAt != null)
+      'last_seen_at': lastSeenAt!.toUtc().toIso8601String(),
     'works': works.map((work) => work.toJson()).toList(growable: false),
   };
 
@@ -57,6 +87,9 @@ final class FundusRemoteCatalogSnapshot {
     }
     final fetchedAt = DateTime.tryParse('${value['fetched_at'] ?? ''}');
     if (fetchedAt == null) return null;
+    final availability = LibrarySourceAvailability.values
+        .where((item) => item.name == value['availability'])
+        .firstOrNull;
     return FundusRemoteCatalogSnapshot(
       serverId: value['server_id'] as String,
       libraryId: value['library_id'] as String,
@@ -68,6 +101,8 @@ final class FundusRemoteCatalogSnapshot {
           .toList(growable: false),
       fetchedAt: fetchedAt.toLocal(),
       etag: value['etag'] is String ? value['etag'] as String : null,
+      availability: availability ?? LibrarySourceAvailability.available,
+      lastSeenAt: DateTime.tryParse('${value['last_seen_at'] ?? ''}'),
     );
   }
 }
@@ -132,6 +167,8 @@ final class FundusRemoteCatalogStore {
               isUtc: true,
             ).toLocal(),
             etag: row['etag'] as String?,
+            availability: _parseAvailability(row['availability']),
+            lastSeenAt: _dateFromMilliseconds(row['last_seen_at']),
           ),
       ];
     } on SqliteException {
@@ -160,8 +197,8 @@ final class FundusRemoteCatalogStore {
           database.execute(
             '''INSERT INTO remote_catalog_sources (
                  server_id, library_id, server_name, library_name,
-                 fetched_at, etag
-               ) VALUES (?, ?, ?, ?, ?, ?)''',
+                 fetched_at, etag, availability, last_seen_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
             [
               snapshot.serverId,
               snapshot.libraryId,
@@ -169,6 +206,8 @@ final class FundusRemoteCatalogStore {
               snapshot.libraryName,
               snapshot.fetchedAt.toUtc().millisecondsSinceEpoch,
               snapshot.etag,
+              snapshot.availability.name,
+              snapshot.lastSeenAt?.toUtc().millisecondsSinceEpoch,
             ],
           );
           for (final work in snapshot.works) {
@@ -310,6 +349,8 @@ final class FundusRemoteCatalogStore {
       works: byId.values.toList(growable: false),
       fetchedAt: current.fetchedAt,
       etag: current.etag,
+      availability: current.availability,
+      lastSeenAt: current.lastSeenAt,
     );
     // Update only this source inside one SQLite transaction. Rewriting the
     // complete cache here made a large multi-server catalog unnecessarily
@@ -330,13 +371,15 @@ final class FundusRemoteCatalogStore {
         database.execute(
           '''INSERT INTO remote_catalog_sources (
                server_id, library_id, server_name, library_name,
-               fetched_at, etag
-             ) VALUES (?, ?, ?, ?, ?, ?)
+               fetched_at, etag, availability, last_seen_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(server_id, library_id) DO UPDATE SET
                server_name = excluded.server_name,
                library_name = excluded.library_name,
                fetched_at = excluded.fetched_at,
-               etag = excluded.etag''',
+               etag = excluded.etag,
+               availability = excluded.availability,
+               last_seen_at = excluded.last_seen_at''',
           [
             snapshot.serverId,
             snapshot.libraryId,
@@ -344,6 +387,8 @@ final class FundusRemoteCatalogStore {
             snapshot.libraryName,
             snapshot.fetchedAt.toUtc().millisecondsSinceEpoch,
             snapshot.etag,
+            snapshot.availability.name,
+            snapshot.lastSeenAt?.toUtc().millisecondsSinceEpoch,
           ],
         );
         database.execute(
@@ -377,6 +422,16 @@ final class FundusRemoteCatalogStore {
   static String _sourceKey(String serverId, String libraryId) =>
       '$serverId\u0000$libraryId';
 
+  static LibrarySourceAvailability _parseAvailability(Object? value) =>
+      LibrarySourceAvailability.values
+          .where((item) => item.name == value)
+          .firstOrNull ??
+      LibrarySourceAvailability.available;
+
+  static DateTime? _dateFromMilliseconds(Object? value) => value is int
+      ? DateTime.fromMillisecondsSinceEpoch(value, isUtc: true).toLocal()
+      : null;
+
   static Database _open(File target) {
     final database = sqlite3.open(target.path);
     database.execute('''
@@ -387,9 +442,25 @@ final class FundusRemoteCatalogStore {
         library_name TEXT NOT NULL,
         fetched_at INTEGER NOT NULL,
         etag TEXT,
+        availability TEXT NOT NULL DEFAULT 'available',
+        last_seen_at INTEGER,
         PRIMARY KEY (server_id, library_id)
       )
     ''');
+    final sourceColumns = database
+        .select('PRAGMA table_info(remote_catalog_sources)')
+        .map((row) => row['name'] as String)
+        .toSet();
+    if (!sourceColumns.contains('availability')) {
+      database.execute(
+        "ALTER TABLE remote_catalog_sources ADD COLUMN availability TEXT NOT NULL DEFAULT 'available'",
+      );
+    }
+    if (!sourceColumns.contains('last_seen_at')) {
+      database.execute(
+        'ALTER TABLE remote_catalog_sources ADD COLUMN last_seen_at INTEGER',
+      );
+    }
     database.execute('''
       CREATE TABLE IF NOT EXISTS remote_catalog_works (
         server_id TEXT NOT NULL,

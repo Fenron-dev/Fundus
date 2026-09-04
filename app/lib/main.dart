@@ -386,6 +386,15 @@ class _FundusAppState extends State<FundusApp> {
     }
     for (final snapshot in _remoteCatalog) {
       final reachable = _reachableServerIds.contains(snapshot.serverId);
+      final availability = reachable
+          ? FundusCatalogAvailability.available
+          : switch (snapshot.availability) {
+              LibrarySourceAvailability.offline =>
+                FundusCatalogAvailability.offline,
+              LibrarySourceAvailability.unreachable =>
+                FundusCatalogAvailability.unreachable,
+              _ => FundusCatalogAvailability.unreachable,
+            };
       final source = FundusLibraryCatalog.remoteSource(
         serverId: snapshot.serverId,
         libraryId: snapshot.libraryId,
@@ -393,9 +402,7 @@ class _FundusAppState extends State<FundusApp> {
           snapshot.serverName,
           snapshot.libraryName,
         ),
-        availability: reachable
-            ? FundusCatalogAvailability.available
-            : FundusCatalogAvailability.unreachable,
+        availability: availability,
       );
       for (final remoteWork in snapshot.works) {
         yield FundusCatalogEntry(
@@ -792,6 +799,8 @@ class _FundusAppState extends State<FundusApp> {
               works: previous.works,
               fetchedAt: DateTime.now(),
               etag: fetched.etag ?? previous.etag,
+              availability: previous.availability,
+              lastSeenAt: previous.lastSeenAt,
             );
             continue;
           }
@@ -803,6 +812,8 @@ class _FundusAppState extends State<FundusApp> {
             works: fetched.works,
             fetchedAt: DateTime.now(),
             etag: fetched.etag,
+            availability: LibrarySourceAvailability.available,
+            lastSeenAt: DateTime.now().toUtc(),
           );
           // Seed the mirror first, then consume any catalog/progress journal
           // entries that were created while the paginated snapshot was read.
