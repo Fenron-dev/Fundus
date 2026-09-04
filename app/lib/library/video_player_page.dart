@@ -104,28 +104,11 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
           timeout: const Duration(seconds: 2),
         );
         if (!mounted) return;
-        final actual = widget.player.state.position;
-        if (target > Duration.zero &&
-            (actual - target).abs() > const Duration(seconds: 1)) {
-          await widget.player.pause();
-          await Future<void>.delayed(const Duration(milliseconds: 80));
-          await widget.player.seek(target);
-        }
-        if (!widget.player.state.playing) await widget.player.play();
-        try {
-          await widget.videoController.waitUntilFirstFrameRendered.timeout(
-            const Duration(seconds: 3),
-          );
-        } catch (_) {
-          // Retry once when the surface was attached after the decoder. This
-          // is the important recovery path for resumed MKV/MP4 playback.
-          if (!mounted) return;
-          await widget.player.pause();
-          await Future<void>.delayed(const Duration(milliseconds: 100));
-          await widget.player.seek(target > Duration.zero ? target : actual);
-          await Future<void>.delayed(const Duration(milliseconds: 100));
-          if (mounted) await widget.player.play();
-        }
+        await FundusVideoPlaybackSession.primeVideoSurface(
+          player: widget.player,
+          videoController: widget.videoController,
+          target: target,
+        );
       } catch (_) {
         // Playback errors are surfaced by media_kit's error stream/controls.
       }

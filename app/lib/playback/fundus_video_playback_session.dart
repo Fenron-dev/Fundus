@@ -35,6 +35,47 @@ final class FundusVideoPlaybackSession {
     }
   }
 
+  /// Prime the native video surface after the player route has been mounted.
+  ///
+  /// A player can have a valid clock (and therefore resume audio at the right
+  /// timestamp) before the platform texture has received a frame.  Pausing,
+  /// seeking once after the surface is attached, and only then starting
+  /// playback avoids the audio-only/black-video state seen on resumed files.
+  /// The zero-position retry is deliberately limited to one pass so a slow
+  /// network stream cannot cause an endless seek loop.
+  static Future<bool> primeVideoSurface({
+    required Player player,
+    required VideoController videoController,
+    Duration? target,
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    final desired = target ?? player.state.position;
+    await player.pause();
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    await player.seek(desired);
+    await player.play();
+
+    try {
+      await videoController.waitUntilFirstFrameRendered.timeout(timeout);
+      return true;
+    } catch (_) {
+      // Some native surfaces miss the first resize event when a file is
+      // resumed. Recreate the decoder's initial frame once, then restore the
+      // requested position before returning control to the caller.
+      await player.pause();
+      await player.seek(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await player.seek(desired);
+      await player.play();
+      try {
+        await videoController.waitUntilFirstFrameRendered.timeout(timeout);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+  }
+
   /// Seek a resumed video and verify the native clock reached the requested
   /// position. This is shared by local files and remote/offline streams so
   /// resume semantics do not depend on the transport used to open the media.
