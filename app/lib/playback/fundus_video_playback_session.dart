@@ -56,22 +56,6 @@ final class FundusVideoPlaybackSession {
     // player after its fullscreen route has already been dismissed.
     if (!active()) return false;
     final desired = target ?? player.state.position;
-    if (desired > Duration.zero) {
-      // Reopening the fullscreen route can keep the native texture alive
-      // while the decoder's video output is no longer attached to it.  The
-      // audio clock still seeks correctly in that state, which presents as
-      // "resume works, but the picture stays black".  Re-selecting the
-      // automatic video stream forces media-kit to publish a fresh frame to
-      // the already-created surface.  Do this only for resumed playback so a
-      // new title does not incur an unnecessary decoder restart.
-      try {
-        if (!active()) return false;
-        await player.setVideoTrack(VideoTrack.auto());
-      } catch (_) {
-        // Audio-only files and platforms without video-track selection can
-        // continue with the normal pause/seek/play path below.
-      }
-    }
     if (!active()) return false;
     await player.pause();
     await Future<void>.delayed(const Duration(milliseconds: 120));
@@ -85,11 +69,21 @@ final class FundusVideoPlaybackSession {
       return true;
     } catch (_) {
       // Some native surfaces miss the first resize event when a file is
-      // resumed. Recreate the decoder's initial frame once, then restore the
-      // requested position before returning control to the caller.
+      // resumed. Re-select the automatic video stream only in this fallback;
+      // doing it for every resume needlessly restarts the decoder and causes
+      // visible stutter on otherwise healthy local and remote playback.
       if (!active()) return false;
       await player.pause();
       if (!active()) return false;
+      if (desired > Duration.zero) {
+        try {
+          await player.setVideoTrack(VideoTrack.auto());
+        } catch (_) {
+          // Audio-only files and platforms without video-track selection can
+          // continue with the decoder's existing stream.
+        }
+        if (!active()) return false;
+      }
       await player.seek(Duration.zero);
       await Future<void>.delayed(const Duration(milliseconds: 100));
       if (!active()) return false;
