@@ -221,6 +221,7 @@ class _FundusAppState extends State<FundusApp> {
   Set<String> _unauthorizedServerIds = const {};
   bool _loadingRemoteLibraries = false;
   bool _showHhh = false;
+  bool _remoteBrowseMode = false;
   Timer? _remoteHeartbeat;
   late final AppLifecycleListener _lifecycleListener;
 
@@ -301,7 +302,7 @@ class _FundusAppState extends State<FundusApp> {
       themeMode: _themeMode,
       theme: _theme(Brightness.light),
       darkTheme: _theme(Brightness.dark),
-      home: _works == null
+      home: _works == null && !_remoteBrowseMode
           ? _LibraryWelcome(
               busy: _busy,
               error: _error,
@@ -329,7 +330,9 @@ class _FundusAppState extends State<FundusApp> {
                   .last,
               indexEvent: _indexEvent,
               onRescan: _library == null || _busy || _scanning ? null : _scan,
-              onClose: _library == null ? null : _closeLibrary,
+              onClose: _library != null
+                  ? _closeLibrary
+                  : (_remoteBrowseMode ? _closeRemoteBrowse : null),
               player: _player,
               onPlay: _library == null ? null : _startPlayback,
               onPlayPlaylist: _library == null ? null : _startPlaylist,
@@ -661,7 +664,7 @@ class _FundusAppState extends State<FundusApp> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _loadRemoteLibraries() async {
+  Future<void> _loadRemoteLibraries({bool awaitCatalog = false}) async {
     if (_loadingRemoteLibraries) return;
     _loadingRemoteLibraries = true;
     try {
@@ -707,8 +710,11 @@ class _FundusAppState extends State<FundusApp> {
       ]);
       references = await _remoteStore.loadLibraryReferences();
       _pairedServers = {for (final server in servers) server.id: server};
-      if (_library != null) {
-        unawaited(_refreshRemoteCatalog(servers, references));
+      final catalogRefresh = _refreshRemoteCatalog(servers, references);
+      if (awaitCatalog) {
+        await catalogRefresh;
+      } else {
+        unawaited(catalogRefresh);
       }
       offline = await _resolveOfflineSourceLabels(offline, servers, references);
       if (!mounted) return;
@@ -1079,17 +1085,24 @@ class _FundusAppState extends State<FundusApp> {
   }
 
   Future<void> _openRemoteLibrary(_RemoteLibraryChoice choice) async {
-    final dialogContext = _navigatorKey.currentContext;
-    if (dialogContext == null) return;
-    await showFundusRemoteServers(
-      dialogContext,
-      initialServerId: choice.server.id,
-      initialLibraryId: choice.library.libraryId,
-      peerServer: _peerServer,
-      offlineStore: _offlineStore,
-      showHhh: _showHhh,
-    );
-    await _loadRemoteLibraries();
+    await _loadRemoteLibraries(awaitCatalog: true);
+    if (!mounted) return;
+    setState(() {
+      // The catalog shell is also used when no local vault is open. Remote,
+      // offline and local entries then remain one filterable list instead of
+      // switching to a second remote-only UI.
+      _remoteBrowseMode = true;
+      _works = const <LibraryWorkSummary>[];
+    });
+  }
+
+  void _closeRemoteBrowse() {
+    if (!mounted) return;
+    setState(() {
+      _remoteBrowseMode = false;
+      _works = null;
+    });
+    unawaited(_loadRecentLibraries());
   }
 
   Future<void> _openOfflineMedia() async {
