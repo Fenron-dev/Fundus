@@ -1989,7 +1989,12 @@ class _LibraryShellState extends State<LibraryShell> {
     final filter = _sourceFilter;
     if (filter == null) return true;
     if (filter == _sourceFilterLocal) return entry.source.isLocal;
-    if (filter == _sourceFilterRemote) return entry.source.isRemote;
+    // Offline copies keep their peer source identity. They must therefore
+    // remain visible in the peer filter; availability is a state of that
+    // source, not a third library.
+    if (filter == _sourceFilterRemote) {
+      return entry.source.isRemote || entry.source.isOffline;
+    }
     if (filter == _sourceFilterOffline) return entry.source.isOffline;
     return entry.source.id == filter;
   }
@@ -5106,7 +5111,7 @@ class _CatalogSourceFilterButton extends StatelessWidget {
       ),
       const PopupMenuItem<String?>(
         value: _sourceFilterRemote,
-        child: Text('Remote'),
+        child: Text('Remote-Quellen'),
       ),
       const PopupMenuItem<String?>(
         value: _sourceFilterOffline,
