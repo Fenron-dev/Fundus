@@ -368,7 +368,10 @@ class _FundusAppState extends State<FundusApp> {
     for (final work in _works ?? const <LibraryWorkSummary>[]) {
       yield FundusCatalogEntry(
         work: work,
-        source: FundusLibraryCatalog.localSource(localName),
+        source: FundusLibraryCatalog.localSource(
+          localName,
+          sourceId: _library?.source.id,
+        ),
       );
     }
     for (final offline in _offlineWorks) {
@@ -1891,12 +1894,47 @@ class _LibraryShellState extends State<LibraryShell> {
   /// summary itself intentionally stays origin-agnostic for compatibility with
   /// local and remote APIs.
   FundusCatalogSource? _sourceForWork(LibraryWorkSummary work) {
+    final sourceId = work.sourceId;
+    if (sourceId != null && sourceId.isNotEmpty) {
+      final exact = widget.catalog?.entries
+          .where(
+            (entry) =>
+                entry.source.id == sourceId &&
+                _sameCatalogWork(entry.work, work),
+          )
+          .firstOrNull;
+      if (exact != null) return exact.source;
+    }
     for (final entry in widget.catalog?.entries ?? const []) {
-      if (identical(entry.work, work) || entry.work.id == work.id) {
+      if (identical(entry.work, work) || _sameCatalogWork(entry.work, work)) {
         return entry.source;
       }
     }
     return null;
+  }
+
+  FundusCatalogEntry? _entryForWork(LibraryWorkSummary work) {
+    final sourceId = _sourceForWork(work)?.id;
+    return widget.catalog?.entries
+        .where(
+          (entry) =>
+              (sourceId == null || entry.source.id == sourceId) &&
+              _sameCatalogWork(entry.work, work),
+        )
+        .firstOrNull;
+  }
+
+  static bool _sameCatalogWork(
+    LibraryWorkSummary left,
+    LibraryWorkSummary right,
+  ) {
+    if (identical(left, right) || left.id == right.id) return true;
+    String canonical(String id) {
+      if (!id.startsWith('offline:')) return id;
+      return id.substring('offline:'.length).split('/').last;
+    }
+
+    return canonical(left.id) == canonical(right.id);
   }
 
   List<FundusCatalogSource> get _catalogSources {
@@ -3871,11 +3909,7 @@ class _LibraryShellState extends State<LibraryShell> {
     }
     final source = _sourceForWork(work);
     if (source?.isRemote == true) {
-      final entry = widget.catalog?.entries
-          .where(
-            (item) => identical(item.work, work) || item.work.id == work.id,
-          )
-          .firstOrNull;
+      final entry = _entryForWork(work);
       if (entry != null) {
         unawaited(widget.onOpenCatalogWork?.call(entry));
         return;
@@ -3897,11 +3931,7 @@ class _LibraryShellState extends State<LibraryShell> {
     _lastWorkTapAt = now;
     if (isDoubleTap) {
       if (_sourceForWork(work)?.isRemote == true) {
-        final entry = widget.catalog?.entries
-            .where(
-              (item) => identical(item.work, work) || item.work.id == work.id,
-            )
-            .firstOrNull;
+        final entry = _entryForWork(work);
         if (entry != null) {
           unawaited(widget.onOpenCatalogWork?.call(entry));
           return;

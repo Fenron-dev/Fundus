@@ -181,11 +181,12 @@ final class FundusLibraryCatalog {
     };
   }
 
-  static FundusCatalogSource localSource(String name) => FundusCatalogSource(
-    id: 'local:$name',
-    kind: FundusCatalogSourceKind.local,
-    displayName: name,
-  );
+  static FundusCatalogSource localSource(String name, {String? sourceId}) =>
+      FundusCatalogSource(
+        id: sourceId ?? 'local:$name',
+        kind: FundusCatalogSourceKind.local,
+        displayName: name,
+      );
 
   static FundusCatalogSource offlineSource({
     required String serverId,
