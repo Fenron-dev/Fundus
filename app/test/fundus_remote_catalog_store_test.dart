@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus/server/fundus_remote_catalog_store.dart';
 import 'package:fundus/server/fundus_remote_client.dart';
 
@@ -105,4 +106,63 @@ void main() {
     expect(loaded.single.serverId, 'server-legacy');
     expect(await File('${directory.path}/remote-catalog.db').exists(), isTrue);
   });
+
+  test(
+    'progress journal entries update the cached summary and cursor persists',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'fundus-catalog-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final store = FundusRemoteCatalogStore(
+        file: File('${directory.path}/remote-catalog.db'),
+      );
+      await store.save([
+        FundusRemoteCatalogSnapshot(
+          serverId: 'server-1',
+          libraryId: 'library-1',
+          serverName: 'Mac',
+          libraryName: 'Anime',
+          fetchedAt: DateTime.utc(2026, 9, 4),
+          works: [
+            FundusRemoteWork(
+              id: 'work-1',
+              title: 'Episode',
+              authors: const [],
+              hasCover: false,
+              kind: 'video',
+              fileCount: 1,
+            ),
+          ],
+        ),
+      ]);
+      final changed = await store.applySyncProgress('server-1', 'library-1', [
+        LibrarySyncJournalEntry(
+          sequence: 7,
+          entity: 'progress',
+          entityId: 'work-1/default',
+          operation: 'upsert',
+          payload: {
+            'work_id': 'work-1',
+            'position': {'numeric_value': 42.5, 'total': 120.0},
+            'finished': false,
+          },
+          revision: 2,
+          deviceId: 'tablet',
+          operationId: 'op-7',
+          createdAt: DateTime.utc(2026, 9, 4, 12),
+        ),
+      ]);
+      expect(
+        changed!.works.single.progressPosition,
+        const Duration(milliseconds: 42500),
+      );
+      expect(
+        changed.works.single.progressDuration,
+        const Duration(seconds: 120),
+      );
+      await store.saveSyncCursor('server-1', 'library-1', 7);
+      expect(await store.loadSyncCursor('server-1', 'library-1'), 7);
+    },
+  );
 }

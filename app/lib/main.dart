@@ -710,6 +710,18 @@ class _FundusAppState extends State<FundusApp> {
         final server = serversById[reference.serverId];
         if (server == null) continue;
         final previous = existing['${server.id}\u0000${reference.libraryId}'];
+        if (previous != null) {
+          try {
+            final synced = await _refreshRemoteProgress(
+              server,
+              reference.libraryId,
+              previous,
+            );
+            if (synced != null) existing[synced.key] = synced;
+          } catch (_) {
+            // A stale/unreachable peer must not hide the cached catalog.
+          }
+        }
         // Avoid a network roundtrip on every heartbeat. Cached metadata is
         // refreshed when it is older than five minutes or absent.
         if (previous != null &&
@@ -756,6 +768,38 @@ class _FundusAppState extends State<FundusApp> {
     } finally {
       _refreshingRemoteCatalog = false;
     }
+  }
+
+  Future<FundusRemoteCatalogSnapshot?> _refreshRemoteProgress(
+    FundusRemoteServer server,
+    String libraryId,
+    FundusRemoteCatalogSnapshot snapshot,
+  ) async {
+    var cursor = await _remoteCatalogStore.loadSyncCursor(server.id, libraryId);
+    FundusRemoteCatalogSnapshot? updated;
+    do {
+      final page = await _remoteClient.syncChanges(
+        server,
+        libraryId,
+        since: cursor,
+        limit: 500,
+      );
+      if (page.entries.isNotEmpty) {
+        updated = await _remoteCatalogStore.applySyncProgress(
+          server.id,
+          libraryId,
+          page.entries,
+        );
+      }
+      final next = page.nextCursor;
+      if (!page.hasMore || next <= cursor) {
+        cursor = next > cursor ? next : cursor;
+        break;
+      }
+      cursor = next;
+    } while (true);
+    await _remoteCatalogStore.saveSyncCursor(server.id, libraryId, cursor);
+    return updated ?? snapshot;
   }
 
   Future<({List<FundusRemoteWork> works, String? etag, bool notModified})>

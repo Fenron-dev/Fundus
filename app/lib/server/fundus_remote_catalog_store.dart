@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/sqlite3.dart';
+import 'package:fundus_core/fundus_core.dart';
 
 import 'fundus_remote_client.dart';
 
@@ -194,6 +195,104 @@ final class FundusRemoteCatalogStore {
     }
   }
 
+  /// Returns the last server journal cursor acknowledged by this device.
+  /// Cursors are kept per source so reconnecting one server never causes
+  /// another server's changes to be skipped.
+  Future<int> loadSyncCursor(String serverId, String libraryId) async {
+    final target = await _resolvedFile();
+    if (!await target.exists()) return 0;
+    Database? database;
+    try {
+      database = _open(target);
+      final rows = database.select(
+        '''SELECT cursor FROM remote_catalog_sync
+           WHERE server_id = ? AND library_id = ?''',
+        [serverId, libraryId],
+      );
+      return rows.isEmpty ? 0 : (rows.single['cursor'] as int);
+    } on SqliteException {
+      return 0;
+    } finally {
+      database?.close();
+    }
+  }
+
+  Future<void> saveSyncCursor(
+    String serverId,
+    String libraryId,
+    int cursor,
+  ) async {
+    final target = await _resolvedFile();
+    await target.parent.create(recursive: true);
+    Database? database;
+    try {
+      database = _open(target);
+      database.execute(
+        '''INSERT INTO remote_catalog_sync (server_id, library_id, cursor)
+           VALUES (?, ?, ?)
+           ON CONFLICT(server_id, library_id) DO UPDATE SET cursor = excluded.cursor''',
+        [serverId, libraryId, cursor < 0 ? 0 : cursor],
+      );
+    } finally {
+      database?.close();
+    }
+  }
+
+  /// Applies progress journal entries to the cached summaries. This keeps the
+  /// dashboard current after another device reads a title, without waiting
+  /// for the next full catalog refresh.
+  Future<FundusRemoteCatalogSnapshot?> applySyncProgress(
+    String serverId,
+    String libraryId,
+    Iterable<LibrarySyncJournalEntry> entries,
+  ) async {
+    final snapshots = await load();
+    final sourceKey = _sourceKey(serverId, libraryId);
+    final index = snapshots.indexWhere((snapshot) => snapshot.key == sourceKey);
+    if (index < 0) return null;
+    final current = snapshots[index];
+    final byId = {for (final work in current.works) work.id: work};
+    var changed = false;
+    for (final entry in entries) {
+      if (entry.entity != 'progress' || entry.operation != 'upsert') continue;
+      final workId = entry.payload['work_id'];
+      final position = entry.payload['position'];
+      if (workId is! String || position is! Map) continue;
+      final work = byId[workId];
+      if (work == null) continue;
+      final numeric = (position['numeric_value'] as num?)?.toDouble();
+      final total = (position['total'] as num?)?.toDouble();
+      final workJson = work.toJson();
+      if (numeric != null) {
+        workJson['progress_position_seconds'] = numeric;
+      }
+      if (total != null) workJson['progress_duration_seconds'] = total;
+      workJson['progress_finished'] = entry.payload['finished'] == true;
+      workJson['last_listened_at'] = entry.createdAt.toUtc().toIso8601String();
+      final updated = FundusRemoteWork.fromJson(workJson);
+      if (updated != null) {
+        byId[workId] = updated;
+        changed = true;
+      }
+    }
+    if (!changed) return current;
+    final updatedSnapshot = FundusRemoteCatalogSnapshot(
+      serverId: current.serverId,
+      libraryId: current.libraryId,
+      serverName: current.serverName,
+      libraryName: current.libraryName,
+      works: byId.values.toList(growable: false),
+      fetchedAt: current.fetchedAt,
+      etag: current.etag,
+    );
+    final replacement = [
+      for (var i = 0; i < snapshots.length; i++)
+        i == index ? updatedSnapshot : snapshots[i],
+    ];
+    await save(replacement);
+    return updatedSnapshot;
+  }
+
   static String _sourceKey(String serverId, String libraryId) =>
       '$serverId\u0000$libraryId';
 
@@ -225,6 +324,14 @@ final class FundusRemoteCatalogStore {
     database.execute('''
       CREATE INDEX IF NOT EXISTS remote_catalog_works_source_idx
       ON remote_catalog_works(server_id, library_id)
+    ''');
+    database.execute('''
+      CREATE TABLE IF NOT EXISTS remote_catalog_sync (
+        server_id TEXT NOT NULL,
+        library_id TEXT NOT NULL,
+        cursor INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (server_id, library_id)
+      )
     ''');
     database.execute('PRAGMA foreign_keys = ON');
     return database;
