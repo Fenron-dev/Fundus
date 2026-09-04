@@ -18,6 +18,18 @@ import 'fundus_playback_controller.dart';
 /// without changing the player UI later.
 final class FundusVideoPlayerController extends ChangeNotifier
     implements FundusPlaybackController {
+  static const Set<FundusPlaybackCapability> _capabilities = {
+    FundusPlaybackCapability.playPause,
+    FundusPlaybackCapability.seek,
+    FundusPlaybackCapability.previous,
+    FundusPlaybackCapability.next,
+    FundusPlaybackCapability.speed,
+    FundusPlaybackCapability.trackSelection,
+    FundusPlaybackCapability.subtitles,
+    FundusPlaybackCapability.screenshots,
+    FundusPlaybackCapability.bookmarks,
+  };
+
   FundusVideoPlayerController() : _player = Player() {
     // Attach the native video output before a medium is opened. Creating it
     // only in the fullscreen route lets audio decode and seek correctly while
@@ -121,6 +133,9 @@ final class FundusVideoPlayerController extends ChangeNotifier
   Player get player => _player;
   VideoController get videoController => _videoController;
   LibraryWorkSummary? get work => _work;
+  @override
+  Set<FundusPlaybackCapability> get capabilities => _capabilities;
+
   @override
   String? get playbackWorkId => _work?.id;
   @override

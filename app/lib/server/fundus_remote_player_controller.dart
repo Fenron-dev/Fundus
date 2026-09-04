@@ -71,6 +71,18 @@ FundusRemoteChapterTarget? resolveRemoteChapterTarget(
 
 final class FundusRemotePlayerController extends ChangeNotifier
     implements FundusPlaybackController {
+  static const Set<FundusPlaybackCapability> _capabilities = {
+    FundusPlaybackCapability.playPause,
+    FundusPlaybackCapability.seek,
+    FundusPlaybackCapability.previous,
+    FundusPlaybackCapability.next,
+    FundusPlaybackCapability.speed,
+    FundusPlaybackCapability.trackSelection,
+    FundusPlaybackCapability.subtitles,
+    FundusPlaybackCapability.screenshots,
+    FundusPlaybackCapability.bookmarks,
+  };
+
   FundusRemotePlayerController({
     required this.deviceId,
     required this.deviceName,
@@ -203,6 +215,9 @@ final class FundusRemotePlayerController extends ChangeNotifier
   List<int> _shuffleOrder = const [];
 
   FundusRemoteWork? get work => _work;
+
+  @override
+  Set<FundusPlaybackCapability> get capabilities => _capabilities;
 
   @override
   String? get playbackWorkId => _work?.id;

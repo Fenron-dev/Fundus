@@ -31,6 +31,19 @@ final class PlayerWorkProgress {
 
 final class FundusPlayerController extends ChangeNotifier
     implements FundusPlaybackController {
+  static const Set<FundusPlaybackCapability> _capabilities = {
+    FundusPlaybackCapability.playPause,
+    FundusPlaybackCapability.seek,
+    FundusPlaybackCapability.previous,
+    FundusPlaybackCapability.next,
+    FundusPlaybackCapability.speed,
+    FundusPlaybackCapability.chapters,
+    FundusPlaybackCapability.queue,
+    FundusPlaybackCapability.sleepTimer,
+    FundusPlaybackCapability.systemMediaControls,
+    FundusPlaybackCapability.bookmarks,
+  };
+
   FundusPlayerController({
     this.onConflict,
     this.onPlaylistConflict,
@@ -136,6 +149,9 @@ final class FundusPlayerController extends ChangeNotifier
 
   Duration get _autosaveInterval =>
       PlaybackAutosaveSettings.interval(_work?.kind ?? 'audiobook');
+
+  @override
+  Set<FundusPlaybackCapability> get capabilities => _capabilities;
 
   LibraryWorkSummary? get work => _work;
   @override

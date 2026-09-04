@@ -6,6 +6,12 @@ import 'package:fundus/playback/fundus_playback_controller.dart';
 /// unit-test process.
 final class _FakePlaybackController implements FundusPlaybackController {
   @override
+  Set<FundusPlaybackCapability> capabilities = const {
+    FundusPlaybackCapability.playPause,
+    FundusPlaybackCapability.seek,
+  };
+
+  @override
   void addListener(void Function() listener) {}
 
   @override
@@ -75,5 +81,13 @@ void main() {
     expect(controller.playbackTrackTitle, 'Folge 1');
     expect(controller.trackCount, 1);
     expect(controller.duration, const Duration(minutes: 20));
+    expect(
+      controller.capabilities.supports(FundusPlaybackCapability.seek),
+      isTrue,
+    );
+    expect(
+      controller.capabilities.supports(FundusPlaybackCapability.screenshots),
+      isFalse,
+    );
   });
 }

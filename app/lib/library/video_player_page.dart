@@ -6,7 +6,20 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../playback/fundus_playback_controller.dart';
 import '../playback/fundus_video_player_controller.dart';
+
+const Set<FundusPlaybackCapability> _defaultVideoCapabilities = {
+  FundusPlaybackCapability.playPause,
+  FundusPlaybackCapability.seek,
+  FundusPlaybackCapability.previous,
+  FundusPlaybackCapability.next,
+  FundusPlaybackCapability.speed,
+  FundusPlaybackCapability.trackSelection,
+  FundusPlaybackCapability.subtitles,
+  FundusPlaybackCapability.screenshots,
+  FundusPlaybackCapability.bookmarks,
+};
 
 Future<void> showFundusVideoPlayer(
   BuildContext context, {
@@ -27,6 +40,7 @@ Future<void> showFundusVideoPlayerForPlayer(
   required VideoController videoController,
   required String title,
   FundusVideoPlayerController? fundusController,
+  Set<FundusPlaybackCapability>? capabilities,
   bool resumePlayback = true,
   Duration? initialPosition,
   Future<void> Function(AudioTrack track)? onAudioTrackSelected,
@@ -41,6 +55,10 @@ Future<void> showFundusVideoPlayerForPlayer(
       videoController: videoController,
       title: title,
       fundusController: fundusController,
+      capabilities:
+          capabilities ??
+          fundusController?.capabilities ??
+          _defaultVideoCapabilities,
       resumePlayback: resumePlayback,
       initialPosition: initialPosition,
       onAudioTrackSelected: onAudioTrackSelected,
@@ -56,6 +74,7 @@ final class _FundusVideoPlayerPage extends StatefulWidget {
     required this.videoController,
     required this.title,
     this.fundusController,
+    required this.capabilities,
     required this.resumePlayback,
     this.initialPosition,
     this.onAudioTrackSelected,
@@ -66,6 +85,7 @@ final class _FundusVideoPlayerPage extends StatefulWidget {
   final VideoController videoController;
   final String title;
   final FundusVideoPlayerController? fundusController;
+  final Set<FundusPlaybackCapability> capabilities;
   final bool resumePlayback;
   final Duration? initialPosition;
   final Future<void> Function(AudioTrack track)? onAudioTrackSelected;
@@ -172,16 +192,20 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
           ],
           icon: const Icon(Icons.fit_screen_outlined),
         ),
-        IconButton(
-          tooltip: 'Tonspur und Untertitel',
-          onPressed: () => _showTracks(context),
-          icon: const Icon(Icons.closed_caption_outlined),
-        ),
-        IconButton(
-          tooltip: 'Screenshot speichern',
-          onPressed: () => _saveScreenshot(context),
-          icon: const Icon(Icons.camera_alt_outlined),
-        ),
+        if (widget.capabilities.supports(
+          FundusPlaybackCapability.trackSelection,
+        ))
+          IconButton(
+            tooltip: 'Tonspur und Untertitel',
+            onPressed: () => _showTracks(context),
+            icon: const Icon(Icons.closed_caption_outlined),
+          ),
+        if (widget.capabilities.supports(FundusPlaybackCapability.screenshots))
+          IconButton(
+            tooltip: 'Screenshot speichern',
+            onPressed: () => _saveScreenshot(context),
+            icon: const Icon(Icons.camera_alt_outlined),
+          ),
       ],
     ),
     body: Center(

@@ -2065,6 +2065,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         player: player.player,
         videoController: player.videoController,
         title: work.title,
+        capabilities: player.capabilities,
         initialPosition: initialPosition,
         onAudioTrackSelected: player.rememberVideoAudioTrack,
         onSubtitleTrackSelected: player.rememberVideoSubtitleTrack,
