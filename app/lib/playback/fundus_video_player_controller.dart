@@ -259,8 +259,10 @@ final class FundusVideoPlayerController extends ChangeNotifier
         final target = nativeDuration > Duration.zero && resume > nativeDuration
             ? nativeDuration
             : resume;
-        await _player.seek(target);
-        _position = target;
+        _position = await FundusVideoPlaybackSession.seekAndVerify(
+          _player,
+          target,
+        );
       } else {
         _position = Duration.zero;
       }

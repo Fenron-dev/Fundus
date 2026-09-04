@@ -34,4 +34,23 @@ final class FundusVideoPlaybackSession {
       // Some audio-only files and remote containers expose no dimensions.
     }
   }
+
+  /// Seek a resumed video and verify the native clock reached the requested
+  /// position. This is shared by local files and remote/offline streams so
+  /// resume semantics do not depend on the transport used to open the media.
+  static Future<Duration> seekAndVerify(
+    Player player,
+    Duration target, {
+    int attempts = 6,
+    Duration tolerance = const Duration(seconds: 2),
+  }) async {
+    var actual = player.state.position;
+    for (var attempt = 1; attempt <= attempts; attempt++) {
+      await player.seek(target);
+      await Future<void>.delayed(Duration(milliseconds: 100 * attempt));
+      actual = player.state.position;
+      if ((actual - target).abs() <= tolerance) return actual;
+    }
+    throw StateError('Fortsetzungsposition konnte nicht gesetzt werden.');
+  }
 }

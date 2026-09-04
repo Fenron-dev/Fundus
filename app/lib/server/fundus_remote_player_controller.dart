@@ -644,7 +644,10 @@ final class FundusRemotePlayerController extends ChangeNotifier
         // video texture, especially for an already visited MKV/MP4. An
         // explicit verified seek keeps remote and offline playback aligned.
         await FundusVideoPlaybackSession.waitForVideoParameters(_player);
-        _position = await _seekAndVerify(resumePosition);
+        _position = await FundusVideoPlaybackSession.seekAndVerify(
+          _player,
+          resumePosition,
+        );
         notifyListeners();
       }
       if (autoPlay) await _player.play();
@@ -652,7 +655,10 @@ final class FundusRemotePlayerController extends ChangeNotifier
           !useNativeVideoResume &&
           !(progress?.finished ?? false) &&
           resumePosition > Duration.zero) {
-        _position = await _seekAndVerify(resumePosition);
+        _position = await FundusVideoPlaybackSession.seekAndVerify(
+          _player,
+          resumePosition,
+        );
         notifyListeners();
       }
       if (resumePosition != null &&
@@ -814,7 +820,10 @@ final class FundusRemotePlayerController extends ChangeNotifier
       _currentIndex = targetIndex;
     }
     if (!selected.finished && selected.position > Duration.zero) {
-      _position = await _seekAndVerify(selected.position);
+      _position = await FundusVideoPlaybackSession.seekAndVerify(
+        _player,
+        selected.position,
+      );
     }
     _progressRevision = selected.revision;
     notifyListeners();
@@ -1268,17 +1277,6 @@ final class FundusRemotePlayerController extends ChangeNotifier
     final random = Random.secure();
     final bytes = List<int>.generate(18, (_) => random.nextInt(256));
     return 'remote-${base64UrlEncode(bytes).replaceAll('=', '')}';
-  }
-
-  Future<Duration> _seekAndVerify(Duration target) async {
-    var actual = _player.state.position;
-    for (var attempt = 1; attempt <= 6; attempt++) {
-      await _player.seek(target);
-      await Future<void>.delayed(Duration(milliseconds: 100 * attempt));
-      actual = _player.state.position;
-      if ((actual - target).abs() <= const Duration(seconds: 2)) return actual;
-    }
-    throw StateError('Fortsetzungsposition konnte nicht gesetzt werden.');
   }
 
   Future<void> _recordRemoteResume({
