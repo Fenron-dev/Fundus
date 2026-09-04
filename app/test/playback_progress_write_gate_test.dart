@@ -62,7 +62,7 @@ void main() {
     );
   });
 
-  test('finished snapshots are always written', () {
+  test('finished snapshots are written once without lifecycle spam', () {
     final gate = PlaybackProgressWriteGate();
     const position = Duration(seconds: 12);
     gate.markSaved(workId: 'work-1', fileId: 'episode-1', position: position);
@@ -87,8 +87,36 @@ void main() {
         workId: 'work-1',
         fileId: 'episode-1',
         position: position,
+        finished: true,
       ),
       isFalse,
+    );
+    expect(
+      gate.shouldWrite(
+        workId: 'work-1',
+        fileId: 'episode-1',
+        position: position,
+      ),
+      isFalse,
+    );
+  });
+
+  test('a changed position after completion is still writable', () {
+    final gate = PlaybackProgressWriteGate();
+    gate.markSaved(
+      workId: 'work-1',
+      fileId: 'episode-1',
+      position: const Duration(seconds: 20),
+      finished: true,
+    );
+
+    expect(
+      gate.shouldWrite(
+        workId: 'work-1',
+        fileId: 'episode-1',
+        position: const Duration(seconds: 21),
+      ),
+      isTrue,
     );
   });
 }

@@ -7,6 +7,7 @@ final class PlaybackProgressWriteGate {
   String? _fileId;
   Duration? _position;
   Duration? _duration;
+  bool _finished = false;
 
   bool shouldWrite({
     required String workId,
@@ -15,11 +16,18 @@ final class PlaybackProgressWriteGate {
     Duration? duration,
     bool finished = false,
   }) {
-    if (finished) return true;
-    return _workId != workId ||
+    final snapshotChanged =
+        _workId != workId ||
         _fileId != fileId ||
         _position != position ||
         _duration != duration;
+    if (snapshotChanged) return true;
+    // A completion is a state transition, not a reason to write the same
+    // snapshot on every `completed`, pause and close callback. Once the
+    // finished state was persisted, an identical non-finished lifecycle event
+    // must not regress it or create another network write.
+    if (finished) return !_finished;
+    return false;
   }
 
   void markSaved({
@@ -33,5 +41,6 @@ final class PlaybackProgressWriteGate {
     _fileId = fileId;
     _position = position;
     _duration = duration;
+    _finished = finished;
   }
 }
