@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fundus/server/fundus_remote_catalog_store.dart';
 import 'package:fundus/server/fundus_remote_client.dart';
@@ -45,5 +48,61 @@ void main() {
   test('invalid snapshots are ignored safely', () {
     expect(FundusRemoteCatalogSnapshot.fromJson(const {}), isNull);
     expect(FundusRemoteWork.fromJson(const {}), isNull);
+  });
+
+  test('catalog store persists source metadata and works in SQLite', () async {
+    final directory = await Directory.systemTemp.createTemp('fundus-catalog-');
+    addTearDown(() => directory.delete(recursive: true));
+    final store = FundusRemoteCatalogStore(
+      file: File('${directory.path}/remote-catalog.db'),
+    );
+    final snapshot = FundusRemoteCatalogSnapshot(
+      serverId: 'server-1',
+      libraryId: 'library-1',
+      serverName: 'Mac',
+      libraryName: 'Anime',
+      fetchedAt: DateTime.utc(2026, 9, 4, 12),
+      etag: 'etag-1',
+      works: [
+        FundusRemoteWork(
+          id: 'work-1',
+          title: 'Chainsaw Man',
+          authors: const [],
+          hasCover: false,
+          kind: 'video',
+          fileCount: 1,
+        ),
+      ],
+    );
+
+    await store.save([snapshot]);
+    expect(await File('${directory.path}/remote-catalog.db').exists(), isTrue);
+    final loaded = await store.load();
+    expect(loaded, hasLength(1));
+    expect(loaded.single.key, snapshot.key);
+    expect(loaded.single.etag, 'etag-1');
+    expect(loaded.single.works.single.title, 'Chainsaw Man');
+  });
+
+  test('legacy JSON cache is migrated on first SQLite load', () async {
+    final directory = await Directory.systemTemp.createTemp('fundus-catalog-');
+    addTearDown(() => directory.delete(recursive: true));
+    final snapshot = FundusRemoteCatalogSnapshot(
+      serverId: 'server-legacy',
+      libraryId: 'library-legacy',
+      serverName: 'Old Mac',
+      libraryName: 'Books',
+      fetchedAt: DateTime.utc(2026, 9, 4),
+      works: const [],
+    );
+    final legacy = File('${directory.path}/remote-catalog.json');
+    await legacy.writeAsString('[${jsonEncode(snapshot.toJson())}]');
+    final store = FundusRemoteCatalogStore(
+      file: File('${directory.path}/remote-catalog.db'),
+    );
+
+    final loaded = await store.load();
+    expect(loaded.single.serverId, 'server-legacy');
+    expect(await File('${directory.path}/remote-catalog.db').exists(), isTrue);
   });
 }

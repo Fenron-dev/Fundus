@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:sqlite3/sqlite3.dart';
 
 import 'fundus_remote_client.dart';
 
@@ -78,14 +79,163 @@ final class FundusRemoteCatalogStore {
   Future<File> _resolvedFile() async {
     if (file != null) return file!;
     final directory = await getApplicationSupportDirectory();
-    return File(p.join(directory.path, 'remote-catalog.json'));
+    return File(p.join(directory.path, 'remote-catalog.db'));
   }
 
   Future<List<FundusRemoteCatalogSnapshot>> load() async {
     final target = await _resolvedFile();
-    if (!await target.exists()) return const [];
+    if (!await target.exists()) {
+      // Older releases kept the cache as one JSON document. Read it once and
+      // migrate it to SQLite so an upgrade never loses remote metadata.
+      final legacy = File(p.join(target.parent.path, 'remote-catalog.json'));
+      final migrated = await _loadLegacy(legacy);
+      if (migrated.isEmpty) return const [];
+      await save(migrated);
+      return migrated;
+    }
+    Database? database;
     try {
-      final decoded = jsonDecode(await target.readAsString());
+      database = _open(target);
+      final sources = database.select(
+        'SELECT * FROM remote_catalog_sources ORDER BY server_id, library_id',
+      );
+      final works = database.select(
+        'SELECT * FROM remote_catalog_works ORDER BY server_id, library_id, work_id',
+      );
+      final worksBySource = <String, List<FundusRemoteWork>>{};
+      for (final row in works) {
+        final decoded = jsonDecode(row['payload_json'] as String);
+        final work = FundusRemoteWork.fromJson(decoded);
+        if (work == null) continue;
+        final key = _sourceKey(
+          row['server_id'] as String,
+          row['library_id'] as String,
+        );
+        (worksBySource[key] ??= <FundusRemoteWork>[]).add(work);
+      }
+      return [
+        for (final row in sources)
+          FundusRemoteCatalogSnapshot(
+            serverId: row['server_id'] as String,
+            libraryId: row['library_id'] as String,
+            serverName: row['server_name'] as String,
+            libraryName: row['library_name'] as String,
+            works:
+                worksBySource[_sourceKey(
+                  row['server_id'] as String,
+                  row['library_id'] as String,
+                )] ??
+                const [],
+            fetchedAt: DateTime.fromMillisecondsSinceEpoch(
+              row['fetched_at'] as int,
+              isUtc: true,
+            ).toLocal(),
+            etag: row['etag'] as String?,
+          ),
+      ];
+    } on SqliteException {
+      return const [];
+    } on FileSystemException {
+      return const [];
+    } on FormatException {
+      return const [];
+    } finally {
+      database?.close();
+    }
+  }
+
+  Future<void> save(Iterable<FundusRemoteCatalogSnapshot> snapshots) async {
+    final target = await _resolvedFile();
+    await target.parent.create(recursive: true);
+    Database? database;
+    try {
+      database = _open(target);
+      final normalized = snapshots.toList(growable: false);
+      database.execute('BEGIN');
+      try {
+        database.execute('DELETE FROM remote_catalog_works');
+        database.execute('DELETE FROM remote_catalog_sources');
+        for (final snapshot in normalized) {
+          database.execute(
+            '''INSERT INTO remote_catalog_sources (
+                 server_id, library_id, server_name, library_name,
+                 fetched_at, etag
+               ) VALUES (?, ?, ?, ?, ?, ?)''',
+            [
+              snapshot.serverId,
+              snapshot.libraryId,
+              snapshot.serverName,
+              snapshot.libraryName,
+              snapshot.fetchedAt.toUtc().millisecondsSinceEpoch,
+              snapshot.etag,
+            ],
+          );
+          for (final work in snapshot.works) {
+            database.execute(
+              '''INSERT INTO remote_catalog_works (
+                   server_id, library_id, work_id, payload_json
+                 ) VALUES (?, ?, ?, ?)''',
+              [
+                snapshot.serverId,
+                snapshot.libraryId,
+                work.id,
+                jsonEncode(work.toJson()),
+              ],
+            );
+          }
+        }
+        database.execute('COMMIT');
+      } on Object {
+        database.execute('ROLLBACK');
+        rethrow;
+      }
+    } finally {
+      database?.close();
+    }
+  }
+
+  static String _sourceKey(String serverId, String libraryId) =>
+      '$serverId\u0000$libraryId';
+
+  static Database _open(File target) {
+    final database = sqlite3.open(target.path);
+    database.execute('''
+      CREATE TABLE IF NOT EXISTS remote_catalog_sources (
+        server_id TEXT NOT NULL,
+        library_id TEXT NOT NULL,
+        server_name TEXT NOT NULL,
+        library_name TEXT NOT NULL,
+        fetched_at INTEGER NOT NULL,
+        etag TEXT,
+        PRIMARY KEY (server_id, library_id)
+      )
+    ''');
+    database.execute('''
+      CREATE TABLE IF NOT EXISTS remote_catalog_works (
+        server_id TEXT NOT NULL,
+        library_id TEXT NOT NULL,
+        work_id TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        PRIMARY KEY (server_id, library_id, work_id),
+        FOREIGN KEY (server_id, library_id)
+          REFERENCES remote_catalog_sources(server_id, library_id)
+          ON DELETE CASCADE
+      )
+    ''');
+    database.execute('''
+      CREATE INDEX IF NOT EXISTS remote_catalog_works_source_idx
+      ON remote_catalog_works(server_id, library_id)
+    ''');
+    database.execute('PRAGMA foreign_keys = ON');
+    return database;
+  }
+
+  static Future<List<FundusRemoteCatalogSnapshot>> _loadLegacy(
+    File legacy,
+  ) async {
+    if (!await legacy.exists()) return const [];
+    try {
+      final decoded = jsonDecode(await legacy.readAsString());
       if (decoded is! List) return const [];
       return decoded
           .map(FundusRemoteCatalogSnapshot.fromJson)
@@ -96,16 +246,5 @@ final class FundusRemoteCatalogStore {
     } on FormatException {
       return const [];
     }
-  }
-
-  Future<void> save(Iterable<FundusRemoteCatalogSnapshot> snapshots) async {
-    final target = await _resolvedFile();
-    await target.parent.create(recursive: true);
-    final temporary = File('${target.path}.part');
-    await temporary.writeAsString(
-      jsonEncode(snapshots.map((snapshot) => snapshot.toJson()).toList()),
-      flush: true,
-    );
-    await temporary.rename(target.path);
   }
 }
