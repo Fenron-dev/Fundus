@@ -84,17 +84,26 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
   void initState() {
     super.initState();
     // The player may have been opened (and even started) before this route
-    // existed. Re-prime the native texture after the first frame so resumed
-    // videos render their picture as reliably as freshly opened videos.
+    // existed. Only repair the native texture when no first frame arrives;
+    // pausing and seeking every time the fullscreen route opens causes an
+    // audible hiccup and can replace a valid Android frame with black output.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted || !widget.resumePlayback) return;
       try {
-        // Always re-prime the native texture after the route is mounted. A
-        // resumed file can have a valid audio clock while the video output
-        // is still attached to the pre-route surface; simply calling play()
-        // in that state produces sound with a black or stale frame. Keep the
-        // already restored timestamp, pause the decoder briefly, then seek
-        // back to that timestamp before starting playback.
+        try {
+          await widget.videoController.waitUntilFirstFrameRendered.timeout(
+            const Duration(milliseconds: 750),
+          );
+          return;
+        } catch (_) {
+          // A resumed stream may still be waiting for its first frame.
+        }
+        // Repair the native texture after the route is mounted. A resumed
+        // file can have a valid audio clock while the video output is still
+        // attached to the pre-route surface; simply calling play() in that
+        // state produces sound with a black or stale frame. Keep the already
+        // restored timestamp, pause the decoder briefly, then seek back to
+        // that timestamp before starting playback.
         // Capture the position supplied by the owner before playback can
         // advance. This is important for remote players, which may already
         // have been opened by the time this route is pushed.
