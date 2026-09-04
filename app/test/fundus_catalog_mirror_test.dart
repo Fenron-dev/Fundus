@@ -87,6 +87,33 @@ void main() {
   });
 
   test(
+    'replaceAll deduplicates streamed and offline copies of one work',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('fundus-mirror-');
+      addTearDown(() => directory.delete(recursive: true));
+      final store = FundusCatalogMirrorStore(
+        file: File('${directory.path}/catalog.db'),
+      );
+
+      await store.replaceAll([
+        _entry('remote:server/library', 'work-1'),
+        _entry(
+          'remote:server/library',
+          'offline:server/library/work-1',
+          availability: FundusCatalogAvailability.offline,
+        ),
+      ]);
+
+      final loaded = await store.load();
+      expect(loaded, hasLength(1));
+      expect(
+        loaded.single.source.availability,
+        FundusCatalogAvailability.offline,
+      );
+    },
+  );
+
+  test(
     'unreachable source remains visible with its last known metadata',
     () async {
       final directory = await Directory.systemTemp.createTemp('fundus-mirror-');

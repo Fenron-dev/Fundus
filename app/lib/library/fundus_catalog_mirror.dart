@@ -74,7 +74,11 @@ final class FundusCatalogMirrorStore {
   }) async {
     final normalizedId = sourceId.trim();
     if (normalizedId.isEmpty) throw ArgumentError.value(sourceId, 'sourceId');
-    final values = entries.toList(growable: false);
+    // Offline copies deliberately keep the peer source identity.  A refresh
+    // can therefore contain both the streamed row and its local copy.  Apply
+    // the same source/work priority rules as the UI before writing the
+    // `(source_id, work_id)` primary key.
+    final values = FundusLibraryCatalog(entries).entries;
     final resolvedSource = source ?? values.firstOrNull?.source;
     if (resolvedSource == null || resolvedSource.id != normalizedId) {
       throw ArgumentError('Eine Quelle mit derselben ID ist erforderlich.');
@@ -123,9 +127,12 @@ final class FundusCatalogMirrorStore {
   }
 
   Future<void> replaceAll(Iterable<FundusCatalogEntry> entries) async {
+    // Keep the mirror's uniqueness contract in sync with the unified catalog:
+    // one source/work row, with an offline copy preferred over a live row.
+    final normalizedEntries = FundusLibraryCatalog(entries).entries;
     final grouped = <String, List<FundusCatalogEntry>>{};
     final sources = <String, FundusCatalogSource>{};
-    for (final entry in entries) {
+    for (final entry in normalizedEntries) {
       grouped.putIfAbsent(entry.source.id, () => []).add(entry);
       sources[entry.source.id] = entry.source;
     }
