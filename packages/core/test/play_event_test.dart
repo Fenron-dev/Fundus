@@ -37,6 +37,7 @@ void main() {
     expect(completed.id, ended.id);
     expect(completed.secondsPlayed, 42);
     expect(completed.endedAt, ended.endedAt);
+    expect(library.listWorks().single.lastListenedAt?.toUtc(), started);
   });
 
   test('does not guess invalid or unknown history updates', () async {
@@ -50,9 +51,6 @@ void main() {
       () => database.finishPlayEvent(eventId: 'missing', secondsPlayed: 1),
       throwsStateError,
     );
-    expect(
-      () => database.listPlayEvents('', limit: 0),
-      throwsArgumentError,
-    );
+    expect(() => database.listPlayEvents('', limit: 0), throwsArgumentError);
   });
 }

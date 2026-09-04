@@ -802,6 +802,9 @@ final class FundusDatabase {
              progress.total AS progress_total,
              progress.finished AS progress_finished,
              progress.updated_at AS progress_updated_at,
+             (SELECT MAX(started_at) FROM play_events pe
+               WHERE pe.work_id = w.id AND pe.user_id = 'default')
+               AS last_play_event_at,
              progress_file.position AS progress_track_index,
              (SELECT json_group_array(t.name)
                 FROM work_tags wt JOIN tags t ON t.id = wt.tag_id
@@ -890,15 +893,22 @@ final class FundusDatabase {
             availability: row['availability'] as String? ?? 'available',
             metadataOrigins: _metadataOrigins(metadata),
             tags: _metadataStrings(jsonDecode(row['tags_json'] as String)),
-            lastListenedAt: row['progress_updated_at'] is int
-                ? DateTime.fromMillisecondsSinceEpoch(
-                    row['progress_updated_at'] as int,
-                  )
-                : null,
+            lastListenedAt: _latestActivity(
+              row['progress_updated_at'],
+              row['last_play_event_at'],
+            ),
             offline: row['status'] == 'offline',
           );
         })
         .toList(growable: false);
+  }
+
+  static DateTime? _latestActivity(Object? progress, Object? event) {
+    final values = [if (progress is int) progress, if (event is int) event];
+    if (values.isEmpty) return null;
+    return DateTime.fromMillisecondsSinceEpoch(
+      values.reduce((left, right) => left > right ? left : right),
+    );
   }
 
   static List<String> _metadataStrings(Object? value) => value is List
@@ -1116,10 +1126,9 @@ final class FundusDatabase {
         'darf nicht negativ sein.',
       );
     }
-    final rows = _database.select(
-      'SELECT * FROM play_events WHERE id = ?',
-      [eventId],
-    );
+    final rows = _database.select('SELECT * FROM play_events WHERE id = ?', [
+      eventId,
+    ]);
     if (rows.isEmpty) {
       throw StateError('Wiedergabeereignis nicht gefunden: $eventId');
     }
@@ -1136,10 +1145,7 @@ final class FundusDatabase {
       'UPDATE play_events SET ended_at = ?, seconds_played = ? WHERE id = ?',
       [finishedAt.millisecondsSinceEpoch, secondsPlayed, eventId],
     );
-    return current.copyWith(
-      endedAt: finishedAt,
-      secondsPlayed: secondsPlayed,
-    );
+    return current.copyWith(endedAt: finishedAt, secondsPlayed: secondsPlayed);
   }
 
   List<LibraryPlayEvent> listPlayEvents(
