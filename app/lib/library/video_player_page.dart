@@ -8,6 +8,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../playback/fundus_playback_controller.dart';
 import '../playback/fundus_video_playback_controller.dart';
+import '../playback/fundus_video_playback_session.dart';
 import '../playback/fundus_video_player_controller.dart';
 
 Future<void> showFundusVideoPlayer(
@@ -89,66 +90,41 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
   @override
   void initState() {
     super.initState();
-    // The player may have been opened (and even started) before this route
-    // existed. Only repair the native texture when no first frame arrives;
-    // pausing and seeking every time the fullscreen route opens causes an
-    // audible hiccup and can replace a valid Android frame with black output.
+    // The controller is opened before this route exists so local, remote and
+    // offline playback can share the same setup.  The native surface is only
+    // attached after the first frame of this route.  Explicitly prime it here
+    // instead of relying on the decoder's previous texture: otherwise a
+    // resumed file can have a valid audio clock while the video stays black.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted || !widget.resumePlayback) return;
       try {
+        final target = widget.initialPosition ?? widget.player.state.position;
+        await FundusVideoPlaybackSession.waitForVideoParameters(
+          widget.player,
+          timeout: const Duration(seconds: 2),
+        );
+        if (!mounted) return;
+        final actual = widget.player.state.position;
+        if (target > Duration.zero &&
+            (actual - target).abs() > const Duration(seconds: 1)) {
+          await widget.player.pause();
+          await Future<void>.delayed(const Duration(milliseconds: 80));
+          await widget.player.seek(target);
+        }
+        if (!widget.player.state.playing) await widget.player.play();
         try {
           await widget.videoController.waitUntilFirstFrameRendered.timeout(
-            const Duration(milliseconds: 750),
+            const Duration(seconds: 3),
           );
-          return;
         } catch (_) {
-          // A resumed stream may still be waiting for its first frame.
-        }
-        // Repair the native texture after the route is mounted. A resumed
-        // file can have a valid audio clock while the video output is still
-        // attached to the pre-route surface; simply calling play() in that
-        // state produces sound with a black or stale frame. Keep the already
-        // restored timestamp, pause the decoder briefly, then seek back to
-        // that timestamp before starting playback.
-        // Capture the position supplied by the owner before playback can
-        // advance. This is important for remote players, which may already
-        // have been opened by the time this route is pushed.
-        final restoredPosition =
-            widget.initialPosition ?? widget.player.state.position;
-        await widget.player.pause();
-        await Future<void>.delayed(const Duration(milliseconds: 120));
-        if (restoredPosition > Duration.zero) {
-          await widget.player.seek(restoredPosition);
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 120));
-        if (mounted) {
-          await widget.player.play();
-          // Wait for the native surface to receive a frame. Without this
-          // small priming step, resumed videos can play audio while their
-          // texture remains black until a later seek or track change.
-          try {
-            await widget.videoController.waitUntilFirstFrameRendered.timeout(
-              const Duration(seconds: 3),
-            );
-          } catch (_) {
-            // Some streams do not expose a first-frame future; playback can
-            // still continue normally in that case.
-          }
-          // If the native decoder drifted while the surface was being
-          // attached, correct it while paused. Seeking a running decoder here
-          // causes an audible hiccup and can leave a black/stale frame on
-          // network-mounted files.
-          if (restoredPosition > Duration.zero && mounted) {
-            final actual = widget.player.state.position;
-            if ((actual - restoredPosition).abs() >
-                const Duration(seconds: 2)) {
-              await widget.player.pause();
-              await Future<void>.delayed(const Duration(milliseconds: 80));
-              await widget.player.seek(restoredPosition);
-              await Future<void>.delayed(const Duration(milliseconds: 80));
-              if (mounted) await widget.player.play();
-            }
-          }
+          // Retry once when the surface was attached after the decoder. This
+          // is the important recovery path for resumed MKV/MP4 playback.
+          if (!mounted) return;
+          await widget.player.pause();
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          await widget.player.seek(target > Duration.zero ? target : actual);
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          if (mounted) await widget.player.play();
         }
       } catch (_) {
         // Playback errors are surfaced by media_kit's error stream/controls.
@@ -293,7 +269,7 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
           note: path,
         );
       }
-      if (context.mounted)
+      if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
@@ -301,13 +277,15 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
             ),
           ),
         );
+      }
     } on Object catch (error) {
-      if (context.mounted)
+      if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Screenshot konnte nicht gespeichert werden: $error'),
           ),
         );
+      }
     }
   }
 
