@@ -59,4 +59,46 @@ void main() {
     expect(catalog.entries, hasLength(1));
     expect(catalog.entries.single.work.offline, isTrue);
   });
+
+  test('repository replaces one source without dropping other sources', () {
+    final local = FundusCatalogEntry(
+      work: _work('local-work'),
+      source: FundusLibraryCatalog.localSource('Vault'),
+    );
+    final remote = FundusCatalogEntry(
+      work: _work('remote-work'),
+      source: FundusLibraryCatalog.remoteSource(
+        serverId: 'server-a',
+        libraryId: 'vault-a',
+        displayName: 'Mac · Medien',
+      ),
+    );
+    final repository = FundusCatalogRepository([local, remote]);
+    final replacement = FundusCatalogEntry(
+      work: _work('remote-work-2'),
+      source: remote.source,
+    );
+
+    final updated = repository.replaceSource(remote.source.id, [replacement]);
+
+    expect(updated.catalog.byKey(local.key), isNotNull);
+    expect(updated.catalog.byKey(remote.key), isNull);
+    expect(updated.catalog.byKey(replacement.key)?.work.id, 'remote-work-2');
+  });
+
+  test('core source conversion preserves stable identity and availability', () {
+    const source = LibrarySource(
+      id: 'peer:server-a/vault-a',
+      kind: LibrarySourceKind.peer,
+      displayName: 'Mac · Medien',
+      libraryId: 'vault-a',
+      availability: LibrarySourceAvailability.unreachable,
+    );
+
+    final converted = FundusCatalogSource.fromLibrarySource(source);
+
+    expect(converted.id, source.id);
+    expect(converted.isRemote, isTrue);
+    expect(converted.availability, FundusCatalogAvailability.unreachable);
+  });
 }

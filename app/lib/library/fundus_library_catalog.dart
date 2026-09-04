@@ -23,9 +23,82 @@ final class FundusCatalogSource {
   final String? libraryName;
   final FundusCatalogAvailability availability;
 
+  /// Converts the persisted Core source representation into the UI-neutral
+  /// catalog source.  The conversion deliberately keeps availability as
+  /// metadata; callers do not need a separate local/remote widget branch.
+  factory FundusCatalogSource.fromLibrarySource(LibrarySource source) {
+    final kind = switch (source.kind) {
+      LibrarySourceKind.vault => FundusCatalogSourceKind.local,
+      LibrarySourceKind.peer => FundusCatalogSourceKind.remote,
+    };
+    final availability = switch (source.availability) {
+      LibrarySourceAvailability.available =>
+        FundusCatalogAvailability.available,
+      LibrarySourceAvailability.offline => FundusCatalogAvailability.offline,
+      LibrarySourceAvailability.unreachable =>
+        FundusCatalogAvailability.unreachable,
+      LibrarySourceAvailability.readOnly => FundusCatalogAvailability.available,
+      LibrarySourceAvailability.unknown => FundusCatalogAvailability.missing,
+    };
+    return FundusCatalogSource(
+      id: source.id,
+      kind: kind,
+      displayName: source.displayName,
+      libraryName: source.kind == LibrarySourceKind.peer
+          ? source.displayName
+          : null,
+      availability: availability,
+    );
+  }
+
   bool get isLocal => kind == FundusCatalogSourceKind.local;
   bool get isRemote => kind == FundusCatalogSourceKind.remote;
   bool get isOffline => kind == FundusCatalogSourceKind.offline;
+}
+
+/// Repository façade for the single library catalog.
+///
+/// The app may receive entries from a local vault, a peer mirror, or an
+/// offline copy, but the UI consumes only [catalog].  Source updates replace
+/// one source atomically and preserve all other sources.  This is intentionally
+/// an in-memory façade for now; persistence remains in the Core vault index and
+/// the remote catalog mirror, so there is no second cache format to migrate.
+final class FundusCatalogRepository {
+  FundusCatalogRepository(Iterable<FundusCatalogEntry> entries)
+    : _catalog = FundusLibraryCatalog(entries);
+
+  FundusCatalogRepository.empty() : _catalog = FundusLibraryCatalog(const []);
+
+  final FundusLibraryCatalog _catalog;
+
+  FundusLibraryCatalog get catalog => _catalog;
+
+  /// Creates a repository from all currently known source entries.  Keeping
+  /// this operation pure makes it safe to call while rebuilding the widget
+  /// tree and easy to verify in unit tests.
+  static FundusCatalogRepository compose(
+    Iterable<FundusCatalogEntry> entries,
+  ) => FundusCatalogRepository(entries);
+
+  /// Returns a new repository with the entries for [sourceId] replaced.
+  /// Existing entries from other sources are retained unchanged.
+  FundusCatalogRepository replaceSource(
+    String sourceId,
+    Iterable<FundusCatalogEntry> entries,
+  ) {
+    final retained = _catalog.entries.where(
+      (entry) => entry.source.id != sourceId,
+    );
+    return FundusCatalogRepository([...retained, ...entries]);
+  }
+
+  /// Returns a new repository without a source.  This is used when a peer is
+  /// unpaired; an unreachable peer remains present and should instead be
+  /// represented by an availability update.
+  FundusCatalogRepository removeSource(String sourceId) =>
+      FundusCatalogRepository(
+        _catalog.entries.where((entry) => entry.source.id != sourceId),
+      );
 }
 
 final class FundusCatalogEntry {

@@ -320,60 +320,9 @@ class _FundusAppState extends State<FundusApp> {
             )
           : LibraryShell(
               works: _works!,
-              catalog: FundusLibraryCatalog([
-                ..._works!.map(
-                  (work) => FundusCatalogEntry(
-                    work: work,
-                    source: FundusLibraryCatalog.localSource(
-                      _library?.root.path.split(Platform.pathSeparator).last ??
-                          'Lokale Bibliothek',
-                    ),
-                  ),
-                ),
-                ..._offlineWorks.map(
-                  (offline) => FundusCatalogEntry(
-                    work: _offlineLibrarySummary(offline),
-                    source: FundusLibraryCatalog.offlineSource(
-                      serverId: offline.serverId,
-                      libraryId: offline.libraryId,
-                      displayName: _sourceDisplayName(
-                        offline.sourceServerName,
-                        offline.sourceLibraryName,
-                      ),
-                    ),
-                  ),
-                ),
-                ..._remoteCatalog.expand((snapshot) {
-                  final reachable = _reachableServerIds.contains(
-                    snapshot.serverId,
-                  );
-                  final workSummaries = snapshot.works.map(
-                    (work) => WorkDetailViewModel.fromRemote(
-                      work,
-                      serverId: snapshot.serverId,
-                      libraryId: snapshot.libraryId,
-                      serverName: snapshot.serverName,
-                      libraryName: snapshot.libraryName,
-                    ).summary,
-                  );
-                  return workSummaries.map(
-                    (work) => FundusCatalogEntry(
-                      work: work,
-                      source: FundusLibraryCatalog.remoteSource(
-                        serverId: snapshot.serverId,
-                        libraryId: snapshot.libraryId,
-                        displayName: _sourceDisplayName(
-                          snapshot.serverName,
-                          snapshot.libraryName,
-                        ),
-                        availability: reachable
-                            ? FundusCatalogAvailability.available
-                            : FundusCatalogAvailability.unreachable,
-                      ),
-                    ),
-                  );
-                }),
-              ]),
+              catalog: FundusCatalogRepository.compose(
+                _catalogEntries(),
+              ).catalog,
               library: _library,
               libraryName: _library?.root.path
                   .split(Platform.pathSeparator)
@@ -407,6 +356,60 @@ class _FundusAppState extends State<FundusApp> {
               },
             ),
     );
+  }
+
+  /// Builds the one catalog consumed by every library layout.  Local,
+  /// streamed and offline entries are source metadata on the same entry; no
+  /// UI-level source branch is needed.
+  Iterable<FundusCatalogEntry> _catalogEntries() sync* {
+    final localName =
+        _library?.root.path.split(Platform.pathSeparator).last ??
+        'Lokale Bibliothek';
+    for (final work in _works ?? const <LibraryWorkSummary>[]) {
+      yield FundusCatalogEntry(
+        work: work,
+        source: FundusLibraryCatalog.localSource(localName),
+      );
+    }
+    for (final offline in _offlineWorks) {
+      yield FundusCatalogEntry(
+        work: _offlineLibrarySummary(offline),
+        source: FundusLibraryCatalog.offlineSource(
+          serverId: offline.serverId,
+          libraryId: offline.libraryId,
+          displayName: _sourceDisplayName(
+            offline.sourceServerName,
+            offline.sourceLibraryName,
+          ),
+        ),
+      );
+    }
+    for (final snapshot in _remoteCatalog) {
+      final reachable = _reachableServerIds.contains(snapshot.serverId);
+      final source = FundusLibraryCatalog.remoteSource(
+        serverId: snapshot.serverId,
+        libraryId: snapshot.libraryId,
+        displayName: _sourceDisplayName(
+          snapshot.serverName,
+          snapshot.libraryName,
+        ),
+        availability: reachable
+            ? FundusCatalogAvailability.available
+            : FundusCatalogAvailability.unreachable,
+      );
+      for (final remoteWork in snapshot.works) {
+        yield FundusCatalogEntry(
+          work: WorkDetailViewModel.fromRemote(
+            remoteWork,
+            serverId: snapshot.serverId,
+            libraryId: snapshot.libraryId,
+            serverName: snapshot.serverName,
+            libraryName: snapshot.libraryName,
+          ).summary,
+          source: source,
+        );
+      }
+    }
   }
 
   void _toggleTheme() => setState(() {
