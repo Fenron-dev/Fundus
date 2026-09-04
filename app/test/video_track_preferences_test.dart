@@ -91,4 +91,37 @@ void main() {
     );
     expect(one.audioLanguage, 'de');
   });
+
+  test('video preference levels inherit broad defaults in stable order', () {
+    expect(VideoTrackPreferences.preferenceLevels('movie'), ['video', 'movie']);
+    expect(VideoTrackPreferences.preferenceLevels('tv'), ['video', 'tv']);
+    expect(VideoTrackPreferences.preferenceLevels('anime_tv'), [
+      'video',
+      'tv',
+      'anime_tv',
+    ]);
+    expect(VideoTrackPreferences.preferenceLevels('hhh_movie'), [
+      'video',
+      'movie',
+      'hhh_movie',
+    ]);
+  });
+
+  test('variant preferences do not overwrite the base media type', () async {
+    VideoTrackPreferences.clearCache();
+    await VideoTrackPreferences.save(
+      kind: 'tv',
+      preference: const VideoTrackPreference(audioLanguage: 'de'),
+    );
+    await VideoTrackPreferences.save(
+      kind: 'anime_tv',
+      preference: const VideoTrackPreference(audioLanguage: 'ja'),
+    );
+
+    expect((await VideoTrackPreferences.load(kind: 'tv')).audioLanguage, 'de');
+    expect(
+      (await VideoTrackPreferences.load(kind: 'anime_tv')).audioLanguage,
+      'ja',
+    );
+  });
 }

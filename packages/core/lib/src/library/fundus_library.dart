@@ -929,6 +929,11 @@ final class FundusLibrary {
     for (final candidate in groupedDocumentCandidates) {
       documentCandidates.add(await _withEpubMetadata(candidate));
     }
+    final documentPortableIds = <String, String?>{};
+    for (final candidate in documentCandidates) {
+      documentPortableIds[candidate.directory] =
+          await _readPortableDocumentWorkId(candidate);
+    }
     final candidates = <AudiobookImportCandidate>[];
     final portableIdentities = <String, _PortableWorkIdentity>{};
     for (final grouped in groupedCandidates) {
@@ -978,7 +983,11 @@ final class FundusLibrary {
       for (final candidate in documentCandidates) {
         indexedDocuments.add((
           candidate: candidate,
-          workId: _database.upsertDocumentCandidate(candidate, ids),
+          workId: _database.upsertDocumentCandidate(
+            candidate,
+            ids,
+            preferredWorkId: documentPortableIds[candidate.directory],
+          ),
         ));
       }
       _database.markWorksWithoutAvailableContentMissing();
@@ -990,6 +999,9 @@ final class FundusLibrary {
         indexed.candidate.directory,
         indexed.workId,
       );
+      if (!isReadOnly) {
+        await _writeMetadataSidecar(indexed.workId);
+      }
     }
     for (final indexed in indexedCandidates) {
       try {
@@ -1528,6 +1540,32 @@ final class FundusLibrary {
       })}\n',
       flush: true,
     );
+  }
+
+  /// Reads the portable work identity used by non-audio media.
+  ///
+  /// The sidecar intentionally does not require an exact kind match: a user
+  /// may reclassify a title (for example from `tv` to `anime_tv`) while
+  /// keeping the same files. The UUID is scoped to this library source by
+  /// the database's preferred-id lookup.
+  Future<String?> _readPortableDocumentWorkId(
+    DocumentImportCandidate candidate,
+  ) async {
+    final file = File(
+      p.join(_workSidecarDirectory(candidate.directory).path, 'meta.yaml'),
+    );
+    if (!await file.exists()) return null;
+    try {
+      final value = loadYaml(await file.readAsString());
+      if (value is! Map) return null;
+      final workId = value['work_id'];
+      if (workId is! String || !_uuidPattern.hasMatch(workId)) return null;
+      return workId;
+    } on FileSystemException {
+      return null;
+    } on YamlException {
+      return null;
+    }
   }
 
   Future<void> _importAnnotationSidecars(

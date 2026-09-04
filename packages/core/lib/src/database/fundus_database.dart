@@ -494,8 +494,9 @@ final class FundusDatabase {
 
   String upsertDocumentCandidate(
     DocumentImportCandidate candidate,
-    Map<String, String> fileIds,
-  ) {
+    Map<String, String> fileIds, {
+    String? preferredWorkId,
+  }) {
     final workId = _upsertWork(
       kind: candidate.kind,
       sourcePath: candidate.directory,
@@ -504,6 +505,17 @@ final class FundusDatabase {
       source: candidate.metadata.isEmpty
           ? WorkMetadataSource.filename
           : WorkMetadataSource.embedded,
+      preferredId: preferredWorkId,
+    );
+    final previousTracks = _database.select(
+      '''
+      SELECT wf.file_id, wf.position, f.filename
+      FROM work_files wf
+      JOIN files f ON f.id = wf.file_id
+      WHERE wf.work_id = ? AND wf.role = 'content'
+      ORDER BY wf.position
+      ''',
+      [workId],
     );
     _database.execute('UPDATE works SET cover_file_id = NULL WHERE id = ?', [
       workId,
@@ -523,6 +535,7 @@ final class FundusDatabase {
                     file.relativePath != candidate.coverFile!.relativePath,
               )
               .toList(growable: false);
+    _reassociateTrackReferences(workId, previousTracks, contentFiles, fileIds);
     for (var index = 0; index < contentFiles.length; index++) {
       final fileId = fileIds[contentFiles[index].relativePath];
       if (fileId == null) continue;

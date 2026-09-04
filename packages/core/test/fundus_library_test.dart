@@ -1176,6 +1176,60 @@ void main() {
     expect(library.listWorks().single.mediaProgress?.numericValue, 4);
   });
 
+  test(
+    'keeps a document work identity and progress when its folder moves',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'fundus-document-move-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final original = Directory('${root.path}/Manga/Original Series');
+      await original.create(recursive: true);
+      await File('${original.path}/cover.webp').writeAsBytes([1, 2, 3]);
+      await File('${original.path}/Chapter 001.cbz').writeAsBytes([4, 5, 6]);
+      await File('${original.path}/Chapter 002.cbz').writeAsBytes([7, 8, 9]);
+
+      final library = await FundusLibrary.create(root);
+      addTearDown(library.close);
+      await library.index().drain<void>();
+      final before = library.listWorks().single;
+      final beforeTracks = library.playbackTracks(before.id);
+      library.saveMediaProgress(
+        workId: before.id,
+        fileId: beforeTracks[1].fileId,
+        position: MediaPosition(
+          kind: MediaPositionKind.imageIndex,
+          numericValue: 11,
+          total: 20,
+          fileId: beforeTracks[1].fileId,
+          chapterId: 'Chapter 002',
+          scrollOffset: .4,
+        ),
+      );
+      await library.replaceWorkTags(before.id, ['Fantasy']);
+      await library.saveWorkNote(before.id, 'Notiz vor dem Verschieben');
+
+      final destination = Directory('${root.path}/Manga/Renamed Series');
+      await original.rename(destination.path);
+      await library.index().drain<void>();
+
+      final after = library.listWorks().single;
+      final afterTracks = library.playbackTracks(after.id);
+      final progress = library.loadProgress(after.id)!;
+      final annotations = library.loadAnnotations(after.id);
+      expect(after.id, before.id);
+      expect(after.title, 'Original Series');
+      expect(after.coverPath, endsWith('cover.webp'));
+      expect(progress.position.kind, MediaPositionKind.imageIndex);
+      expect(progress.position.numericValue, 11);
+      expect(progress.position.scrollOffset, .4);
+      expect(progress.fileId, afterTracks[1].fileId);
+      expect(progress.fileId, isNot(beforeTracks[1].fileId));
+      expect(annotations.tags, ['Fantasy']);
+      expect(annotations.notes.single.markdown, 'Notiz vor dem Verschieben');
+    },
+  );
+
   test('indexes EPUB package metadata and its embedded cover', () async {
     final root = await Directory.systemTemp.createTemp('fundus-epub-');
     addTearDown(() => root.delete(recursive: true));

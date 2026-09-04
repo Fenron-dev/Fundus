@@ -97,6 +97,18 @@ abstract final class VideoTrackPreferences {
   static const _portableReaderKind = 'video-tracks';
   static final Map<String, VideoTrackPreference> _cache = {};
 
+  /// Returns the preference levels from broadest to most specific.
+  ///
+  /// Keeping this order explicit makes the inheritance contract observable
+  /// and ensures that a concrete variant (for example `anime_tv`) can never
+  /// overwrite the generic `tv` or `video` default.
+  static List<String> preferenceLevels(String kind) =>
+      List.unmodifiable(_preferenceKinds(kind));
+
+  /// Clears only the in-memory cache. Persisted secure-store values remain
+  /// intact and are reloaded on demand.
+  static void clearCache() => _cache.clear();
+
   static Future<VideoTrackPreference> load({
     required String kind,
     String? workId,
@@ -148,7 +160,10 @@ abstract final class VideoTrackPreferences {
     required VideoTrackPreference preference,
   }) => _write(
     _key(
-      _baseKind(kind),
+      // Store the exact level that was edited.  Previously variants were
+      // reduced to their base kind here, so Anime-/HHH-specific preferences
+      // silently changed the regular series defaults as well.
+      kind.trim().toLowerCase(),
       workId,
       fileId ?? (season == null ? null : 'season-$season'),
     ),
@@ -328,7 +343,10 @@ abstract final class VideoTrackPreferences {
   static List<String> _preferenceKinds(String kind) {
     final normalized = kind.trim().toLowerCase();
     final base = _baseKind(normalized);
-    return normalized == base ? [base] : [base, normalized];
+    final levels = <String>['video'];
+    if (base != 'video') levels.add(base);
+    if (normalized != base && normalized != 'video') levels.add(normalized);
+    return levels.toSet().toList(growable: false);
   }
 }
 
