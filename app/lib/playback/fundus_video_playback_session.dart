@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
@@ -32,7 +30,7 @@ final class FundusVideoPlaybackSession {
       await player.stream.videoParams
           .firstWhere((value) => value.w != null && value.h != null)
           .timeout(timeout);
-    } on TimeoutException {
+    } catch (_) {
       // Some audio-only files and remote containers expose no dimensions.
     }
   }
