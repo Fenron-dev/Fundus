@@ -1488,6 +1488,59 @@ final class FundusRemoteClient {
     return work;
   }
 
+  /// Persists provider-enriched metadata on a remote library work. The
+  /// server merges provider metadata with its existing values so clients can
+  /// safely refresh AniList/TMDB details without losing local fields.
+  Future<FundusRemoteWork> updateWorkMetadata(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String title,
+    required List<String> authors,
+    String? subtitle,
+    String? series,
+    num? seriesSequence,
+    List<String> narrators = const [],
+    String? language,
+    String? description,
+    String? publisher,
+    int? publishedYear,
+    String? contentSensitivity,
+    List<String>? genres,
+    String? contentStyle,
+    Map<String, Object?> providerMetadata = const {},
+  }) async {
+    final bytes = await _request(
+      server.baseUri.resolve('/v1/libraries/$libraryId/works/$workId/metadata'),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'PUT',
+      body: jsonEncode({
+        'title': title,
+        'authors': authors,
+        if (subtitle != null) 'subtitle': subtitle,
+        if (series != null) 'series': series,
+        if (seriesSequence != null) 'series_sequence': seriesSequence,
+        'narrators': narrators,
+        if (language != null) 'language': language,
+        if (description != null) 'description': description,
+        if (publisher != null) 'publisher': publisher,
+        if (publishedYear != null) 'published_year': publishedYear,
+        if (contentSensitivity != null)
+          'content_sensitivity': contentSensitivity,
+        if (genres != null) 'genres': genres,
+        if (contentStyle != null) 'content_style': contentStyle,
+        'provider_metadata': providerMetadata,
+      }),
+    );
+    final value = jsonDecode(utf8.decode(bytes));
+    final work = FundusRemoteWork.fromJson(value);
+    if (work == null) {
+      throw const HttpException('Ungültiges Werk zurückgegeben.');
+    }
+    return work;
+  }
+
   static AudioTechnicalMetadata? _audioMetadata(Object? value) {
     if (value is! Map ||
         value['container'] is! String ||

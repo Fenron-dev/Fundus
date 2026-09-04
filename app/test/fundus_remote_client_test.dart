@@ -95,6 +95,23 @@ void main() {
       workId: works.single.id,
       kind: 'audiobook',
     );
+    final enriched = await client.updateWorkMetadata(
+      profile,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+      title: 'Buch mit Details',
+      authors: const ['Autor'],
+      description: 'Remote gespeicherte Beschreibung',
+      genres: const ['Fantasy'],
+      providerMetadata: const {
+        'provider': 'tmdb',
+        'provider_id': '42',
+        'genres': ['Fantasy'],
+      },
+    );
+    expect(enriched.title, 'Buch mit Details');
+    expect(enriched.description, 'Remote gespeicherte Beschreibung');
+    expect(enriched.providerMetadata['provider'], 'tmdb');
     final localWork = library.listWorks().single;
     library.saveCollection(name: 'Test-Sammlung', workIds: [localWork.id]);
     final collections = await client.collections(profile, libraries.single.id);

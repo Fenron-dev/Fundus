@@ -30,6 +30,7 @@ import '../library/work_content_list.dart';
 import '../library/work_annotation_list.dart';
 import '../library/video_detail_hero.dart';
 import '../library/video_player_page.dart';
+import '../video/video_metadata_dialog.dart';
 import '../library/zip_archive_browser.dart';
 import '../playback/playback_sleep_timer_button.dart';
 import '../playback/playback_conflict_settings.dart';
@@ -2867,6 +2868,9 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                         onOpen: detailTracks.isEmpty
                             ? null
                             : () => Navigator.pop(context, 'play'),
+                        onLoadMetadata: forceOffline
+                            ? null
+                            : () => Navigator.pop(context, 'load_metadata'),
                         onChangeType: () => unawaited(
                           _changeRemoteVideoType(
                             server,
@@ -3097,6 +3101,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           });
         }
       } catch (_) {}
+      return;
+    }
+    if (action == 'load_metadata') {
+      await _loadRemoteVideoMetadata(server, library, work);
       return;
     }
     if (action == 'progress_history') {
@@ -3484,6 +3492,91 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Typ konnte nicht gespeichert werden: $error')),
+      );
+    }
+  }
+
+  Future<void> _loadRemoteVideoMetadata(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work,
+  ) async {
+    final anime =
+        work.kind == 'anime_movie' ||
+        work.kind == 'anime_tv' ||
+        work.contentStyle == 'anime';
+    final candidate = await showVideoMetadataDialog(
+      context,
+      initialQuery: work.title,
+      anime: anime,
+    );
+    if (candidate == null || !mounted) return;
+    try {
+      final result = await _runWithReconnect(
+        server,
+        (active) => _client.updateWorkMetadata(
+          active,
+          libraryId: library.id,
+          workId: work.id,
+          title: candidate.title,
+          authors: work.authors.isEmpty ? const ['Unbekannt'] : work.authors,
+          description: candidate.description ?? work.description,
+          publishedYear: candidate.releaseYear ?? work.publishedYear,
+          contentSensitivity:
+              candidate.contentSensitivity ?? work.contentSensitivity,
+          contentStyle: candidate.contentStyle ?? work.contentStyle,
+          genres: candidate.genres.isEmpty ? null : candidate.genres,
+          providerMetadata: {
+            'provider': candidate.provider,
+            'provider_id': candidate.providerId,
+            if (candidate.videoKind != null) 'video_kind': candidate.videoKind,
+            if (candidate.contentStyle != null)
+              'content_style': candidate.contentStyle,
+            if (candidate.releaseYear != null)
+              'release_year': candidate.releaseYear,
+            if (candidate.season != null) 'season': candidate.season,
+            if (candidate.episodeCount != null)
+              'episode_count': candidate.episodeCount,
+            if (candidate.runtimeMinutes != null)
+              'runtime_minutes': candidate.runtimeMinutes,
+            if (candidate.isAdult != null) 'is_adult': candidate.isAdult,
+            if (candidate.alternateTitles.isNotEmpty)
+              'alternate_titles': candidate.alternateTitles,
+            if (candidate.backdropUrl != null)
+              'backdrop_url': candidate.backdropUrl,
+            if (candidate.credits.isNotEmpty)
+              'credits': [
+                for (final credit in candidate.credits) credit.toJson(),
+              ],
+            if (candidate.trailerUrl != null)
+              'trailer_url': candidate.trailerUrl,
+            if (candidate.externalIds.isNotEmpty)
+              'external_ids': candidate.externalIds,
+          },
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        _selectedServer = result.server;
+        _works = [
+          for (final item in _works)
+            item.id == result.value.id ? result.value : item,
+        ];
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Details von ${candidate.provider.toUpperCase()} übernommen.',
+          ),
+        ),
+      );
+      await _showWork(result.server, library, result.value);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Details konnten nicht gespeichert werden: $error'),
+        ),
       );
     }
   }

@@ -132,6 +132,10 @@ final class FundusServerHandler {
       ..post('/v1/libraries/<libraryId>/sync/changes', _pushSyncChanges)
       ..get('/v1/libraries/<libraryId>/works/<workId>', _work)
       ..put('/v1/libraries/<libraryId>/works/<workId>/kind', _updateWorkKind)
+      ..put(
+        '/v1/libraries/<libraryId>/works/<workId>/metadata',
+        _updateWorkMetadata,
+      )
       ..get('/v1/libraries/<libraryId>/works/<workId>/cover', _cover)
       ..get('/v1/libraries/<libraryId>/files/<fileId>', _file)
       ..get('/v1/libraries/<libraryId>/files/<fileId>/comic/pages', _comicPages)
@@ -547,6 +551,87 @@ final class FundusServerHandler {
       return _json(_workJson(updated));
     } on ArgumentError {
       return _badRequest('invalid_work_kind');
+    } on StateError {
+      return _notFound('work_not_found');
+    }
+  }
+
+  Future<Response> _updateWorkMetadata(
+    Request request,
+    String libraryId,
+    String workId,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    final current = entry.findWork(workId);
+    if (current == null || !_canViewWork(request, current)) {
+      return _notFound('work_not_found');
+    }
+    final decoded = await _readJson(request);
+    if (decoded == null) return _badRequest('invalid_work_metadata');
+    String? stringValue(String key) =>
+        decoded[key] is String ? (decoded[key] as String).trim() : null;
+    List<String>? stringList(String key) {
+      final value = decoded[key];
+      if (value == null) return null;
+      if (value is! List) return null;
+      return value
+          .whereType<String>()
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+    }
+
+    final title = stringValue('title') ?? current.title;
+    final authors = stringList('authors') ?? current.authors;
+    if (authors.isEmpty) return _badRequest('invalid_work_metadata');
+    final sensitivity =
+        stringValue('content_sensitivity') ?? current.contentSensitivity;
+    final targetsAdult = sensitivity == 'adult_explicit';
+    if (targetsAdult && !_canViewAdult(request)) {
+      return _json({'error': 'adult_explicit_required'}, statusCode: 403);
+    }
+    final incomingProvider = decoded['provider_metadata'];
+    if (incomingProvider != null && incomingProvider is! Map) {
+      return _badRequest('invalid_work_metadata');
+    }
+    final providerMetadata = <String, Object?>{
+      ...current.providerMetadata,
+      if (incomingProvider is Map)
+        ...Map<String, Object?>.from(incomingProvider),
+    };
+    final genres = stringList('genres');
+    final publishedYear = decoded['published_year'] is int
+        ? decoded['published_year'] as int
+        : current.publishedYear;
+    final sequence = decoded['series_sequence'] is num
+        ? (decoded['series_sequence'] as num).toDouble()
+        : current.seriesSequence?.toDouble();
+    try {
+      final updated = await entry.library.updateWorkMetadata(
+        workId: workId,
+        title: title,
+        authors: authors,
+        subtitle: stringValue('subtitle') ?? current.subtitle,
+        series: stringValue('series') ?? current.series,
+        seriesSequence: sequence,
+        narrators: stringList('narrators') ?? current.narrators,
+        language: stringValue('language') ?? current.language,
+        description: stringValue('description') ?? current.description,
+        publisher: stringValue('publisher') ?? current.publisher,
+        publishedYear: publishedYear,
+        contentSensitivity: sensitivity,
+        genres: genres,
+        contentStyle: stringValue('content_style') ?? current.contentStyle,
+        providerMetadata: providerMetadata,
+      );
+      return _json(_workJson(updated));
+    } on ArgumentError {
+      return _badRequest('invalid_work_metadata');
     } on StateError {
       return _notFound('work_not_found');
     }
