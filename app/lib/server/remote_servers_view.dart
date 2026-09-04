@@ -16,6 +16,7 @@ import '../library/document_file_opener.dart';
 import '../library/document_preview.dart';
 import '../library/fixed_document_source.dart';
 import '../library/fundus_breadcrumbs.dart';
+import '../library/fundus_media_source_gateway.dart';
 import '../library/epub_reader.dart';
 import '../library/publication_reader_settings.dart';
 import '../library/reflow_text_reader.dart';
@@ -4865,15 +4866,23 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     }
     if (!mounted) return;
     try {
+      // The EPUB has already been materialized into the device cache above.
+      // Present that cache entry through the same source gateway as local
+      // EPUBs so the reader never needs to know whether it came from a peer
+      // or an offline download.
+      final publicationSource = await const FundusOfflineSourceGateway()
+          .openPublicationSource(
+            FundusMediaAsset.offline(
+              id: track.id,
+              name: track.title,
+              sourceId: '${server.id}/${library.id}',
+              localPath: file.path,
+              contentLength: await file.length(),
+            ),
+          );
       await showEpubReader(
         context,
-        source: FilePublicationSource(
-          file.path,
-          kind: offlineTrack == null
-              ? PublicationSourceKind.remote
-              : PublicationSourceKind.offline,
-          name: track.title,
-        ),
+        source: publicationSource,
         fileId: track.id,
         relativePath: track.title,
         initialChapterIndex: initialChapterIndex,
