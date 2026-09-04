@@ -904,10 +904,12 @@ final class FundusRemoteClient {
     int since = 0,
     int limit = 1000,
     String? etag,
+    bool delta = false,
   }) async {
     final query = StringBuffer(
       '/v1/libraries/$libraryId/catalog?since=$since&limit=$limit',
     );
+    if (delta) query.write('&delta=true');
     if (etag != null && etag.isNotEmpty) {
       query.write('&etag=${Uri.encodeQueryComponent(etag)}');
     }

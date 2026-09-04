@@ -377,6 +377,9 @@ final class FundusServerHandler {
   Response _catalog(Request request, String libraryId) {
     final entry = registry.lookup(libraryId);
     if (entry == null) return _notFound('library_not_found');
+    if (request.url.queryParameters['delta'] == 'true') {
+      return _catalogDelta(request, entry, libraryId);
+    }
     final since = int.tryParse(request.url.queryParameters['since'] ?? '') ?? 0;
     final requestedLimit =
         int.tryParse(request.url.queryParameters['limit'] ?? '') ?? 1000;
@@ -412,6 +415,59 @@ final class FundusServerHandler {
       'next_cursor': nextCursor,
       'has_more': nextCursor < visible.length,
       'etag': etag,
+      'not_modified': false,
+    });
+  }
+
+  /// Returns only catalog changes recorded since [since]. The regular catalog
+  /// route remains a paginated snapshot for backwards compatibility; clients
+  /// that maintain a mirror can opt into this cursor-based delta explicitly.
+  Response _catalogDelta(
+    Request request,
+    SharedFundusLibrary entry,
+    String libraryId,
+  ) {
+    final since = int.tryParse(request.url.queryParameters['since'] ?? '') ?? 0;
+    final requestedLimit =
+        int.tryParse(request.url.queryParameters['limit'] ?? '') ?? 1000;
+    final limit = requestedLimit.clamp(1, 1000);
+    final changes = entry.library
+        .syncChanges(since: since < 0 ? 0 : since, limit: limit + 1)
+        .where(
+          (change) =>
+              change.entity == 'catalog_work' &&
+              _canViewSyncChange(request, entry, change),
+        )
+        .toList(growable: false);
+    final hasMore = changes.length > limit;
+    final visible = hasMore ? changes.take(limit) : changes;
+    final works = <Map<String, Object?>>[];
+    final deleted = <String>[];
+    for (final change in visible) {
+      final serialized = _syncChangeJson(request, entry, change);
+      final operation = serialized['op'];
+      final payload = serialized['payload'];
+      if (operation == 'delete') {
+        if (payload is Map && payload['work_id'] is String) {
+          deleted.add(payload['work_id'] as String);
+        }
+      } else if (payload is Map && payload['work'] is Map) {
+        works.add(Map<String, Object?>.from(payload['work'] as Map));
+      }
+    }
+    final nextCursor = visible.isEmpty
+        ? (since < 0 ? 0 : since)
+        : visible.last.sequence;
+    final currentVisible = entry.works
+        .where((work) => _canViewWork(request, work))
+        .toList(growable: false);
+    return _json({
+      'library_id': libraryId,
+      'works': works,
+      'deleted': deleted,
+      'next_cursor': nextCursor,
+      'has_more': hasMore,
+      'etag': _catalogEtag(currentVisible),
       'not_modified': false,
     });
   }

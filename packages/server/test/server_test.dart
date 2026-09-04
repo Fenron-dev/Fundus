@@ -290,6 +290,18 @@ void main() {
     expect((addedEntry['payload'] as Map)['work'], isA<Map>());
     final addedWorkId = (addedEntry['payload'] as Map)['work_id'];
 
+    final catalogDelta = await _json(
+      await _get(server, '/v1/libraries/$libraryId/catalog?delta=true&since=0'),
+    );
+    expect(catalogDelta['has_more'], isFalse);
+    expect(
+      (catalogDelta['works'] as List).whereType<Map>().any(
+        (item) => item['id'] == addedWorkId,
+      ),
+      isTrue,
+    );
+    final deltaCursor = catalogDelta['next_cursor'] as int;
+
     await addedDirectory.delete(recursive: true);
     await firstLibrary.index().drain<void>();
     final removed = await _json(
@@ -299,6 +311,14 @@ void main() {
     expect(removedEntry['entity'], 'catalog_work');
     expect(removedEntry['op'], 'delete');
     expect((removedEntry['payload'] as Map)['work_id'], addedWorkId);
+
+    final catalogRemovedDelta = await _json(
+      await _get(
+        server,
+        '/v1/libraries/$libraryId/catalog?delta=true&since=$deltaCursor',
+      ),
+    );
+    expect(catalogRemovedDelta['deleted'], contains(addedWorkId));
   });
 
   test('lists multiple libraries without exposing local paths', () async {

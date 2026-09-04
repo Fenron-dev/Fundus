@@ -311,12 +311,67 @@ final class FundusRemoteCatalogStore {
       fetchedAt: current.fetchedAt,
       etag: current.etag,
     );
-    final replacement = [
-      for (var i = 0; i < snapshots.length; i++)
-        i == index ? updatedSnapshot : snapshots[i],
-    ];
-    await save(replacement);
+    // Update only this source inside one SQLite transaction. Rewriting the
+    // complete cache here made a large multi-server catalog unnecessarily
+    // expensive and allowed a concurrent refresh to overwrite another
+    // source's newer rows.
+    await _replaceSourceWorks(updatedSnapshot);
     return updatedSnapshot;
+  }
+
+  Future<void> _replaceSourceWorks(FundusRemoteCatalogSnapshot snapshot) async {
+    final target = await _resolvedFile();
+    await target.parent.create(recursive: true);
+    Database? database;
+    try {
+      database = _open(target);
+      database.execute('BEGIN IMMEDIATE');
+      try {
+        database.execute(
+          '''INSERT INTO remote_catalog_sources (
+               server_id, library_id, server_name, library_name,
+               fetched_at, etag
+             ) VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(server_id, library_id) DO UPDATE SET
+               server_name = excluded.server_name,
+               library_name = excluded.library_name,
+               fetched_at = excluded.fetched_at,
+               etag = excluded.etag''',
+          [
+            snapshot.serverId,
+            snapshot.libraryId,
+            snapshot.serverName,
+            snapshot.libraryName,
+            snapshot.fetchedAt.toUtc().millisecondsSinceEpoch,
+            snapshot.etag,
+          ],
+        );
+        database.execute(
+          '''DELETE FROM remote_catalog_works
+             WHERE server_id = ? AND library_id = ?''',
+          [snapshot.serverId, snapshot.libraryId],
+        );
+        for (final work in snapshot.works) {
+          database.execute(
+            '''INSERT INTO remote_catalog_works (
+                 server_id, library_id, work_id, payload_json
+               ) VALUES (?, ?, ?, ?)''',
+            [
+              snapshot.serverId,
+              snapshot.libraryId,
+              work.id,
+              jsonEncode(work.toJson()),
+            ],
+          );
+        }
+        database.execute('COMMIT');
+      } on Object {
+        database.execute('ROLLBACK');
+        rethrow;
+      }
+    } finally {
+      database?.close();
+    }
   }
 
   static String _sourceKey(String serverId, String libraryId) =>
