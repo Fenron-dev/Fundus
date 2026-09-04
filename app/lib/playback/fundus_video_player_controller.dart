@@ -32,7 +32,8 @@ final class FundusVideoPlayerController extends ChangeNotifier
     FundusPlaybackCapability.bookmarks,
   };
 
-  FundusVideoPlayerController() : _player = Player() {
+  FundusVideoPlayerController({this.deviceId = 'desktop-local'})
+    : _player = Player() {
     // Attach the native video output before a medium is opened. Creating it
     // only in the fullscreen route lets audio decode and seek correctly while
     // the resumed video decoder has no texture to render into.
@@ -47,6 +48,7 @@ final class FundusVideoPlayerController extends ChangeNotifier
       }),
       _player.stream.position.listen((value) {
         _position = value;
+        if (_ready && _playing) _accumulatePlayEvent(value);
         notifyListeners();
         final interval = PlaybackAutosaveSettings.interval(
           _work?.kind ?? 'video',
@@ -109,6 +111,7 @@ final class FundusVideoPlayerController extends ChangeNotifier
   }
 
   final Player _player;
+  final String deviceId;
   late final VideoController _videoController;
   final List<StreamSubscription<Object?>> _subscriptions = [];
   FundusLibrary? _library;
@@ -124,6 +127,9 @@ final class FundusVideoPlayerController extends ChangeNotifier
   bool _persisting = false;
   bool _restoringPosition = false;
   bool _closed = false;
+  String? _playEventId;
+  Duration _playEventLastPosition = Duration.zero;
+  int _playEventSeconds = 0;
   String? _error;
 
   @override
@@ -174,6 +180,7 @@ final class FundusVideoPlayerController extends ChangeNotifier
   }) async {
     if (_closed) return;
     await persist();
+    await _finishPlayEvent();
     _loading = true;
     _ready = false;
     _error = null;
@@ -231,6 +238,7 @@ final class FundusVideoPlayerController extends ChangeNotifier
       _ready = true;
       _loading = false;
       _lastPersistedAt = DateTime.now();
+      await _startPlayEvent();
       notifyListeners();
       final trackPreference = await VideoTrackPreferences.loadForLibrary(
         library: library,
@@ -458,8 +466,62 @@ final class FundusVideoPlayerController extends ChangeNotifier
   Future<void> close() async {
     if (_closed) return;
     await persist();
+    await _finishPlayEvent();
     await _player.pause();
     _ready = false;
+  }
+
+  void _accumulatePlayEvent(Duration position) {
+    final delta = position - _playEventLastPosition;
+    if (delta > Duration.zero && delta <= const Duration(seconds: 30)) {
+      _playEventSeconds += delta.inSeconds;
+    }
+    _playEventLastPosition = position;
+  }
+
+  Future<void> _startPlayEvent() async {
+    final library = _library;
+    final work = _work;
+    if (library == null || work == null) return;
+    try {
+      final event = library.startPlayEvent(
+        workId: work.id,
+        deviceId: deviceId,
+      );
+      _playEventId = event.id;
+      _playEventLastPosition = _position;
+      _playEventSeconds = 0;
+    } catch (error) {
+      unawaited(
+        FundusDiagnostics.instance.record('video.history_start_failed', {
+          'work_id': work.id,
+          'error': error.toString(),
+        }),
+      );
+    }
+  }
+
+  Future<void> _finishPlayEvent() async {
+    final eventId = _playEventId;
+    final library = _library;
+    if (eventId == null || library == null) return;
+    _playEventId = null;
+    try {
+      library.finishPlayEvent(
+        eventId: eventId,
+        secondsPlayed: _playEventSeconds,
+      );
+    } catch (error) {
+      unawaited(
+        FundusDiagnostics.instance.record('video.history_finish_failed', {
+          'event_id': eventId,
+          'error': error.toString(),
+        }),
+      );
+    } finally {
+      _playEventLastPosition = Duration.zero;
+      _playEventSeconds = 0;
+    }
   }
 
   Future<void> _recordNativeResume(Duration target) async {

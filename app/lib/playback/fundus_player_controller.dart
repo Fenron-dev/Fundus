@@ -67,6 +67,7 @@ final class FundusPlayerController extends ChangeNotifier
       _player.stream.position.listen((value) {
         final previousChapter = _lastChapterIndex;
         _position = value;
+        if (_ready && _playing) _accumulatePlayEvent(value);
         final chapter = currentChapterIndex;
         if (_ready &&
             _playing &&
@@ -127,6 +128,9 @@ final class FundusPlayerController extends ChangeNotifier
   Duration _duration = Duration.zero;
   DateTime? _lastPersistedAt;
   int _progressRevision = 0;
+  String? _playEventId;
+  Duration _playEventLastPosition = Duration.zero;
+  int _playEventSeconds = 0;
   bool _playing = false;
   bool _loading = false;
   bool _ready = false;
@@ -222,6 +226,7 @@ final class FundusPlayerController extends ChangeNotifier
     if (_closed) return;
     if (_ready) {
       await _pauseAndPersist();
+      await _finishPlayEvent();
     } else {
       await persist();
     }
@@ -285,6 +290,7 @@ final class FundusPlayerController extends ChangeNotifier
       _ready = true;
       _loading = false;
       _lastPersistedAt = DateTime.now();
+      await _startPlayEvent();
       notifyListeners();
       await _player.play();
       if (resumePosition != null && resumePosition > Duration.zero) {
@@ -808,6 +814,7 @@ final class FundusPlayerController extends ChangeNotifier
   Future<void> close() async {
     if (_closed) return;
     await persist();
+    await _finishPlayEvent();
     _closed = true;
     for (final subscription in _subscriptions) {
       await subscription.cancel();
@@ -829,6 +836,7 @@ final class FundusPlayerController extends ChangeNotifier
     }
     _currentIndex = playlist.index.clamp(0, _tracks.length - 1);
     _position = Duration.zero;
+    _playEventLastPosition = Duration.zero;
     _lastChapterIndex = null;
     _syncSystemMediaSession();
     notifyListeners();
@@ -994,6 +1002,60 @@ final class FundusPlayerController extends ChangeNotifier
     }
     notifyListeners();
     await persist();
+  }
+
+  void _accumulatePlayEvent(Duration position) {
+    final delta = position - _playEventLastPosition;
+    // A seek or a track transition is not time watched. Ignore implausibly
+    // large jumps while retaining the new baseline for the next tick.
+    if (delta > Duration.zero && delta <= const Duration(seconds: 30)) {
+      _playEventSeconds += delta.inSeconds;
+    }
+    _playEventLastPosition = position;
+  }
+
+  Future<void> _startPlayEvent() async {
+    final library = _library;
+    final work = _work;
+    if (library == null || work == null) return;
+    try {
+      final event = library.startPlayEvent(workId: work.id, deviceId: deviceId);
+      _playEventId = event.id;
+      _playEventLastPosition = _position;
+      _playEventSeconds = 0;
+    } catch (error) {
+      // History must never prevent playback (for example when a read-only
+      // source is opened). Keep the failure observable in diagnostics only.
+      unawaited(
+        FundusDiagnostics.instance.record('playback.history_start_failed', {
+          'work_id': work.id,
+          'error': error.toString(),
+        }),
+      );
+    }
+  }
+
+  Future<void> _finishPlayEvent() async {
+    final eventId = _playEventId;
+    final library = _library;
+    if (eventId == null || library == null) return;
+    _playEventId = null;
+    try {
+      library.finishPlayEvent(
+        eventId: eventId,
+        secondsPlayed: _playEventSeconds,
+      );
+    } catch (error) {
+      unawaited(
+        FundusDiagnostics.instance.record('playback.history_finish_failed', {
+          'event_id': eventId,
+          'error': error.toString(),
+        }),
+      );
+    } finally {
+      _playEventLastPosition = Duration.zero;
+      _playEventSeconds = 0;
+    }
   }
 
   Future<void> _finishLastTrack() async {

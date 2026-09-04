@@ -8,6 +8,7 @@ import '../import/document_importer.dart';
 import '../library/work_annotations.dart';
 import '../model/fundus_id.dart';
 import '../model/library_collection.dart';
+import '../model/library_play_event.dart';
 import '../model/library_playlist.dart';
 import '../model/library_source.dart';
 import '../model/media_position.dart';
@@ -1061,6 +1062,140 @@ final class FundusDatabase {
       deviceId: row['device_id'] as String,
       operationId: row['operation_id'] as String,
     );
+  }
+
+  /// Starts a device-local playback interval for [workId].
+  ///
+  /// History is intentionally separate from the synchronised progress row:
+  /// progress answers "where do I continue?", while events answer "what did I
+  /// play and when?". Keeping the two independent prevents frequent history
+  /// writes from creating sync traffic or changing resume conflict resolution.
+  LibraryPlayEvent startPlayEvent({
+    required String workId,
+    required String deviceId,
+    String userId = 'default',
+    DateTime? startedAt,
+  }) {
+    _validatePlayEventIdentity(workId, deviceId, userId);
+    final event = LibraryPlayEvent(
+      id: FundusId.generate(),
+      workId: workId,
+      startedAt: (startedAt ?? DateTime.now()).toUtc(),
+      secondsPlayed: 0,
+      deviceId: deviceId,
+      userId: userId,
+    );
+    _database.execute(
+      '''INSERT INTO play_events (
+           id, work_id, started_at, ended_at, seconds_played, device_id, user_id
+         ) VALUES (?, ?, ?, NULL, 0, ?, ?)''',
+      [
+        event.id,
+        event.workId,
+        event.startedAt.millisecondsSinceEpoch,
+        event.deviceId,
+        event.userId,
+      ],
+    );
+    return event;
+  }
+
+  /// Closes an event and records the total seconds played in that interval.
+  LibraryPlayEvent finishPlayEvent({
+    required String eventId,
+    required int secondsPlayed,
+    DateTime? endedAt,
+  }) {
+    if (eventId.trim().isEmpty) {
+      throw ArgumentError.value(eventId, 'eventId', 'darf nicht leer sein.');
+    }
+    if (secondsPlayed < 0) {
+      throw ArgumentError.value(
+        secondsPlayed,
+        'secondsPlayed',
+        'darf nicht negativ sein.',
+      );
+    }
+    final rows = _database.select(
+      'SELECT * FROM play_events WHERE id = ?',
+      [eventId],
+    );
+    if (rows.isEmpty) {
+      throw StateError('Wiedergabeereignis nicht gefunden: $eventId');
+    }
+    final current = _playEventFromRow(rows.first);
+    final finishedAt = (endedAt ?? DateTime.now()).toUtc();
+    if (finishedAt.isBefore(current.startedAt)) {
+      throw ArgumentError.value(
+        endedAt,
+        'endedAt',
+        'darf nicht vor dem Start des Ereignisses liegen.',
+      );
+    }
+    _database.execute(
+      'UPDATE play_events SET ended_at = ?, seconds_played = ? WHERE id = ?',
+      [finishedAt.millisecondsSinceEpoch, secondsPlayed, eventId],
+    );
+    return current.copyWith(
+      endedAt: finishedAt,
+      secondsPlayed: secondsPlayed,
+    );
+  }
+
+  List<LibraryPlayEvent> listPlayEvents(
+    String workId, {
+    int limit = 100,
+    String userId = 'default',
+  }) {
+    if (workId.trim().isEmpty) {
+      throw ArgumentError.value(workId, 'workId', 'darf nicht leer sein.');
+    }
+    if (userId.trim().isEmpty) {
+      throw ArgumentError.value(userId, 'userId', 'darf nicht leer sein.');
+    }
+    final safeLimit = limit.clamp(1, 1000);
+    final rows = _database.select(
+      '''SELECT * FROM play_events
+         WHERE work_id = ? AND user_id = ?
+         ORDER BY started_at DESC
+         LIMIT ?''',
+      [workId, userId, safeLimit],
+    );
+    return [for (final row in rows) _playEventFromRow(row)];
+  }
+
+  LibraryPlayEvent _playEventFromRow(Row row) => LibraryPlayEvent(
+    id: row['id'] as String,
+    workId: row['work_id'] as String,
+    startedAt: DateTime.fromMillisecondsSinceEpoch(
+      row['started_at'] as int,
+      isUtc: true,
+    ),
+    endedAt: row['ended_at'] == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(
+            row['ended_at'] as int,
+            isUtc: true,
+          ),
+    secondsPlayed: row['seconds_played'] as int,
+    deviceId: row['device_id'] as String,
+    userId: row['user_id'] as String,
+  );
+
+  void _validatePlayEventIdentity(
+    String workId,
+    String deviceId,
+    String userId,
+  ) {
+    if (workId.trim().isEmpty) {
+      throw ArgumentError.value(workId, 'workId', 'darf nicht leer sein.');
+    }
+    if (deviceId.trim().isEmpty) {
+      throw ArgumentError.value(deviceId, 'deviceId', 'darf nicht leer sein.');
+    }
+    if (userId.trim().isEmpty) {
+      throw ArgumentError.value(userId, 'userId', 'darf nicht leer sein.');
+    }
   }
 
   List<LibraryPlaybackRevision> listProgressRevisions(String workId) {

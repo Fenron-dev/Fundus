@@ -14,6 +14,7 @@ import '../model/fundus_id.dart';
 import '../model/library_configuration.dart';
 import '../model/library_collection.dart';
 import '../model/library_manifest.dart';
+import '../model/library_play_event.dart';
 import '../model/library_playlist.dart';
 import '../model/library_saved_view.dart';
 import '../model/library_source.dart';
@@ -476,6 +477,42 @@ final class FundusLibrary {
     deviceId: deviceId,
     operationId: operationId ?? FundusId.generate(),
   );
+
+  /// Starts a device-local history interval. Unlike progress, this is not
+  /// synchronised and therefore cannot interfere with resume conflict rules.
+  LibraryPlayEvent startPlayEvent({
+    required String workId,
+    required String deviceId,
+    String userId = 'default',
+    DateTime? startedAt,
+  }) {
+    _ensureWritable();
+    return _database.startPlayEvent(
+      workId: workId,
+      deviceId: deviceId,
+      userId: userId,
+      startedAt: startedAt,
+    );
+  }
+
+  LibraryPlayEvent finishPlayEvent({
+    required String eventId,
+    required int secondsPlayed,
+    DateTime? endedAt,
+  }) {
+    _ensureWritable();
+    return _database.finishPlayEvent(
+      eventId: eventId,
+      secondsPlayed: secondsPlayed,
+      endedAt: endedAt,
+    );
+  }
+
+  List<LibraryPlayEvent> listPlayEvents(
+    String workId, {
+    int limit = 100,
+    String userId = 'default',
+  }) => _database.listPlayEvents(workId, limit: limit, userId: userId);
 
   /// Returns durable changes after [since]. The cursor is local to this
   /// library and monotonically increases, making retries safe across process

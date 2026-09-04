@@ -11,6 +11,7 @@ export 'src/model/fundus_id.dart';
 export 'src/model/library_configuration.dart';
 export 'src/model/library_collection.dart';
 export 'src/model/library_manifest.dart';
+export 'src/model/library_play_event.dart';
 export 'src/model/library_playlist.dart';
 export 'src/model/library_saved_view.dart';
 export 'src/model/library_source.dart';
