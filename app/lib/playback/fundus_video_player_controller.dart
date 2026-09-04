@@ -12,6 +12,7 @@ import 'video_track_preferences.dart';
 import 'fundus_playback_controller.dart';
 import 'fundus_video_playback_controller.dart';
 import 'fundus_video_playback_session.dart';
+import 'playback_progress_write_gate.dart';
 
 /// Local video playback kept separate from the audiobook controller.
 ///
@@ -127,6 +128,8 @@ final class FundusVideoPlayerController extends ChangeNotifier
   bool _persisting = false;
   bool _restoringPosition = false;
   bool _closed = false;
+  final PlaybackProgressWriteGate _progressWriteGate =
+      PlaybackProgressWriteGate();
   String? _playEventId;
   Duration _playEventLastPosition = Duration.zero;
   int _playEventSeconds = 0;
@@ -317,10 +320,27 @@ final class FundusVideoPlayerController extends ChangeNotifier
         fileId: current.fileId,
         label: current.title,
       );
+      final duration = _duration > Duration.zero ? _duration : null;
+      if (!_progressWriteGate.shouldWrite(
+        workId: _work!.id,
+        fileId: current.fileId,
+        position: _position,
+        duration: duration,
+        finished: finished,
+      )) {
+        return;
+      }
       _library!.saveMediaProgress(
         workId: _work!.id,
         fileId: current.fileId,
         position: position,
+        finished: finished,
+      );
+      _progressWriteGate.markSaved(
+        workId: _work!.id,
+        fileId: current.fileId,
+        position: _position,
+        duration: duration,
         finished: finished,
       );
       _lastPersistedAt = DateTime.now();
@@ -395,8 +415,9 @@ final class FundusVideoPlayerController extends ChangeNotifier
     final library = _library;
     final work = _work;
     final current = track;
-    if (library == null || work == null || current == null || !_ready)
+    if (library == null || work == null || current == null || !_ready) {
       return null;
+    }
     return library.addBookmark(
       workId: work.id,
       fileId: current.fileId,
@@ -484,10 +505,7 @@ final class FundusVideoPlayerController extends ChangeNotifier
     final work = _work;
     if (library == null || work == null) return;
     try {
-      final event = library.startPlayEvent(
-        workId: work.id,
-        deviceId: deviceId,
-      );
+      final event = library.startPlayEvent(workId: work.id, deviceId: deviceId);
       _playEventId = event.id;
       _playEventLastPosition = _position;
       _playEventSeconds = 0;

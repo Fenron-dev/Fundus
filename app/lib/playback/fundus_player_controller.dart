@@ -14,6 +14,7 @@ import 'playback_resume_policy.dart';
 import 'fundus_system_media_session.dart';
 import 'playlist_session_conflict.dart';
 import 'fundus_playback_controller.dart';
+import 'playback_progress_write_gate.dart';
 
 final class PlayerWorkProgress {
   const PlayerWorkProgress({
@@ -150,6 +151,8 @@ final class FundusPlayerController extends ChangeNotifier
   int? _playlistRevision;
   int _playbackSessionRevision = 0;
   List<LibraryPlaylist> _savedPlaylists = [];
+  final PlaybackProgressWriteGate _progressWriteGate =
+      PlaybackProgressWriteGate();
 
   Duration get _autosaveInterval =>
       PlaybackAutosaveSettings.interval(_work?.kind ?? 'audiobook');
@@ -754,6 +757,18 @@ final class FundusPlayerController extends ChangeNotifier
     if (playerPosition > Duration.zero || _position == Duration.zero) {
       _position = playerPosition;
     }
+    final duration = _duration > Duration.zero
+        ? _duration
+        : currentTrack.duration;
+    if (!_progressWriteGate.shouldWrite(
+      workId: work.id,
+      fileId: currentTrack.fileId,
+      position: _position,
+      duration: duration,
+      finished: finished,
+    )) {
+      return;
+    }
     _persisting = true;
     try {
       final latest = library.loadProgress(work.id);
@@ -773,11 +788,18 @@ final class FundusPlayerController extends ChangeNotifier
         workId: work.id,
         fileId: currentTrack.fileId,
         position: _position,
-        duration: _duration > Duration.zero ? _duration : currentTrack.duration,
+        duration: duration,
         finished: finished,
         deviceId: deviceId,
       );
       _progressRevision = saved.revision;
+      _progressWriteGate.markSaved(
+        workId: work.id,
+        fileId: currentTrack.fileId,
+        position: _position,
+        duration: duration,
+        finished: finished,
+      );
       _sessionProgress[work.id] = PlayerWorkProgress(
         position: _position,
         duration: _duration > Duration.zero ? _duration : currentTrack.duration,
