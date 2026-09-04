@@ -217,6 +217,25 @@ void main() {
     expect(matches.single.candidate.providerId, '1');
     expect(matches.single.score, 1);
   });
+
+  test(
+    'metadata service caches successful lookups and shares in-flight work',
+    () async {
+      VideoMetadataService.clearCache();
+      final provider = _CountingProvider();
+      final service = VideoMetadataService([
+        provider,
+      ], cacheTtl: const Duration(minutes: 1));
+
+      final first = service.search('cache regression');
+      final second = service.search('cache regression');
+      await Future.wait([first, second]);
+      await service.search('cache regression');
+
+      expect(provider.calls, 1);
+      VideoMetadataService.clearCache();
+    },
+  );
 }
 
 final class _StubClient extends http.BaseClient {
@@ -270,6 +289,30 @@ final class _StaticProvider implements VideoMetadataProvider {
     int limit = 10,
     String? language,
   }) async => values;
+}
+
+final class _CountingProvider implements VideoMetadataProvider {
+  var calls = 0;
+
+  @override
+  String get provider => 'counting';
+
+  @override
+  Future<List<VideoProviderCandidate>> search(
+    String query, {
+    int limit = 10,
+    String? language,
+  }) async {
+    calls++;
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    return const [
+      VideoProviderCandidate(
+        provider: 'counting',
+        providerId: '1',
+        title: 'Cached result',
+      ),
+    ];
+  }
 }
 
 final class _FailingProvider implements VideoMetadataProvider {

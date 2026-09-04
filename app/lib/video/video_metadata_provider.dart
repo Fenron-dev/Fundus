@@ -28,9 +28,23 @@ abstract interface class VideoMetadataProvider {
 /// Combines configured providers and applies the same local ranking rules to
 /// all results. A failing optional provider never hides results from others.
 final class VideoMetadataService {
-  const VideoMetadataService(this.providers);
+  VideoMetadataService(
+    this.providers, {
+    this.cacheTtl = const Duration(minutes: 10),
+  });
 
   final List<VideoMetadataProvider> providers;
+  final Duration cacheTtl;
+
+  static final Map<String, _VideoMetadataCacheEntry> _cache = {};
+  static final Map<String, Future<List<VideoProviderCandidate>?>> _inFlight =
+      {};
+
+  /// Clears the process-local provider cache. This is useful after changing
+  /// provider credentials or when a user explicitly requests a fresh lookup.
+  static void clearCache() {
+    _cache.clear();
+  }
 
   Future<List<VideoProviderMatch>> search(
     String query, {
@@ -53,12 +67,75 @@ final class VideoMetadataService {
     int limit,
     String? language,
   ) async {
+    final key = _cacheKey(provider, query, limit, language);
+    final now = DateTime.now();
+    final cached = _cache[key];
+    if (cached != null && now.difference(cached.createdAt) < cacheTtl) {
+      return cached.values;
+    }
+    final existing = _inFlight[key];
+    final request = existing ?? _fetch(provider, query, limit, language);
+    if (existing == null) _inFlight[key] = request;
+    try {
+      final values = await request;
+      if (values == null) return const [];
+      _cache[key] = _VideoMetadataCacheEntry(
+        createdAt: DateTime.now(),
+        values: values,
+      );
+      _trimCache();
+      return values;
+    } finally {
+      if (identical(_inFlight[key], request)) _inFlight.remove(key);
+    }
+  }
+
+  Future<List<VideoProviderCandidate>?> _fetch(
+    VideoMetadataProvider provider,
+    String query,
+    int limit,
+    String? language,
+  ) async {
     try {
       return await provider.search(query, limit: limit, language: language);
     } on Object {
-      return const [];
+      // A failed provider must not poison the cache. A later retry can
+      // recover when the network or rate limit is available again.
+      return null;
     }
   }
+
+  String _cacheKey(
+    VideoMetadataProvider provider,
+    String query,
+    int limit,
+    String? language,
+  ) => [
+    provider.runtimeType,
+    provider.provider,
+    query.trim().toLowerCase(),
+    '$limit',
+    language?.trim().toLowerCase() ?? '',
+  ].join('|');
+
+  void _trimCache() {
+    const maxEntries = 128;
+    if (_cache.length <= maxEntries) return;
+    final entries = _cache.entries.toList()
+      ..sort(
+        (left, right) => left.value.createdAt.compareTo(right.value.createdAt),
+      );
+    for (final entry in entries.take(_cache.length - maxEntries)) {
+      _cache.remove(entry.key);
+    }
+  }
+}
+
+final class _VideoMetadataCacheEntry {
+  _VideoMetadataCacheEntry({required this.createdAt, required this.values});
+
+  final DateTime createdAt;
+  final List<VideoProviderCandidate> values;
 }
 
 /// Public AniList GraphQL search. No account or API key is required.
