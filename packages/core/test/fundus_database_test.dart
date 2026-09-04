@@ -49,6 +49,19 @@ void main() {
       ),
     );
 
+    final sameFileId = database.upsertFile(
+      ScannedFile(
+        absolutePath: '/vault/Manga/Kapitel 1.cbz',
+        relativePath: 'Manga/Kapitel 1.cbz',
+        filename: 'Kapitel 1.cbz',
+        extension: 'cbz',
+        size: 42,
+        modifiedAt: DateTime.utc(2026, 9, 4),
+        mimeType: 'application/vnd.comicbook+zip',
+      ),
+    );
+    expect(sameFileId, fileId);
+
     database.setFileOfflinePath(fileId, '/device/offline/work-1/0001.cbz');
 
     expect(database.fileOfflinePath(fileId), '/device/offline/work-1/0001.cbz');

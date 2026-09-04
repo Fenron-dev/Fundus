@@ -135,7 +135,7 @@ final class FundusDatabase {
   FundusDatabase._(this._database, {String sourceId = 'local'})
     : _sourceId = sourceId;
 
-  static const schemaVersion = 12;
+  static const schemaVersion = 13;
   static const supportedContentSensitivities = {
     'general',
     'mature',
@@ -324,9 +324,10 @@ final class FundusDatabase {
   }
 
   String upsertFile(ScannedFile file) {
-    final existing = _database.select('SELECT id FROM files WHERE path = ?', [
-      file.relativePath,
-    ]);
+    final existing = _database.select(
+      'SELECT id FROM files WHERE source_id = ? AND path = ?',
+      [_sourceId, file.relativePath],
+    );
     final id = existing.isEmpty
         ? FundusId.generate()
         : existing.first['id'] as String;
@@ -338,7 +339,7 @@ final class FundusDatabase {
         indexed_at, status, source_id, availability, container, audio_codec, codec_profile,
         audio_channels, sample_rate_hz, video_episode_json
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, 'available', ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(path) DO UPDATE SET
+      ON CONFLICT(source_id, path) DO UPDATE SET
         filename = excluded.filename,
         extension = excluded.extension,
         size = excluded.size,
@@ -2367,16 +2368,16 @@ final class FundusDatabase {
     _database.execute("UPDATE files SET status = 'missing'");
     for (final path in seenPaths) {
       _database.execute(
-        "UPDATE files SET status = 'available' WHERE path = ?",
-        [path],
+        "UPDATE files SET status = 'available' WHERE source_id = ? AND path = ?",
+        [_sourceId, path],
       );
     }
   }
 
   String? findMovedAudiobookWorkId(AudiobookImportCandidate candidate) {
     final destination = _database.select(
-      'SELECT id FROM works WHERE source_path = ?',
-      [candidate.directory],
+      'SELECT id FROM works WHERE source_id = ? AND source_path = ?',
+      [_sourceId, candidate.directory],
     );
     if (destination.isNotEmpty) return null;
     final expected = _fileSignature(candidate.audioFiles);
@@ -2384,7 +2385,7 @@ final class FundusDatabase {
       '''
       SELECT w.id
       FROM works w
-      WHERE w.kind = 'audiobook' AND w.source_path != ?
+      WHERE w.kind = 'audiobook' AND w.source_id = ? AND w.source_path != ?
         AND NOT EXISTS (
           SELECT 1 FROM work_files wf
           JOIN files f ON f.id = wf.file_id
@@ -2392,7 +2393,7 @@ final class FundusDatabase {
             AND f.status = 'available'
         )
     ''',
-      [candidate.directory],
+      [_sourceId, candidate.directory],
     );
     final matches = <String>[];
     for (final row in staleWorks) {
@@ -2476,12 +2477,15 @@ final class FundusDatabase {
     WorkMetadataSource source = WorkMetadataSource.filename,
   }) {
     final existing = _database.select(
-      'SELECT id FROM works WHERE source_path = ?',
-      [sourcePath],
+      'SELECT id FROM works WHERE source_id = ? AND source_path = ?',
+      [_sourceId, sourcePath],
     );
     final preferred = preferredId == null
         ? null
-        : _database.select('SELECT id FROM works WHERE id = ?', [preferredId]);
+        : _database.select(
+            'SELECT id FROM works WHERE id = ? AND source_id = ?',
+            [preferredId, _sourceId],
+          );
     final targetId = preferred?.isNotEmpty ?? false
         ? preferredId
         : existing.isEmpty
@@ -2568,7 +2572,7 @@ final class FundusDatabase {
         id, kind, source_path, parent_id, title, sort_title, series_name,
         series_sequence, metadata_json, added_at, status, source_id, availability
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, 'available')
-      ON CONFLICT(source_path) DO UPDATE SET
+      ON CONFLICT(source_id, source_path) DO UPDATE SET
         kind = excluded.kind,
         parent_id = excluded.parent_id,
         title = excluded.title,
@@ -2716,6 +2720,7 @@ final class FundusDatabase {
     if (_database.userVersion == 9 && !readOnly) _migrateToVersion10();
     if (_database.userVersion == 10 && !readOnly) _migrateToVersion11();
     if (_database.userVersion == 11 && !readOnly) _migrateToVersion12();
+    if (_database.userVersion == 12 && !readOnly) _migrateToVersion13();
   }
 
   void _migrateToVersion1() {
@@ -2951,13 +2956,138 @@ final class FundusDatabase {
       rethrow;
     }
   }
+
+  void _migrateToVersion13() {
+    // Prior versions made path/source_path globally unique. Rebuild both
+    // tables so identical paths from different sources can coexist while
+    // retaining all stable ids and relationships.
+    _database.execute('PRAGMA foreign_keys = OFF');
+    try {
+      _database.execute('BEGIN IMMEDIATE');
+      if (tableExists('files') &&
+          columnExists('files', 'path') &&
+          columnExists('files', 'source_id')) {
+        _database.execute('''
+          CREATE TABLE files_v13 (
+            id TEXT PRIMARY KEY,
+            path TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            extension TEXT NOT NULL DEFAULT '',
+            size INTEGER NOT NULL CHECK (size >= 0),
+            mime_type TEXT,
+            content_hash TEXT,
+            phash TEXT,
+            width INTEGER,
+            height INTEGER,
+            duration_ms INTEGER,
+            video_episode_json TEXT,
+            offline_path TEXT,
+            container TEXT,
+            audio_codec TEXT,
+            codec_profile TEXT,
+            audio_channels INTEGER,
+            sample_rate_hz INTEGER,
+            file_modified_at INTEGER NOT NULL,
+            indexed_at INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'available'
+              CHECK (status IN ('available', 'missing', 'offline', 'ignored')),
+            source_id TEXT NOT NULL DEFAULT 'local',
+            availability TEXT NOT NULL DEFAULT 'available'
+          )
+        ''');
+        _database.execute('''
+          INSERT INTO files_v13 (
+            id, path, filename, extension, size, mime_type, content_hash,
+            phash, width, height, duration_ms, video_episode_json,
+            offline_path, container, audio_codec, codec_profile,
+            audio_channels, sample_rate_hz, file_modified_at, indexed_at,
+            status, source_id, availability
+          )
+          SELECT id, path, filename, extension, size, mime_type, content_hash,
+            phash, width, height, duration_ms, video_episode_json,
+            offline_path, container, audio_codec, codec_profile,
+            audio_channels, sample_rate_hz, file_modified_at, indexed_at,
+            status, source_id, availability
+          FROM files
+        ''');
+        _database.execute('DROP TABLE files');
+        _database.execute('ALTER TABLE files_v13 RENAME TO files');
+        _database.execute(
+          'CREATE INDEX files_content_hash_idx ON files(content_hash)',
+        );
+        _database.execute('CREATE INDEX files_status_idx ON files(status)');
+        _database.execute(
+          'CREATE INDEX files_source_idx ON files(source_id, availability)',
+        );
+        _database.execute(
+          'CREATE INDEX files_offline_path_idx ON files(offline_path)',
+        );
+        _database.execute(
+          'CREATE UNIQUE INDEX files_source_path_unique ON files(source_id, path)',
+        );
+      }
+      if (tableExists('works') &&
+          columnExists('works', 'source_path') &&
+          columnExists('works', 'source_id')) {
+        _database.execute('''
+          CREATE TABLE works_v13 (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            source_path TEXT NOT NULL,
+            parent_id TEXT REFERENCES works(id) ON DELETE SET NULL,
+            title TEXT NOT NULL,
+            sort_title TEXT,
+            series_name TEXT,
+            series_sequence REAL,
+            year INTEGER,
+            cover_file_id TEXT REFERENCES files(id) ON DELETE SET NULL,
+            generated_cover_path TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            added_at INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'available',
+            source_id TEXT NOT NULL DEFAULT 'local',
+            availability TEXT NOT NULL DEFAULT 'available'
+          )
+        ''');
+        _database.execute('''
+          INSERT INTO works_v13 (
+            id, kind, source_path, parent_id, title, sort_title, series_name,
+            series_sequence, year, cover_file_id, generated_cover_path,
+            metadata_json, added_at, status, source_id, availability
+          )
+          SELECT id, kind, source_path, parent_id, title, sort_title,
+            series_name, series_sequence, year, cover_file_id,
+            generated_cover_path, metadata_json, added_at, status, source_id,
+            availability
+          FROM works
+        ''');
+        _database.execute('DROP TABLE works');
+        _database.execute('ALTER TABLE works_v13 RENAME TO works');
+        _database.execute('CREATE INDEX works_parent_idx ON works(parent_id)');
+        _database.execute('CREATE INDEX works_kind_idx ON works(kind)');
+        _database.execute(
+          'CREATE INDEX works_source_idx ON works(source_id, availability)',
+        );
+        _database.execute(
+          'CREATE UNIQUE INDEX works_source_path_unique ON works(source_id, source_path)',
+        );
+      }
+      _database.userVersion = 13;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    } finally {
+      _database.execute('PRAGMA foreign_keys = ON');
+    }
+  }
 }
 
 const _version1Statements = <String>[
   '''
   CREATE TABLE files (
     id TEXT PRIMARY KEY,
-    path TEXT NOT NULL UNIQUE,
+    path TEXT NOT NULL,
     filename TEXT NOT NULL,
     extension TEXT NOT NULL DEFAULT '',
     size INTEGER NOT NULL CHECK (size >= 0),
@@ -2972,7 +3102,9 @@ const _version1Statements = <String>[
     file_modified_at INTEGER NOT NULL,
     indexed_at INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'available'
-      CHECK (status IN ('available', 'missing', 'offline', 'ignored'))
+      CHECK (status IN ('available', 'missing', 'offline', 'ignored')),
+    source_id TEXT NOT NULL DEFAULT 'local',
+    availability TEXT NOT NULL DEFAULT 'available'
   )
   ''',
   'CREATE INDEX files_content_hash_idx ON files(content_hash)',
@@ -2981,7 +3113,7 @@ const _version1Statements = <String>[
   CREATE TABLE works (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
-    source_path TEXT NOT NULL UNIQUE,
+    source_path TEXT NOT NULL,
     parent_id TEXT REFERENCES works(id) ON DELETE SET NULL,
     title TEXT NOT NULL,
     sort_title TEXT,
@@ -2991,11 +3123,15 @@ const _version1Statements = <String>[
     cover_file_id TEXT REFERENCES files(id) ON DELETE SET NULL,
     metadata_json TEXT NOT NULL DEFAULT '{}',
     added_at INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'available'
+    status TEXT NOT NULL DEFAULT 'available',
+    source_id TEXT NOT NULL DEFAULT 'local',
+    availability TEXT NOT NULL DEFAULT 'available'
   )
   ''',
   'CREATE INDEX works_parent_idx ON works(parent_id)',
   'CREATE INDEX works_kind_idx ON works(kind)',
+  'CREATE UNIQUE INDEX files_source_path_unique ON files(source_id, path)',
+  'CREATE UNIQUE INDEX works_source_path_unique ON works(source_id, source_path)',
   '''
   CREATE TABLE work_files (
     work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
