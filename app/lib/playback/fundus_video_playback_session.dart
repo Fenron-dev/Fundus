@@ -50,6 +50,21 @@ final class FundusVideoPlaybackSession {
     Duration timeout = const Duration(seconds: 3),
   }) async {
     final desired = target ?? player.state.position;
+    if (desired > Duration.zero) {
+      // Reopening the fullscreen route can keep the native texture alive
+      // while the decoder's video output is no longer attached to it.  The
+      // audio clock still seeks correctly in that state, which presents as
+      // "resume works, but the picture stays black".  Re-selecting the
+      // automatic video stream forces media-kit to publish a fresh frame to
+      // the already-created surface.  Do this only for resumed playback so a
+      // new title does not incur an unnecessary decoder restart.
+      try {
+        await player.setVideoTrack(VideoTrack.auto());
+      } catch (_) {
+        // Audio-only files and platforms without video-track selection can
+        // continue with the normal pause/seek/play path below.
+      }
+    }
     await player.pause();
     await Future<void>.delayed(const Duration(milliseconds: 120));
     await player.seek(desired);
