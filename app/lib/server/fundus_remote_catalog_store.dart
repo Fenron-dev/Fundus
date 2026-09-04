@@ -245,6 +245,16 @@ final class FundusRemoteCatalogStore {
     String serverId,
     String libraryId,
     Iterable<LibrarySyncJournalEntry> entries,
+  ) => applySyncEntries(serverId, libraryId, entries);
+
+  /// Applies catalog and progress journal entries atomically to the local
+  /// mirror. Catalog upserts contain a server-enriched `work` payload; delete
+  /// entries are tombstones and remove stale works even when the source is
+  /// currently unreachable.
+  Future<FundusRemoteCatalogSnapshot?> applySyncEntries(
+    String serverId,
+    String libraryId,
+    Iterable<LibrarySyncJournalEntry> entries,
   ) async {
     final snapshots = await load();
     final sourceKey = _sourceKey(serverId, libraryId);
@@ -254,6 +264,24 @@ final class FundusRemoteCatalogStore {
     final byId = {for (final work in current.works) work.id: work};
     var changed = false;
     for (final entry in entries) {
+      if (entry.entity == 'catalog_work') {
+        final workId = entry.payload['work_id'] is String
+            ? entry.payload['work_id'] as String
+            : entry.entityId;
+        if (workId.isEmpty) continue;
+        if (entry.operation == 'delete') {
+          changed = byId.remove(workId) != null || changed;
+          continue;
+        }
+        final encoded = entry.payload['work'];
+        if (encoded is! Map) continue;
+        final updated = FundusRemoteWork.fromJson(encoded);
+        if (updated != null) {
+          byId[updated.id] = updated;
+          changed = true;
+        }
+        continue;
+      }
       if (entry.entity != 'progress' || entry.operation != 'upsert') continue;
       final workId = entry.payload['work_id'];
       final position = entry.payload['position'];
@@ -263,9 +291,7 @@ final class FundusRemoteCatalogStore {
       final numeric = (position['numeric_value'] as num?)?.toDouble();
       final total = (position['total'] as num?)?.toDouble();
       final workJson = work.toJson();
-      if (numeric != null) {
-        workJson['progress_position_seconds'] = numeric;
-      }
+      if (numeric != null) workJson['progress_position_seconds'] = numeric;
       if (total != null) workJson['progress_duration_seconds'] = total;
       workJson['progress_finished'] = entry.payload['finished'] == true;
       workJson['last_listened_at'] = entry.createdAt.toUtc().toIso8601String();

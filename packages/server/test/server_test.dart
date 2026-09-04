@@ -274,6 +274,33 @@ void main() {
     expect(resumedBody['next_cursor'], 1);
   });
 
+  test('catalog sync emits enriched work upserts and tombstones', () async {
+    final addedDirectory = Directory(
+      '${temporary.path}/Hoerbuecher/Audiobooks/Autor/Neue Serie/02 - Neu',
+    );
+    await addedDirectory.create(recursive: true);
+    await File('${addedDirectory.path}/01 - Neu.mp3').writeAsBytes([7, 8, 9]);
+    await firstLibrary.index().drain<void>();
+    final libraryId = firstLibrary.manifest.libraryId;
+    final path = '/v1/libraries/$libraryId/sync/changes';
+    final added = await _json(await _get(server, '$path?since=0'));
+    final addedEntry = (added['entries']! as List).single as Map;
+    expect(addedEntry['entity'], 'catalog_work');
+    expect(addedEntry['op'], 'upsert');
+    expect((addedEntry['payload'] as Map)['work'], isA<Map>());
+    final addedWorkId = (addedEntry['payload'] as Map)['work_id'];
+
+    await addedDirectory.delete(recursive: true);
+    await firstLibrary.index().drain<void>();
+    final removed = await _json(
+      await _get(server, '$path?since=${added['next_cursor']}'),
+    );
+    final removedEntry = (removed['entries']! as List).single as Map;
+    expect(removedEntry['entity'], 'catalog_work');
+    expect(removedEntry['op'], 'delete');
+    expect((removedEntry['payload'] as Map)['work_id'], addedWorkId);
+  });
+
   test('lists multiple libraries without exposing local paths', () async {
     final response = await _get(server, '/v1/libraries');
     final source = await response.readAsString();
@@ -522,6 +549,67 @@ void main() {
       expect(pulled['next_cursor'], 1);
     },
   );
+
+  test('keeps the newest annotation revision across devices', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final path = '/v1/libraries/$libraryId/sync/changes';
+    final newer = LibrarySyncJournalEntry(
+      sequence: 0,
+      entity: 'note',
+      entityId: 'note-conflict',
+      operation: 'upsert',
+      payload: {
+        'id': 'note-conflict',
+        'work_id': work.id,
+        'markdown': 'Vom Tablet',
+        'updated_at': '2026-01-02T12:00:00Z',
+      },
+      revision: 2,
+      deviceId: 'tablet-test',
+      operationId: 'sync-note-newer',
+      createdAt: DateTime.utc(2026, 1, 2, 12),
+    );
+    final older = LibrarySyncJournalEntry(
+      sequence: 0,
+      entity: 'note',
+      entityId: 'note-conflict',
+      operation: 'upsert',
+      payload: {
+        'id': 'note-conflict',
+        'work_id': work.id,
+        'markdown': 'Vom Handy',
+        'updated_at': '2026-01-01T12:00:00Z',
+      },
+      revision: 1,
+      deviceId: 'phone-test',
+      operationId: 'sync-note-older',
+      createdAt: DateTime.utc(2026, 1, 1, 12),
+    );
+
+    final first = await _post(
+      server,
+      path,
+      jsonEncode({
+        'entries': [newer.toJson()],
+      }),
+    );
+    final second = await _post(
+      server,
+      path,
+      jsonEncode({
+        'entries': [older.toJson()],
+      }),
+    );
+    expect((await _json(first))['applied'], 1);
+    expect((await _json(second))['ignored'], 1);
+
+    final annotations = await _json(
+      await _get(server, '/v1/libraries/$libraryId/annotations/${work.id}'),
+    );
+    final notes = annotations['notes']! as List;
+    expect((notes.single as Map)['id'], 'note-conflict');
+    expect((notes.single as Map)['markdown'], 'Vom Tablet');
+  });
 
   test('progress writes also appear in the sync journal', () async {
     final libraryId = firstLibrary.manifest.libraryId;

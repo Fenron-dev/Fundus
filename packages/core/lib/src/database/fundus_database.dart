@@ -120,7 +120,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 9;
+  static const schemaVersion = 10;
   static const supportedContentSensitivities = {
     'general',
     'mature',
@@ -1766,15 +1766,20 @@ final class FundusDatabase {
   void saveWorkNote(
     String workId,
     String markdown, {
+    String? id,
     DateTime? updatedAt,
     bool recordSync = true,
   }) {
     final now = (updatedAt ?? DateTime.now()).millisecondsSinceEpoch;
-    final noteId = FundusId.generate();
+    final noteId = id ?? FundusId.generate();
     _database.execute(
       '''
       INSERT INTO notes (id, work_id, user_id, markdown, revision, updated_at)
       VALUES (?, ?, 'default', ?, 1, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        work_id = excluded.work_id,
+        markdown = excluded.markdown,
+        updated_at = excluded.updated_at
       ''',
       [noteId, workId, markdown, now],
     );
@@ -1798,6 +1803,23 @@ final class FundusDatabase {
         createdAt: DateTime.fromMillisecondsSinceEpoch(now, isUtc: true),
       );
     }
+  }
+
+  void deleteNote(String noteId, {bool recordSync = true}) {
+    final rows = _database.select('SELECT work_id FROM notes WHERE id = ?', [
+      noteId,
+    ]);
+    _database.execute('DELETE FROM notes WHERE id = ?', [noteId]);
+    if (rows.isEmpty || !recordSync) return;
+    appendSyncChange(
+      entity: 'note',
+      entityId: noteId,
+      operation: 'delete',
+      payload: {'id': noteId, 'work_id': rows.single['work_id']},
+      revision: 1,
+      deviceId: 'desktop-local',
+      operationId: FundusId.generate(),
+    );
   }
 
   LibraryBookmark addBookmark({
@@ -1904,13 +1926,13 @@ final class FundusDatabase {
     return bookmark;
   }
 
-  void deleteBookmark(String bookmarkId) {
+  void deleteBookmark(String bookmarkId, {bool recordSync = true}) {
     final rows = _database.select(
       'SELECT work_id FROM bookmarks WHERE id = ?',
       [bookmarkId],
     );
     _database.execute('DELETE FROM bookmarks WHERE id = ?', [bookmarkId]);
-    if (rows.isEmpty) return;
+    if (rows.isEmpty || !recordSync) return;
     appendSyncChange(
       entity: 'bookmark',
       entityId: bookmarkId,
@@ -1988,7 +2010,8 @@ final class FundusDatabase {
     return highlight;
   }
 
-  void deleteHighlight(String highlightId) => deleteBookmark(highlightId);
+  void deleteHighlight(String highlightId, {bool recordSync = true}) =>
+      deleteBookmark(highlightId, recordSync: recordSync);
 
   /// Appends a synchronisable change exactly once. The operation id is the
   /// idempotency key shared by clients and servers, so retrying a request
@@ -2002,6 +2025,7 @@ final class FundusDatabase {
     required String deviceId,
     required String operationId,
     DateTime? createdAt,
+    bool updateHead = true,
   }) {
     if (entity.trim().isEmpty || entityId.trim().isEmpty) {
       throw ArgumentError(
@@ -2053,7 +2077,59 @@ final class FundusDatabase {
       'SELECT * FROM sync_journal WHERE operation_id = ?',
       [operationId],
     ).single;
+    if (updateHead) {
+      _upsertSyncHead(
+        entity: entity.trim(),
+        entityId: entityId.trim(),
+        revision: revision,
+        deviceId: deviceId.trim(),
+        createdAt: timestamp,
+      );
+    }
     return _syncEntryFromRow(row);
+  }
+
+  bool isSyncChangeStale(LibrarySyncJournalEntry change) {
+    final rows = _database.select(
+      '''SELECT revision, device_id, created_at FROM sync_entity_heads
+         WHERE entity = ? AND entity_id = ?''',
+      [change.entity, change.entityId],
+    );
+    if (rows.isEmpty) return false;
+    final current = rows.single;
+    final currentRevision = current['revision'] as int;
+    if (change.revision != currentRevision) {
+      return change.revision < currentRevision;
+    }
+    final incomingAt = change.createdAt.millisecondsSinceEpoch;
+    final currentAt = current['created_at'] as int;
+    if (incomingAt != currentAt) return incomingAt < currentAt;
+    return change.deviceId.compareTo(current['device_id'] as String) <= 0;
+  }
+
+  void _upsertSyncHead({
+    required String entity,
+    required String entityId,
+    required int revision,
+    required String deviceId,
+    required DateTime createdAt,
+  }) {
+    _database.execute(
+      '''INSERT INTO sync_entity_heads (
+           entity, entity_id, revision, device_id, created_at
+         ) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(entity, entity_id) DO UPDATE SET
+           revision = excluded.revision,
+           device_id = excluded.device_id,
+           created_at = excluded.created_at''',
+      [
+        entity,
+        entityId,
+        revision,
+        deviceId,
+        createdAt.toUtc().millisecondsSinceEpoch,
+      ],
+    );
   }
 
   List<LibrarySyncJournalEntry> listSyncChanges({
@@ -2453,6 +2529,7 @@ final class FundusDatabase {
     if (_database.userVersion == 6 && !readOnly) _migrateToVersion7();
     if (_database.userVersion == 7 && !readOnly) _migrateToVersion8();
     if (_database.userVersion == 8 && !readOnly) _migrateToVersion9();
+    if (_database.userVersion == 9 && !readOnly) _migrateToVersion10();
   }
 
   void _migrateToVersion1() {
@@ -2622,6 +2699,18 @@ final class FundusDatabase {
         'ON sync_journal(entity, entity_id, seq)',
       );
       _database.userVersion = 9;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  void _migrateToVersion10() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      _database.execute(_syncEntityHeadsTableStatement);
+      _database.userVersion = 10;
       _database.execute('COMMIT');
     } catch (_) {
       _database.execute('ROLLBACK');
@@ -2891,5 +2980,16 @@ CREATE TABLE IF NOT EXISTS sync_journal (
   device_id TEXT NOT NULL,
   operation_id TEXT NOT NULL UNIQUE,
   created_at INTEGER NOT NULL
+)
+''';
+
+const _syncEntityHeadsTableStatement = '''
+CREATE TABLE IF NOT EXISTS sync_entity_heads (
+  entity TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  device_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (entity, entity_id)
 )
 ''';

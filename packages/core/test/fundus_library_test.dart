@@ -8,6 +8,47 @@ import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test(
+    'index records catalog upserts and tombstones after the baseline scan',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'fundus-library-delta-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final first = Directory('${root.path}/Audiobooks/Autor/Serie/01 - Eins');
+      await first.create(recursive: true);
+      await File('${first.path}/01 - Eins.mp3').writeAsBytes([1, 2, 3]);
+      final library = await FundusLibrary.create(root);
+      await library.index().drain<void>();
+      expect(library.syncChanges(), isEmpty);
+
+      final second = Directory('${root.path}/Audiobooks/Autor/Serie/02 - Zwei');
+      await second.create(recursive: true);
+      await File('${second.path}/01 - Zwei.mp3').writeAsBytes([4, 5, 6]);
+      await library.index().drain<void>();
+      final added = library
+          .syncChanges()
+          .where((entry) => entry.entity == 'catalog_work')
+          .toList();
+      expect(added, hasLength(1));
+      expect(added.single.operation, 'upsert');
+      expect(added.single.payload['work_id'], isA<String>());
+
+      await second.delete(recursive: true);
+      await library.index().drain<void>();
+      final removed = library
+          .syncChanges(since: added.single.sequence)
+          .where((entry) => entry.entity == 'catalog_work')
+          .toList();
+      expect(removed, hasLength(1));
+      expect(removed.single.operation, 'delete');
+      expect(
+        removed.single.payload['work_id'],
+        added.single.payload['work_id'],
+      );
+    },
+  );
+
   test('creates, indexes and reopens a portable library', () async {
     final root = await Directory.systemTemp.createTemp('fundus-library-');
     addTearDown(() => root.delete(recursive: true));

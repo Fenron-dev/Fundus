@@ -747,16 +747,25 @@ class _FundusAppState extends State<FundusApp> {
             );
             continue;
           }
+          final fetchedSnapshot = FundusRemoteCatalogSnapshot(
+            serverId: server.id,
+            libraryId: reference.libraryId,
+            serverName: server.name,
+            libraryName: reference.name,
+            works: fetched.works,
+            fetchedAt: DateTime.now(),
+            etag: fetched.etag,
+          );
+          // Seed the mirror first, then consume any catalog/progress journal
+          // entries that were created while the paginated snapshot was read.
+          // This also establishes a durable cursor for a newly paired source.
+          final synced = await _refreshRemoteProgress(
+            server,
+            reference.libraryId,
+            fetchedSnapshot,
+          );
           existing['${server.id}\u0000${reference.libraryId}'] =
-              FundusRemoteCatalogSnapshot(
-                serverId: server.id,
-                libraryId: reference.libraryId,
-                serverName: server.name,
-                libraryName: reference.name,
-                works: fetched.works,
-                fetchedAt: DateTime.now(),
-                etag: fetched.etag,
-              );
+              synced ?? fetchedSnapshot;
         } catch (_) {
           // Keep the last known catalog when a peer is unreachable.
         }
@@ -785,7 +794,7 @@ class _FundusAppState extends State<FundusApp> {
         limit: 500,
       );
       if (page.entries.isNotEmpty) {
-        updated = await _remoteCatalogStore.applySyncProgress(
+        updated = await _remoteCatalogStore.applySyncEntries(
           server.id,
           libraryId,
           page.entries,

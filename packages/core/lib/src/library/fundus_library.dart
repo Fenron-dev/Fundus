@@ -446,6 +446,7 @@ final class FundusLibrary {
     required String deviceId,
     required String operationId,
     DateTime? createdAt,
+    bool updateHead = true,
   }) {
     _ensureWritable();
     return _database.appendSyncChange(
@@ -457,8 +458,12 @@ final class FundusLibrary {
       deviceId: deviceId,
       operationId: operationId,
       createdAt: createdAt,
+      updateHead: updateHead,
     );
   }
+
+  bool isSyncChangeStale(LibrarySyncJournalEntry change) =>
+      _database.isSyncChangeStale(change);
 
   Future<String> cacheGeneratedCover({
     required String workId,
@@ -626,21 +631,47 @@ final class FundusLibrary {
 
   Future<WorkAnnotations> replaceWorkTags(
     String workId,
-    Iterable<String> tags,
-  ) async {
+    Iterable<String> tags, {
+    bool recordSync = true,
+  }) async {
     _ensureWritable();
-    _database.replaceWorkTags(workId, tags);
+    _database.replaceWorkTags(workId, tags, recordSync: recordSync);
     if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }
     return loadAnnotations(workId);
   }
 
-  Future<WorkAnnotations> saveWorkNote(String workId, String markdown) async {
+  Future<WorkAnnotations> saveWorkNote(
+    String workId,
+    String markdown, {
+    String? id,
+    DateTime? updatedAt,
+    bool recordSync = true,
+  }) async {
     _ensureWritable();
     final normalized = markdown.trim();
     if (normalized.isEmpty) return loadAnnotations(workId);
-    _database.saveWorkNote(workId, normalized);
+    _database.saveWorkNote(
+      workId,
+      normalized,
+      id: id,
+      updatedAt: updatedAt,
+      recordSync: recordSync,
+    );
+    if (_usesPortableSidecars(workId)) {
+      await _writeAnnotationSidecars(workId);
+    }
+    return loadAnnotations(workId);
+  }
+
+  Future<WorkAnnotations> deleteNote(
+    String workId,
+    String noteId, {
+    bool recordSync = true,
+  }) async {
+    _ensureWritable();
+    _database.deleteNote(noteId, recordSync: recordSync);
     if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }
@@ -674,6 +705,9 @@ final class FundusLibrary {
     required MediaPosition position,
     String? label,
     String? note,
+    String? id,
+    DateTime? createdAt,
+    bool recordSync = true,
   }) async {
     _ensureWritable();
     _database.addMediaBookmark(
@@ -682,6 +716,9 @@ final class FundusLibrary {
       mediaPosition: position,
       label: label,
       note: note,
+      id: id,
+      createdAt: createdAt,
+      recordSync: recordSync,
     );
     if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
@@ -691,10 +728,11 @@ final class FundusLibrary {
 
   Future<WorkAnnotations> deleteBookmark(
     String workId,
-    String bookmarkId,
-  ) async {
+    String bookmarkId, {
+    bool recordSync = true,
+  }) async {
     _ensureWritable();
-    _database.deleteBookmark(bookmarkId);
+    _database.deleteBookmark(bookmarkId, recordSync: recordSync);
     if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }
@@ -708,6 +746,9 @@ final class FundusLibrary {
     required String quote,
     String color = '#FFF176',
     String? note,
+    String? id,
+    DateTime? createdAt,
+    bool recordSync = true,
   }) async {
     _ensureWritable();
     if (quote.trim().isEmpty) return loadAnnotations(workId);
@@ -718,6 +759,9 @@ final class FundusLibrary {
       quote: quote,
       color: color,
       note: note,
+      id: id,
+      createdAt: createdAt,
+      recordSync: recordSync,
     );
     if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
@@ -727,10 +771,11 @@ final class FundusLibrary {
 
   Future<WorkAnnotations> deleteHighlight(
     String workId,
-    String highlightId,
-  ) async {
+    String highlightId, {
+    bool recordSync = true,
+  }) async {
     _ensureWritable();
-    _database.deleteHighlight(highlightId);
+    _database.deleteBookmark(highlightId, recordSync: recordSync);
     if (_usesPortableSidecars(workId)) {
       await _writeAnnotationSidecars(workId);
     }
@@ -745,6 +790,13 @@ final class FundusLibrary {
     if (isReadOnly) {
       throw StateError('Die Bibliothek ist schreibgeschützt.');
     }
+    // Keep the pre-scan view so peers can receive precise catalog changes
+    // instead of having to download the complete catalog after every scan.
+    // Progress is deliberately excluded from this fingerprint; it already
+    // has its own high-value journal entity and must not create catalog noise.
+    final beforeCatalog = listWorks(
+      includeMissing: true,
+    ).where((work) => work.available).toList(growable: false);
     final files = <ScannedFile>[];
     await for (final event in (scanner ?? LibraryScanner()).scan(
       root,
@@ -877,6 +929,7 @@ final class FundusLibrary {
         await _writeMetadataSidecar(indexed.workId);
       }
     }
+    _recordCatalogChanges(beforeCatalog, listWorks(includeMissing: true));
     yield LibraryIndexEvent(
       phase: LibraryIndexPhase.completed,
       fileCount: files.length,
@@ -885,6 +938,90 @@ final class FundusLibrary {
       extensionCounts: extensionCounts,
     );
   }
+
+  /// Records work additions, removals and metadata changes in the durable
+  /// journal. The server enriches an upsert with the current work summary at
+  /// read time, while deletes carry the last known sensitivity so protected
+  /// works never leak through a delta response.
+  void _recordCatalogChanges(
+    Iterable<LibraryWorkSummary> before,
+    Iterable<LibraryWorkSummary> after,
+  ) {
+    final oldById = {
+      for (final work in before.where((work) => work.available)) work.id: work,
+    };
+    final newById = {
+      for (final work in after.where((work) => work.available)) work.id: work,
+    };
+    // The first scan establishes the baseline consumed by the full catalog
+    // endpoint. Do not flood the journal with one event per existing work;
+    // subsequent scans still emit precise additions, edits and tombstones.
+    if (oldById.isEmpty) return;
+    for (final entry in newById.entries) {
+      final previous = oldById[entry.key];
+      if (previous != null &&
+          _catalogWorkFingerprint(previous) ==
+              _catalogWorkFingerprint(entry.value)) {
+        continue;
+      }
+      appendSyncChange(
+        entity: 'catalog_work',
+        entityId: entry.key,
+        operation: 'upsert',
+        payload: {'work_id': entry.key},
+        revision: 1,
+        deviceId: 'library-indexer',
+        operationId: FundusId.generate(),
+      );
+    }
+    for (final entry in oldById.entries) {
+      if (newById.containsKey(entry.key)) continue;
+      appendSyncChange(
+        entity: 'catalog_work',
+        entityId: entry.key,
+        operation: 'delete',
+        payload: {
+          'work_id': entry.key,
+          'content_sensitivity': entry.value.contentSensitivity,
+        },
+        revision: 1,
+        deviceId: 'library-indexer',
+        operationId: FundusId.generate(),
+      );
+    }
+  }
+
+  static String _catalogWorkFingerprint(LibraryWorkSummary work) => jsonEncode({
+    'id': work.id,
+    'kind': work.kind,
+    'title': work.title,
+    'author': work.author,
+    'authors': work.authors,
+    'file_count': work.fileCount,
+    'added_at': work.addedAt.toUtc().toIso8601String(),
+    'series': work.series,
+    'series_sequence': work.seriesSequence,
+    'cover_path': work.coverPath,
+    'cover_version': work.coverVersion,
+    'language': work.language,
+    'subtitle': work.subtitle,
+    'description': work.description,
+    'narrators': work.narrators,
+    'genres': work.genres,
+    'publisher': work.publisher,
+    'published_year': work.publishedYear,
+    'isbn': work.isbn,
+    'asin': work.asin,
+    'explicit': work.explicit,
+    'content_sensitivity': work.contentSensitivity,
+    'content_style': work.contentStyle,
+    'abridged': work.abridged,
+    'status': work.status,
+    'tags': work.tags,
+    'source_server_name': work.sourceServerName,
+    'source_library_name': work.sourceLibraryName,
+    'provider_metadata': work.providerMetadata,
+  });
 
   static Map<String, int> _countScannedFiles(
     Iterable<ScannedFile> files,

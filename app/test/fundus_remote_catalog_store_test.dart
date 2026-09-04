@@ -165,4 +165,69 @@ void main() {
       expect(await store.loadSyncCursor('server-1', 'library-1'), 7);
     },
   );
+
+  test('catalog journal entries update and remove cached works', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'fundus-catalog-delta-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final store = FundusRemoteCatalogStore(
+      file: File('${directory.path}/remote-catalog.db'),
+    );
+    await store.save([
+      FundusRemoteCatalogSnapshot(
+        serverId: 'server-1',
+        libraryId: 'library-1',
+        serverName: 'Mac',
+        libraryName: 'Anime',
+        fetchedAt: DateTime.utc(2026, 9, 4),
+        works: [
+          FundusRemoteWork(
+            id: 'work-1',
+            title: 'Alte Folge',
+            authors: const [],
+            hasCover: false,
+            kind: 'video',
+            fileCount: 1,
+          ),
+        ],
+      ),
+    ]);
+    final replacement = FundusRemoteWork(
+      id: 'work-2',
+      title: 'Neue Folge',
+      authors: const [],
+      hasCover: false,
+      kind: 'video',
+      fileCount: 1,
+    );
+    final added = await store.applySyncEntries('server-1', 'library-1', [
+      LibrarySyncJournalEntry(
+        sequence: 1,
+        entity: 'catalog_work',
+        entityId: replacement.id,
+        operation: 'upsert',
+        payload: {'work_id': replacement.id, 'work': replacement.toJson()},
+        revision: 1,
+        deviceId: 'server',
+        operationId: 'catalog-upsert-1',
+        createdAt: DateTime.utc(2026, 9, 4, 12),
+      ),
+    ]);
+    expect(added!.works.map((work) => work.id), ['work-1', 'work-2']);
+    final removed = await store.applySyncEntries('server-1', 'library-1', [
+      LibrarySyncJournalEntry(
+        sequence: 2,
+        entity: 'catalog_work',
+        entityId: 'work-1',
+        operation: 'delete',
+        payload: {'work_id': 'work-1'},
+        revision: 1,
+        deviceId: 'server',
+        operationId: 'catalog-delete-1',
+        createdAt: DateTime.utc(2026, 9, 4, 12, 1),
+      ),
+    ]);
+    expect(removed!.works.map((work) => work.id), ['work-2']);
+  });
 }

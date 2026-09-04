@@ -12,27 +12,27 @@ import 'src/pairing.dart';
 import 'src/comic_archive.dart';
 
 final class SharedFundusLibrary {
-  SharedFundusLibrary({required this.name, required this.library})
-    : _works = library.listWorks() {
-    _worksById = {for (final work in _works) work.id: work};
-  }
+  SharedFundusLibrary({required this.name, required this.library});
 
   final String name;
   final FundusLibrary library;
-  final List<LibraryWorkSummary> _works;
-  late final Map<String, LibraryWorkSummary> _worksById;
   final Map<String, List<LibraryPlaybackTrack>> _tracksByWork = {};
   final Map<String, ({LibraryWorkSummary work, LibraryPlaybackTrack track})>
   _tracksById = {};
 
   String get id => library.manifest.libraryId;
-  List<LibraryWorkSummary> get works => _works;
-  LibraryWorkSummary? findWork(String workId) => _worksById[workId];
+
+  /// Resolve the current database view rather than retaining the list from
+  /// server startup. A library can be rescanned while the peer is running;
+  /// deltas and subsequent detail requests must see those changes immediately.
+  List<LibraryWorkSummary> get works => library.listWorks(includeMissing: true);
+  LibraryWorkSummary? findWork(String workId) =>
+      works.where((work) => work.id == workId).firstOrNull;
 
   List<LibraryPlaybackTrack> tracksFor(String workId) =>
       _tracksByWork.putIfAbsent(workId, () {
         final tracks = library.playbackTracks(workId);
-        final work = _worksById[workId];
+        final work = findWork(workId);
         if (work != null) {
           for (final track in tracks) {
             _tracksById[track.fileId] = (work: work, track: track);
@@ -46,7 +46,7 @@ final class SharedFundusLibrary {
   ) {
     final cached = _tracksById[fileId];
     if (cached != null) return cached;
-    for (final work in _works) {
+    for (final work in works) {
       tracksFor(work.id);
       final located = _tracksById[fileId];
       if (located != null) return located;
@@ -1177,10 +1177,42 @@ final class FundusServerHandler {
         : visible.last.sequence;
     return _json({
       'library_id': libraryId,
-      'entries': [for (final change in visible) change.toJson()],
+      'entries': [
+        for (final change in visible) _syncChangeJson(request, entry, change),
+      ],
       'next_cursor': nextCursor,
       'has_more': hasMore,
     });
+  }
+
+  Map<String, Object?> _syncChangeJson(
+    Request request,
+    SharedFundusLibrary entry,
+    LibrarySyncJournalEntry change,
+  ) {
+    final json = change.toJson();
+    if (change.entity != 'catalog_work' || change.operation != 'upsert') {
+      return json;
+    }
+    final workId = change.payload['work_id'] ?? change.entityId;
+    if (workId is! String) return json;
+    final work = entry.findWork(workId);
+    if (work == null || !_canViewWork(request, work)) {
+      // A work that disappeared between journal read and response is exposed
+      // as a tombstone. Clients can remove their stale mirror entry safely.
+      return {
+        ...json,
+        'op': 'delete',
+        'payload': {'work_id': workId},
+      };
+    }
+    return {
+      ...json,
+      'payload': {
+        ...change.payload,
+        'work': {..._workJson(work), 'cover_url': _coverUrl(entry.id, work)},
+      },
+    };
   }
 
   Future<Response> _pushSyncChanges(Request request, String libraryId) async {
@@ -1205,11 +1237,7 @@ final class FundusServerHandler {
         ignored++;
         continue;
       }
-      final result = _applySyncChange(request, entry, change);
-      if (result == null) return _badRequest('invalid_sync_entry');
-      if (result) {
-        applied++;
-      } else {
+      if (entry.library.isSyncChangeStale(change)) {
         entry.library.appendSyncChange(
           entity: change.entity,
           entityId: change.entityId,
@@ -1219,9 +1247,27 @@ final class FundusServerHandler {
           deviceId: change.deviceId,
           operationId: change.operationId,
           createdAt: change.createdAt,
+          updateHead: false,
         );
-        applied++;
+        ignored++;
+        continue;
       }
+      final result = await _applySyncChange(request, entry, change);
+      if (result == null) return _badRequest('invalid_sync_entry');
+      // Concrete appliers suppress their own journaling to avoid echoing the
+      // remote operation under a new id. Remember the original operation here
+      // so retries are idempotent for every entity, not only progress.
+      entry.library.appendSyncChange(
+        entity: change.entity,
+        entityId: change.entityId,
+        operation: change.operation,
+        payload: change.payload,
+        revision: change.revision,
+        deviceId: change.deviceId,
+        operationId: change.operationId,
+        createdAt: change.createdAt,
+      );
+      applied++;
     }
     return _json({
       'library_id': libraryId,
@@ -1234,18 +1280,121 @@ final class FundusServerHandler {
   /// Applies entities that have a concrete local representation. Unknown
   /// entities are still retained in the durable journal so a newer peer can
   /// apply them later; this is the forward-compatible part of the protocol.
-  bool? _applySyncChange(
+  Future<bool?> _applySyncChange(
     Request request,
     SharedFundusLibrary entry,
     LibrarySyncJournalEntry change,
-  ) {
+  ) async {
     final payloadWorkId = change.payload['work_id'];
     if (payloadWorkId is String &&
         !_canViewWorkId(request, entry, payloadWorkId)) {
       return null;
     }
     if (change.entity != 'progress' || change.operation != 'upsert') {
-      return false;
+      final workId = payloadWorkId is String ? payloadWorkId : null;
+      if (workId == null || !_canViewWorkId(request, entry, workId)) {
+        return null;
+      }
+      final id = change.payload['id'] is String
+          ? change.payload['id'] as String
+          : change.entityId;
+      if (id.trim().isEmpty) return null;
+      if (change.operation == 'delete') {
+        switch (change.entity) {
+          case 'note':
+            await entry.library.deleteNote(workId, id, recordSync: false);
+            return true;
+          case 'bookmark' || 'highlight':
+            await entry.library.deleteBookmark(workId, id, recordSync: false);
+            return true;
+          default:
+            // Collections/playlists and future entities are retained in the
+            // journal until their concrete conflict-aware applier exists.
+            return false;
+        }
+      }
+      switch (change.entity) {
+        case 'work_tags':
+          final tags = change.payload['tags'];
+          if (tags is! List || tags.any((value) => value is! String)) {
+            return null;
+          }
+          await entry.library.replaceWorkTags(
+            workId,
+            tags.cast<String>(),
+            recordSync: false,
+          );
+          return true;
+        case 'note':
+          final markdown = change.payload['markdown'];
+          if (markdown is! String || markdown.trim().isEmpty) return null;
+          final createdAt =
+              _syncDate(change.payload['updated_at']) ?? change.createdAt;
+          await entry.library.saveWorkNote(
+            workId,
+            markdown,
+            id: id,
+            updatedAt: createdAt,
+            recordSync: false,
+          );
+          return true;
+        case 'bookmark':
+          final fileId = change.payload['file_id'];
+          final position = change.payload['position'];
+          if (fileId is! String || position is! Map) return null;
+          if (!entry.tracksFor(workId).any((track) => track.fileId == fileId)) {
+            return null;
+          }
+          final mediaPosition = _syncMediaPosition(position, fileId);
+          if (mediaPosition == null) return null;
+          await entry.library.addMediaBookmark(
+            workId: workId,
+            fileId: fileId,
+            position: mediaPosition,
+            label: change.payload['label'] is String
+                ? change.payload['label'] as String
+                : null,
+            note: change.payload['note'] is String
+                ? change.payload['note'] as String
+                : null,
+            id: id,
+            createdAt:
+                _syncDate(change.payload['created_at']) ?? change.createdAt,
+            recordSync: false,
+          );
+          return true;
+        case 'highlight':
+          final fileId = change.payload['file_id'];
+          final position = change.payload['position'];
+          final quote = change.payload['quote'];
+          if (fileId is! String || position is! Map || quote is! String) {
+            return null;
+          }
+          if (!entry.tracksFor(workId).any((track) => track.fileId == fileId)) {
+            return null;
+          }
+          final mediaPosition = _syncMediaPosition(position, fileId);
+          if (mediaPosition == null || quote.trim().isEmpty) return null;
+          await entry.library.addTextHighlight(
+            workId: workId,
+            fileId: fileId,
+            position: mediaPosition,
+            quote: quote,
+            color: change.payload['color'] is String
+                ? change.payload['color'] as String
+                : '#FFF176',
+            note: change.payload['note'] is String
+                ? change.payload['note'] as String
+                : null,
+            id: id,
+            createdAt:
+                _syncDate(change.payload['created_at']) ?? change.createdAt,
+            recordSync: false,
+          );
+          return true;
+        default:
+          return false;
+      }
     }
     final workId = change.payload['work_id'] is String
         ? change.payload['work_id'] as String
@@ -1271,12 +1420,29 @@ final class FundusServerHandler {
     return true;
   }
 
+  static DateTime? _syncDate(Object? value) =>
+      value is String ? DateTime.tryParse(value)?.toUtc() : null;
+
+  static MediaPosition? _syncMediaPosition(Object value, String fileId) {
+    try {
+      return MediaPosition.fromJson(
+        Map<String, Object?>.from(value as Map),
+      ).withFileId(fileId);
+    } on Object {
+      return null;
+    }
+  }
+
   bool _canViewSyncChange(
     Request request,
     SharedFundusLibrary entry,
     LibrarySyncJournalEntry change,
   ) {
     final workId = change.payload['work_id'];
+    if (change.entity == 'catalog_work' && change.operation == 'delete') {
+      final sensitivity = change.payload['content_sensitivity'];
+      return sensitivity != 'adult_explicit' || _canViewAdult(request);
+    }
     return workId is! String || _canViewWorkId(request, entry, workId);
   }
 
