@@ -401,6 +401,59 @@ void main() {
     expect(source, isNot(contains(track.relativePath)));
   });
 
+  test(
+    'updates a remote work classification and protects HHH changes',
+    () async {
+      final libraryId = firstLibrary.manifest.libraryId;
+      final updated = await _put(
+        server,
+        '/v1/libraries/$libraryId/works/${work.id}/kind',
+        jsonEncode({'kind': 'anime_tv', 'content_style': 'anime'}),
+      );
+      final body = await _json(updated);
+      expect(updated.statusCode, HttpStatus.ok);
+      expect(body['kind'], 'anime_tv');
+      expect(body['content_style'], 'anime');
+      expect(firstLibrary.listWorks().single.kind, 'anime_tv');
+
+      const deviceToken = 'classification-device-token';
+      final authority = FundusPairingAuthority(
+        devices: [
+          FundusPairedDevice(
+            id: 'classification-device',
+            name: 'Testgerät',
+            tokenHash: FundusPairingAuthority.tokenDigest(deviceToken),
+            pairedAt: DateTime.utc(2026, 1, 1),
+          ),
+        ],
+      );
+      final protectedServer = FundusServerHandler(
+        token: 'secret',
+        serverId: 'server-test',
+        registry: registry,
+        pairingAuthority: authority,
+      );
+      final blocked = await protectedServer.handler(
+        Request(
+          'PUT',
+          Uri.parse(
+            'http://localhost/v1/libraries/$libraryId/works/${work.id}/kind',
+          ),
+          headers: {
+            'authorization': 'Bearer $deviceToken',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode({
+            'kind': 'hhh_tv',
+            'content_sensitivity': 'adult_explicit',
+          }),
+        ),
+      );
+      expect(blocked.statusCode, HttpStatus.forbidden);
+      expect((await _json(blocked))['error'], 'adult_explicit_required');
+    },
+  );
+
   test('streams byte ranges with ETag and no path parameter', () async {
     final libraryId = firstLibrary.manifest.libraryId;
     final response = await server.handler(

@@ -2867,6 +2867,14 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                         onOpen: detailTracks.isEmpty
                             ? null
                             : () => Navigator.pop(context, 'play'),
+                        onChangeType: () => unawaited(
+                          _changeRemoteVideoType(
+                            server,
+                            library,
+                            work,
+                            sheetContext: context,
+                          ),
+                        ),
                         onSelectPerson: (name) =>
                             Navigator.pop(context, 'credit:$name'),
                         onSelectTag: (name) =>
@@ -3060,6 +3068,22 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       );
     }
     if (action == null) {
+      if (forceOffline) return;
+      try {
+        final result = await _runWithReconnect(
+          server,
+          (active) => _client.works(active, library.id),
+        );
+        if (mounted) {
+          setState(() {
+            _selectedServer = result.server;
+            _works = _visibleWorks(result.value);
+          });
+        }
+      } catch (_) {}
+      return;
+    }
+    if (action == 'refresh') {
       if (forceOffline) return;
       try {
         final result = await _runWithReconnect(
@@ -3372,6 +3396,94 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Serververbindung nicht verfügbar.')),
+      );
+    }
+  }
+
+  Future<void> _changeRemoteVideoType(
+    FundusRemoteServer server,
+    FundusRemoteLibrary library,
+    FundusRemoteWork work, {
+    required BuildContext sheetContext,
+  }) async {
+    final base = VideoWorkKind.base(work.kind);
+    final anime =
+        work.kind == 'anime_movie' ||
+        work.kind == 'anime_tv' ||
+        work.contentStyle == 'anime';
+    final adult = work.contentSensitivity == 'adult_explicit';
+    var selected = adult
+        ? base == 'movie'
+              ? 'hhh_movie'
+              : 'hhh_tv'
+        : base == 'movie' && anime
+        ? 'anime_movie'
+        : base == 'tv' && anime
+        ? 'anime_tv'
+        : base == 'movie'
+        ? 'movie'
+        : 'tv';
+    final result = await showDialog<(String, String?, String?)>(
+      context: sheetContext,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Videotyp zuweisen'),
+          content: DropdownButtonFormField<String>(
+            value: selected,
+            decoration: const InputDecoration(labelText: 'Typ'),
+            items: const [
+              DropdownMenuItem(value: 'movie', child: Text('Film')),
+              DropdownMenuItem(value: 'tv', child: Text('Serie')),
+              DropdownMenuItem(value: 'anime_movie', child: Text('Anime-Film')),
+              DropdownMenuItem(value: 'anime_tv', child: Text('Anime-Serie')),
+              DropdownMenuItem(value: 'hhh_movie', child: Text('HHH-Film')),
+              DropdownMenuItem(value: 'hhh_tv', child: Text('HHH-Serie')),
+            ],
+            onChanged: (value) => setState(() => selected = value ?? selected),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, (
+                selected,
+                selected.startsWith('anime_') ? 'anime' : null,
+                selected.startsWith('hhh_') ? 'adult_explicit' : null,
+              )),
+              child: const Text('Speichern'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+    try {
+      final updated = await _runWithReconnect(
+        server,
+        (active) => _client.updateWorkKind(
+          active,
+          libraryId: library.id,
+          workId: work.id,
+          kind: result.$1,
+          contentStyle: result.$2,
+          contentSensitivity: result.$3,
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        _works = [
+          for (final item in _works)
+            item.id == updated.value.id ? updated.value : item,
+        ];
+        _selectedServer = updated.server;
+      });
+      if (sheetContext.mounted) Navigator.pop(sheetContext, 'refresh');
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Typ konnte nicht gespeichert werden: $error')),
       );
     }
   }

@@ -1458,6 +1458,36 @@ final class FundusRemoteClient {
     );
   }
 
+  /// Updates only the user-facing classification of a remote work.  Keeping
+  /// this separate from provider metadata prevents a later AniList/TVDB
+  /// refresh from silently undoing a manual Anime/HHH assignment.
+  Future<FundusRemoteWork> updateWorkKind(
+    FundusRemoteServer server, {
+    required String libraryId,
+    required String workId,
+    required String kind,
+    String? contentStyle,
+    String? contentSensitivity,
+  }) async {
+    final bytes = await _request(
+      server.baseUri.resolve('/v1/libraries/$libraryId/works/$workId/kind'),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'PUT',
+      body: jsonEncode({
+        'kind': kind,
+        if (contentStyle != null) 'content_style': contentStyle,
+        if (contentSensitivity != null)
+          'content_sensitivity': contentSensitivity,
+      }),
+    );
+    final value = jsonDecode(utf8.decode(bytes));
+    final work = FundusRemoteWork.fromJson(value);
+    if (work == null)
+      throw const HttpException('Ungültiges Werk zurückgegeben.');
+    return work;
+  }
+
   static AudioTechnicalMetadata? _audioMetadata(Object? value) {
     if (value is! Map ||
         value['container'] is! String ||

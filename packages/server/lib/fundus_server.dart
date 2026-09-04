@@ -131,6 +131,7 @@ final class FundusServerHandler {
       ..get('/v1/libraries/<libraryId>/sync/changes', _syncChanges)
       ..post('/v1/libraries/<libraryId>/sync/changes', _pushSyncChanges)
       ..get('/v1/libraries/<libraryId>/works/<workId>', _work)
+      ..put('/v1/libraries/<libraryId>/works/<workId>/kind', _updateWorkKind)
       ..get('/v1/libraries/<libraryId>/works/<workId>/cover', _cover)
       ..get('/v1/libraries/<libraryId>/files/<fileId>', _file)
       ..get('/v1/libraries/<libraryId>/files/<fileId>/comic/pages', _comicPages)
@@ -502,6 +503,53 @@ final class FundusServerHandler {
       'chapters': [for (final chapter in chapters) _chapterJson(chapter)],
       'cover_url': work.coverPath == null ? null : _coverUrl(libraryId, work),
     });
+  }
+
+  Future<Response> _updateWorkKind(
+    Request request,
+    String libraryId,
+    String workId,
+  ) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    final current = entry.findWork(workId);
+    if (current == null || !_canViewWork(request, current)) {
+      return _notFound('work_not_found');
+    }
+    final decoded = await _readJson(request);
+    if (decoded == null || decoded['kind'] is! String) {
+      return _badRequest('invalid_work_kind');
+    }
+    final kind = (decoded['kind'] as String).trim().toLowerCase();
+    final contentStyle = decoded['content_style'];
+    final contentSensitivity = decoded['content_sensitivity'];
+    if (contentStyle != null && contentStyle is! String ||
+        contentSensitivity != null && contentSensitivity is! String) {
+      return _badRequest('invalid_work_kind');
+    }
+    final targetsAdult =
+        kind == 'hhh_movie' ||
+        kind == 'hhh_tv' ||
+        contentSensitivity == 'adult_explicit';
+    if (targetsAdult && !_canViewAdult(request)) {
+      return _json({'error': 'adult_explicit_required'}, statusCode: 403);
+    }
+    try {
+      final updated = await entry.library.updateWorkKind(
+        workId: workId,
+        kind: kind,
+        contentStyle: contentStyle as String?,
+        contentSensitivity: contentSensitivity as String?,
+      );
+      return _json(_workJson(updated));
+    } on ArgumentError {
+      return _badRequest('invalid_work_kind');
+    } on StateError {
+      return _notFound('work_not_found');
+    }
   }
 
   Future<Response> _cover(

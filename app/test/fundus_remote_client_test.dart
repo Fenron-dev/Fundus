@@ -78,6 +78,23 @@ void main() {
     final works = await client.works(profile, libraries.single.id);
     expect(works.single.kind, 'audiobook');
     expect(works.single.coverVersion, isA<String>());
+    final reclassified = await client.updateWorkKind(
+      profile,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+      kind: 'anime_tv',
+      contentStyle: 'anime',
+    );
+    expect(reclassified.kind, 'anime_tv');
+    expect(reclassified.contentStyle, 'anime');
+    // Restore the fixture's audio classification so the remainder of this
+    // test continues to exercise audiobook chapters and stream proxy setup.
+    await client.updateWorkKind(
+      profile,
+      libraryId: libraries.single.id,
+      workId: works.single.id,
+      kind: 'audiobook',
+    );
     final localWork = library.listWorks().single;
     library.saveCollection(name: 'Test-Sammlung', workIds: [localWork.id]);
     final collections = await client.collections(profile, libraries.single.id);
