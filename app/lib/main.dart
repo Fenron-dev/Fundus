@@ -2661,6 +2661,14 @@ class _LibraryShellState extends State<LibraryShell> {
                     ),
           );
     if (continuing.length > 8) continuing.removeRange(8, continuing.length);
+    final recentActivity =
+        available.where((work) => work.lastListenedAt != null).toList()..sort(
+          (left, right) =>
+              right.lastListenedAt!.compareTo(left.lastListenedAt!),
+        );
+    if (recentActivity.length > 10) {
+      recentActivity.removeRange(10, recentActivity.length);
+    }
     final recent = available.toList()
       ..sort((left, right) => right.addedAt.compareTo(left.addedAt));
     final sections = <_LibrarySection>[
@@ -2691,6 +2699,27 @@ class _LibraryShellState extends State<LibraryShell> {
                 work: continuing[index],
                 width: 142,
                 onTap: () => _openDashboardWork(continuing[index]),
+              ),
+            ),
+          ),
+        ],
+        if (recentActivity.isNotEmpty) ...[
+          const SizedBox(height: 22),
+          Text(
+            'Zuletzt gespielt',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 190,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: recentActivity.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
+              itemBuilder: (context, index) => _MobileDashboardCard(
+                work: recentActivity[index],
+                width: 118,
+                onTap: () => _openDashboardWork(recentActivity[index]),
               ),
             ),
           ),
