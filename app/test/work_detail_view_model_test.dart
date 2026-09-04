@@ -30,6 +30,8 @@ void main() {
     expect(detail.hasRemoteCover, isTrue);
     expect(detail.summary.sourceServerName, 'MacBook');
     expect(detail.summary.sourceLibraryName, 'Fundus Vault');
+    expect(detail.summary.sourceId, 'remote:server-id/library-id');
+    expect(detail.summary.availability, 'offline');
     expect(detail.summary.offline, isTrue);
     expect(detail.summary.progressFinished, isTrue);
     expect(detail.summary.lastListenedAt, updated);
@@ -84,11 +86,14 @@ void main() {
     expect(detail.origin, WorkDetailOrigin.offline);
     expect(detail.summary.id, 'offline:work-1');
     expect(detail.summary.coverPath, '/offline/cover.webp');
+    expect(detail.summary.offlinePath, '/offline');
     expect(detail.summary.mediaProgress, position);
     expect(detail.summary.progressTrackIndex, 1);
     expect(detail.summary.status, 'incomplete');
     expect(detail.summary.sourceServerName, 'Rechner');
     expect(detail.summary.sourceLibraryName, 'Comics');
+    expect(detail.summary.sourceId, 'remote:server-id/library-id');
+    expect(detail.summary.availability, 'offline');
     expect(detail.summary.lastListenedAt, updated);
   });
 

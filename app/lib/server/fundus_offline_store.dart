@@ -87,6 +87,10 @@ final class FundusOfflineWork {
 
   bool get incomplete => missingTrackTitles.isNotEmpty;
 
+  /// Stable source identity shared with the online catalog.  Offline is an
+  /// availability state of this source, not a second library.
+  String get sourceId => 'remote:$serverId/$libraryId';
+
   String get directoryPath => p.dirname(tracks.first.path);
 
   Duration get totalDuration => tracks.fold(
@@ -683,6 +687,7 @@ final class FundusOfflineStore {
         const JsonEncoder.withIndent('  ').convert({
           'version': 1,
           'server_id': server.id,
+          'source_id': 'remote:${server.id}/${library.id}',
           'server_name': server.name,
           'library_id': library.id,
           'library_name': library.name,

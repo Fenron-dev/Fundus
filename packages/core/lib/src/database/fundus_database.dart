@@ -30,6 +30,7 @@ final class LibraryWorkSummary {
     this.series,
     this.seriesSequence,
     this.coverPath,
+    this.offlinePath,
     this.coverVersion,
     this.language,
     this.subtitle,
@@ -71,6 +72,11 @@ final class LibraryWorkSummary {
   final String? series;
   final double? seriesSequence;
   final String? coverPath;
+
+  /// Absolute path of a locally materialized copy, when this summary comes
+  /// from the offline catalog.  It is deliberately optional so regular vault
+  /// and remote summaries remain transport agnostic.
+  final String? offlinePath;
 
   /// Stable version token for artwork.  Remote catalogs use this to invalidate
   /// a local cover cache when the source replaces the image.
