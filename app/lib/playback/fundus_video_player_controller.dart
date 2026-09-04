@@ -10,6 +10,7 @@ import 'playback_resume_policy.dart';
 import 'playback_autosave_settings.dart';
 import 'video_track_preferences.dart';
 import 'fundus_playback_controller.dart';
+import 'fundus_video_playback_session.dart';
 
 /// Local video playback kept separate from the audiobook controller.
 ///
@@ -34,14 +35,8 @@ final class FundusVideoPlayerController extends ChangeNotifier
     // Attach the native video output before a medium is opened. Creating it
     // only in the fullscreen route lets audio decode and seek correctly while
     // the resumed video decoder has no texture to render into.
-    _videoController = VideoController(
+    _videoController = FundusVideoPlaybackSession.createVideoController(
       _player,
-      // On Android the surface must be attached after the decoder has
-      // reported its video parameters. Attaching it earlier can leave a
-      // resumed file with audio and a black texture until the next seek.
-      configuration: const VideoControllerConfiguration(
-        androidAttachSurfaceAfterVideoParameters: true,
-      ),
     );
     _subscriptions.addAll([
       _player.stream.playing.listen((value) {
@@ -258,7 +253,7 @@ final class FundusVideoPlayerController extends ChangeNotifier
       // Media.start hint is intentionally avoided here: on resumed files it
       // can position the audio decoder while leaving the video texture on a
       // black frame. An explicit paused seek primes both decoders reliably.
-      await _waitForVideoParameters();
+      await FundusVideoPlaybackSession.waitForVideoParameters(_player);
       if (resume > Duration.zero) {
         final nativeDuration = _player.state.duration;
         final target = nativeDuration > Duration.zero && resume > nativeDuration
@@ -515,21 +510,6 @@ final class FundusVideoPlayerController extends ChangeNotifier
         return;
       }
       await Future<void>.delayed(const Duration(milliseconds: 100));
-    }
-  }
-
-  /// A paused seek can update the audio clock before mpv has exposed the
-  /// decoded video dimensions. Waiting for the first real video parameters
-  /// keeps resumed files from starting with audio and a black texture.
-  Future<void> _waitForVideoParameters() async {
-    final current = _player.state.videoParams;
-    if (current.w != null && current.h != null) return;
-    try {
-      await _player.stream.videoParams
-          .firstWhere((value) => value.w != null && value.h != null)
-          .timeout(const Duration(seconds: 5));
-    } catch (_) {
-      // Audio-only files and some network streams do not expose video params.
     }
   }
 
