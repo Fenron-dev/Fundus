@@ -32,6 +32,7 @@ import 'library/work_content_list.dart';
 import 'library/work_annotation_list.dart';
 import 'library/fundus_breadcrumbs.dart';
 import 'library/fundus_library_catalog.dart';
+import 'library/fundus_catalog_mirror.dart';
 import 'library/fundus_media_source_gateway.dart';
 import 'library/library_view_preferences.dart';
 import 'library/collection_rules.dart';
@@ -206,6 +207,7 @@ class _FundusAppState extends State<FundusApp> {
   final _remoteStore = FundusRemoteServerStore();
   final _remoteClient = const FundusRemoteClient();
   final _remoteCatalogStore = const FundusRemoteCatalogStore();
+  final _catalogMirrorStore = const FundusCatalogMirrorStore();
   final _remoteCoverCache = FundusRemoteCoverCache();
   FundusOfflineStore _deviceOfflineStore = FundusOfflineStore();
   late FundusOfflineStore _offlineStore;
@@ -215,6 +217,8 @@ class _FundusAppState extends State<FundusApp> {
   List<_RemoteLibraryChoice> _remoteLibraries = const [];
   List<FundusOfflineWork> _offlineWorks = const [];
   List<FundusRemoteCatalogSnapshot> _remoteCatalog = const [];
+  List<FundusCatalogEntry> _catalogMirrorEntries = const [];
+  Future<void> _catalogMirrorWrite = Future<void>.value();
   final Map<String, Future<String?>> _remoteCoverRequests = {};
   Map<String, FundusRemoteServer> _pairedServers = const {};
   bool _refreshingRemoteCatalog = false;
@@ -237,6 +241,7 @@ class _FundusAppState extends State<FundusApp> {
     _recentStoreReady = _initializeRecentStore();
     _works = widget.initialWorks;
     unawaited(_loadRemoteCatalogCache());
+    unawaited(_loadCatalogMirrorCache());
     if (widget.initialWorks == null) {
       unawaited(_peerServer.initialize());
       unawaited(_loadRemoteLibraries());
@@ -369,20 +374,23 @@ class _FundusAppState extends State<FundusApp> {
   /// streamed and offline entries are source metadata on the same entry; no
   /// UI-level source branch is needed.
   Iterable<FundusCatalogEntry> _catalogEntries() sync* {
+    final liveSourceIds = <String>{};
     final localName =
         _library?.root.path.split(Platform.pathSeparator).last ??
         'Lokale Bibliothek';
     for (final work in _works ?? const <LibraryWorkSummary>[]) {
-      yield FundusCatalogEntry(
+      final entry = FundusCatalogEntry(
         work: work,
         source: FundusLibraryCatalog.localSource(
           localName,
           sourceId: _library?.source.id,
         ),
       );
+      liveSourceIds.add(entry.source.id);
+      yield entry;
     }
     for (final offline in _offlineWorks) {
-      yield FundusCatalogEntry(
+      final entry = FundusCatalogEntry(
         work: _offlineLibrarySummary(offline),
         source: FundusLibraryCatalog.offlineSource(
           serverId: offline.serverId,
@@ -393,6 +401,8 @@ class _FundusAppState extends State<FundusApp> {
           ),
         ),
       );
+      liveSourceIds.add(entry.source.id);
+      yield entry;
     }
     for (final snapshot in _remoteCatalog) {
       final reachable = _reachableServerIds.contains(snapshot.serverId);
@@ -415,7 +425,7 @@ class _FundusAppState extends State<FundusApp> {
         availability: availability,
       );
       for (final remoteWork in snapshot.works) {
-        yield FundusCatalogEntry(
+        final entry = FundusCatalogEntry(
           work: WorkDetailViewModel.fromRemote(
             remoteWork,
             serverId: snapshot.serverId,
@@ -425,7 +435,15 @@ class _FundusAppState extends State<FundusApp> {
           ).summary,
           source: source,
         );
+        liveSourceIds.add(entry.source.id);
+        yield entry;
       }
+    }
+    // A cold start can have the local mirror before the remote catalog store
+    // has finished loading. Keep those last-known entries visible, but never
+    // mix stale rows into a source that already has a live snapshot.
+    for (final entry in _catalogMirrorEntries) {
+      if (!liveSourceIds.contains(entry.source.id)) yield entry;
     }
   }
 
@@ -599,6 +617,7 @@ class _FundusAppState extends State<FundusApp> {
         await _refreshRemoteCatalog(servers, references);
       }());
       if (mounted) setState(() {});
+      unawaited(_persistCatalogMirror());
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && identical(_library, library)) {
           unawaited(_scan(blockUi: false));
@@ -751,6 +770,33 @@ class _FundusAppState extends State<FundusApp> {
     }
   }
 
+  Future<void> _loadCatalogMirrorCache() async {
+    try {
+      final entries = await _catalogMirrorStore.load();
+      if (!mounted || entries.isEmpty) return;
+      setState(() => _catalogMirrorEntries = List.unmodifiable(entries));
+    } catch (_) {
+      // The mirror is rebuildable metadata; a corrupt cache must not block
+      // opening a vault or reconnecting a peer.
+    }
+  }
+
+  Future<void> _persistCatalogMirror() {
+    // Refreshes can arrive close together (scan completion, reconnect and
+    // remote catalog updates). Serialize writes so a slower stale snapshot
+    // cannot finish after a newer one and overwrite the mirror.
+    final next = _catalogMirrorWrite.then((_) async {
+      try {
+        await _catalogMirrorStore.replaceAll(_catalogEntries());
+      } catch (_) {
+        // Catalog persistence is best-effort. The source stores remain the
+        // authoritative fallback when the device cache is unavailable.
+      }
+    });
+    _catalogMirrorWrite = next;
+    return next;
+  }
+
   Future<void> _refreshRemoteCatalog(
     List<FundusRemoteServer> servers,
     List<FundusRemoteLibraryReference> references,
@@ -846,8 +892,10 @@ class _FundusAppState extends State<FundusApp> {
       }
       final snapshots = existing.values.toList(growable: false);
       await _remoteCatalogStore.save(snapshots);
-      if (mounted)
+      if (mounted) {
         setState(() => _remoteCatalog = List.unmodifiable(snapshots));
+      }
+      unawaited(_persistCatalogMirror());
     } finally {
       _refreshingRemoteCatalog = false;
     }
@@ -1200,6 +1248,7 @@ class _FundusAppState extends State<FundusApp> {
       if (mounted && identical(_library, library)) {
         setState(() => _works = library.listWorks(includeMissing: true));
       }
+      unawaited(_persistCatalogMirror());
       await _recordAudioCompatibility(library);
       await FundusDiagnostics.instance.record('library.scan_completed', {
         'work_count': library.listWorks().length,
@@ -5449,23 +5498,30 @@ class _CatalogSourceBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final resolved = source;
     final kind = resolved?.kind;
-    final icon = switch (kind) {
-      FundusCatalogSourceKind.offline => Icons.download_done,
-      FundusCatalogSourceKind.remote => Icons.cloud_outlined,
-      FundusCatalogSourceKind.local => Icons.devices_outlined,
-      null when work?.offline == true => Icons.download_done,
-      _ => Icons.storage_outlined,
-    };
-    final label = switch (kind) {
-      FundusCatalogSourceKind.offline => 'Offline · ${resolved!.displayName}',
-      FundusCatalogSourceKind.remote => 'Remote · ${resolved!.displayName}',
-      FundusCatalogSourceKind.local => 'Lokal · ${resolved!.displayName}',
-      null when work?.offline == true => [
-        work?.sourceServerName,
-        work?.sourceLibraryName,
-      ].whereType<String>().where((value) => value.isNotEmpty).join(' · '),
-      _ => 'Lokal',
-    };
+    final isOffline = resolved?.isOffline == true || work?.offline == true;
+    final icon = isOffline
+        ? Icons.download_done
+        : switch (kind) {
+            FundusCatalogSourceKind.remote => Icons.cloud_outlined,
+            FundusCatalogSourceKind.local => Icons.devices_outlined,
+            FundusCatalogSourceKind.offline => Icons.download_done,
+            null => Icons.storage_outlined,
+          };
+    final label = isOffline
+        ? resolved == null
+              ? _sourceDisplayName(
+                  work?.sourceServerName,
+                  work?.sourceLibraryName,
+                )
+              : 'Offline · ${resolved.displayName}'
+        : switch (kind) {
+            FundusCatalogSourceKind.remote =>
+              'Remote · ${resolved!.displayName}',
+            FundusCatalogSourceKind.local => 'Lokal · ${resolved!.displayName}',
+            FundusCatalogSourceKind.offline =>
+              'Offline · ${resolved!.displayName}',
+            null => 'Lokal',
+          };
     final availability = resolved?.availability;
     final suffix = switch (availability) {
       FundusCatalogAvailability.unreachable => ' · nicht erreichbar',

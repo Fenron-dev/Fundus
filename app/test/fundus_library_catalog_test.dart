@@ -58,6 +58,8 @@ void main() {
 
     expect(catalog.entries, hasLength(1));
     expect(catalog.entries.single.work.offline, isTrue);
+    expect(catalog.entries.single.source.isRemote, isTrue);
+    expect(catalog.entries.single.source.isOffline, isTrue);
   });
 
   test('repository replaces one source without dropping other sources', () {

@@ -53,7 +53,12 @@ final class FundusCatalogSource {
 
   bool get isLocal => kind == FundusCatalogSourceKind.local;
   bool get isRemote => kind == FundusCatalogSourceKind.remote;
-  bool get isOffline => kind == FundusCatalogSourceKind.offline;
+
+  /// Offline is availability of a peer source, not a third catalog branch.
+  /// The legacy enum value is still understood when reading older caches.
+  bool get isOffline =>
+      availability == FundusCatalogAvailability.offline ||
+      kind == FundusCatalogSourceKind.offline;
 }
 
 /// Repository façade for the single library catalog.
@@ -196,7 +201,7 @@ final class FundusLibraryCatalog {
     // Keep the same source identity as the online peer. Offline availability
     // is a state of that source, not a second library.
     id: 'remote:$serverId/$libraryId',
-    kind: FundusCatalogSourceKind.offline,
+    kind: FundusCatalogSourceKind.remote,
     displayName: displayName,
     availability: FundusCatalogAvailability.offline,
   );
