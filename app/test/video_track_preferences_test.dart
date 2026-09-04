@@ -41,6 +41,53 @@ void main() {
     expect(cleared.toJson(), isEmpty);
   });
 
+  test('changing language clears stale concrete track identity', () {
+    const preference = VideoTrackPreference(
+      audioLanguage: 'en',
+      audioTrackId: 'audio-en-2',
+      audioTrackTitle: 'English 5.1',
+      subtitleLanguage: 'en',
+      subtitleTrackId: 'sub-en-1',
+      subtitleTrackTitle: 'English',
+    );
+
+    final changed = preference.copyWith(
+      audioLanguage: 'de',
+      subtitleLanguage: 'de',
+    );
+
+    expect(changed.audioLanguage, 'de');
+    expect(changed.audioTrackId, isNull);
+    expect(changed.audioTrackTitle, isNull);
+    expect(changed.subtitleLanguage, 'de');
+    expect(changed.subtitleTrackId, isNull);
+    expect(changed.subtitleTrackTitle, isNull);
+  });
+
+  test('language overrides do not inherit parent track identity', () {
+    final result = VideoTrackPreferences.overlayPortableProfile(
+      const VideoTrackPreference(
+        audioLanguage: 'en',
+        audioTrackId: 'audio-en-2',
+        subtitleLanguage: 'en',
+        subtitleTrackId: 'sub-en-1',
+      ),
+      {
+        'profiles': {
+          'work': const VideoTrackPreference(
+            audioLanguage: 'de',
+            subtitleLanguage: 'de',
+          ).toJson(),
+        },
+      },
+    );
+
+    expect(result.audioLanguage, 'de');
+    expect(result.audioTrackId, isNull);
+    expect(result.subtitleLanguage, 'de');
+    expect(result.subtitleTrackId, isNull);
+  });
+
   test('portable profile layers work, season and file overrides', () {
     final profile = VideoTrackPreferences.updatePortableProfile(
       null,

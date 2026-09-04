@@ -43,27 +43,42 @@ final class VideoTrackPreference {
     String? subtitleTrackTitle,
     bool? subtitlesEnabled,
     bool clearAudio = false,
+    bool clearAudioTrackIdentity = false,
     bool clearSubtitleLanguage = false,
+    bool clearSubtitleTrackIdentity = false,
     bool clearSubtitlesEnabled = false,
-  }) => VideoTrackPreference(
-    audioLanguage: clearAudio ? null : audioLanguage ?? this.audioLanguage,
-    audioTrackId: clearAudio ? null : audioTrackId ?? this.audioTrackId,
-    audioTrackTitle: clearAudio
-        ? null
-        : audioTrackTitle ?? this.audioTrackTitle,
-    subtitleLanguage: clearSubtitleLanguage
-        ? null
-        : subtitleLanguage ?? this.subtitleLanguage,
-    subtitleTrackId: clearSubtitleLanguage
-        ? null
-        : subtitleTrackId ?? this.subtitleTrackId,
-    subtitleTrackTitle: clearSubtitleLanguage
-        ? null
-        : subtitleTrackTitle ?? this.subtitleTrackTitle,
-    subtitlesEnabled: clearSubtitlesEnabled
-        ? null
-        : subtitlesEnabled ?? this.subtitlesEnabled,
-  );
+  }) {
+    // A language override and a concrete track identity are mutually
+    // exclusive. Keeping an older track id here would make the player select
+    // that track first and silently ignore the newly preferred language.
+    final resetAudioIdentity =
+        clearAudio || clearAudioTrackIdentity || audioLanguage != null;
+    final resetSubtitleIdentity =
+        clearSubtitleLanguage ||
+        clearSubtitleTrackIdentity ||
+        subtitleLanguage != null;
+    return VideoTrackPreference(
+      audioLanguage: clearAudio ? null : audioLanguage ?? this.audioLanguage,
+      audioTrackId: resetAudioIdentity
+          ? audioTrackId
+          : audioTrackId ?? this.audioTrackId,
+      audioTrackTitle: resetAudioIdentity
+          ? audioTrackTitle
+          : audioTrackTitle ?? this.audioTrackTitle,
+      subtitleLanguage: clearSubtitleLanguage
+          ? null
+          : subtitleLanguage ?? this.subtitleLanguage,
+      subtitleTrackId: resetSubtitleIdentity
+          ? subtitleTrackId
+          : subtitleTrackId ?? this.subtitleTrackId,
+      subtitleTrackTitle: resetSubtitleIdentity
+          ? subtitleTrackTitle
+          : subtitleTrackTitle ?? this.subtitleTrackTitle,
+      subtitlesEnabled: clearSubtitlesEnabled
+          ? null
+          : subtitlesEnabled ?? this.subtitlesEnabled,
+    );
+  }
 
   Map<String, Object?> toJson() => {
     if (audioLanguage != null) 'audio_language': audioLanguage,
@@ -136,18 +151,7 @@ abstract final class VideoTrackPreferences {
     for (final key in keys) {
       final preference = await _read(key);
       if (preference == null) continue;
-      result = VideoTrackPreference(
-        audioLanguage: preference.audioLanguage ?? result.audioLanguage,
-        audioTrackId: preference.audioTrackId ?? result.audioTrackId,
-        audioTrackTitle: preference.audioTrackTitle ?? result.audioTrackTitle,
-        subtitleLanguage:
-            preference.subtitleLanguage ?? result.subtitleLanguage,
-        subtitleTrackId: preference.subtitleTrackId ?? result.subtitleTrackId,
-        subtitleTrackTitle:
-            preference.subtitleTrackTitle ?? result.subtitleTrackTitle,
-        subtitlesEnabled:
-            preference.subtitlesEnabled ?? result.subtitlesEnabled,
-      );
+      result = _merge(result, preference);
     }
     return result;
   }
@@ -292,15 +296,30 @@ abstract final class VideoTrackPreferences {
   static VideoTrackPreference _merge(
     VideoTrackPreference parent,
     VideoTrackPreference child,
-  ) => VideoTrackPreference(
-    audioLanguage: child.audioLanguage ?? parent.audioLanguage,
-    audioTrackId: child.audioTrackId ?? parent.audioTrackId,
-    audioTrackTitle: child.audioTrackTitle ?? parent.audioTrackTitle,
-    subtitleLanguage: child.subtitleLanguage ?? parent.subtitleLanguage,
-    subtitleTrackId: child.subtitleTrackId ?? parent.subtitleTrackId,
-    subtitleTrackTitle: child.subtitleTrackTitle ?? parent.subtitleTrackTitle,
-    subtitlesEnabled: child.subtitlesEnabled ?? parent.subtitlesEnabled,
-  );
+  ) {
+    // Child language settings invalidate a parent track id/title. Otherwise a
+    // type-level selection (e.g. English track #2) wins over a work-level
+    // language override (e.g. German) because ids are matched first.
+    final audioLanguage = child.audioLanguage ?? parent.audioLanguage;
+    final subtitleLanguage = child.subtitleLanguage ?? parent.subtitleLanguage;
+    return VideoTrackPreference(
+      audioLanguage: audioLanguage,
+      audioTrackId:
+          child.audioTrackId ??
+          (child.audioLanguage != null ? null : parent.audioTrackId),
+      audioTrackTitle:
+          child.audioTrackTitle ??
+          (child.audioLanguage != null ? null : parent.audioTrackTitle),
+      subtitleLanguage: subtitleLanguage,
+      subtitleTrackId:
+          child.subtitleTrackId ??
+          (child.subtitleLanguage != null ? null : parent.subtitleTrackId),
+      subtitleTrackTitle:
+          child.subtitleTrackTitle ??
+          (child.subtitleLanguage != null ? null : parent.subtitleTrackTitle),
+      subtitlesEnabled: child.subtitlesEnabled ?? parent.subtitlesEnabled,
+    );
+  }
 
   static Future<VideoTrackPreference?> _read(String key) async {
     if (_cache.containsKey(key)) return _cache[key];
