@@ -57,6 +57,45 @@ final class FundusVideoPlaybackSession {
     if (!active()) return false;
     final desired = target ?? player.state.position;
     if (!active()) return false;
+
+    // VideoController keeps the first-frame future for the lifetime of its
+    // native texture. Re-opening a work with the same player therefore does
+    // not need another pause/seek cycle once that texture has rendered once.
+    // Repeating that cycle was the source of a visible hitch on every resume
+    // even though the decoder already had a valid frame.
+    var firstFrameWasRendered = false;
+    try {
+      await videoController.waitUntilFirstFrameRendered.timeout(
+        const Duration(milliseconds: 50),
+      );
+      firstFrameWasRendered = true;
+    } catch (_) {
+      // The first frame is still pending; continue with the attach/prime path.
+    }
+    if (firstFrameWasRendered) {
+      if (!active()) return false;
+      if (desired > Duration.zero &&
+          (player.state.position - desired).abs() >
+              const Duration(seconds: 2)) {
+        await player.seek(desired);
+      }
+      if (!active()) return false;
+      await player.play();
+      return true;
+    }
+
+    // A new title does not need a synthetic seek to zero. Starting it
+    // directly lets the native decoder render its first frame without an
+    // avoidable pause/resume hitch.
+    if (desired <= Duration.zero) {
+      await player.play();
+      try {
+        await videoController.waitUntilFirstFrameRendered.timeout(timeout);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
     await player.pause();
     await Future<void>.delayed(const Duration(milliseconds: 120));
     if (!active()) return false;
