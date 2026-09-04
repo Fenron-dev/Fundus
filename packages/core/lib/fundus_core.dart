@@ -13,6 +13,7 @@ export 'src/model/library_collection.dart';
 export 'src/model/library_manifest.dart';
 export 'src/model/library_playlist.dart';
 export 'src/model/library_saved_view.dart';
+export 'src/model/library_source.dart';
 export 'src/model/media_position.dart';
 export 'src/model/playback_session.dart';
 export 'src/model/sync_journal.dart';

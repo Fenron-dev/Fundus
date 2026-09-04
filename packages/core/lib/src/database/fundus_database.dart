@@ -9,6 +9,7 @@ import '../library/work_annotations.dart';
 import '../model/fundus_id.dart';
 import '../model/library_collection.dart';
 import '../model/library_playlist.dart';
+import '../model/library_source.dart';
 import '../model/media_position.dart';
 import '../model/playback_session.dart';
 import '../model/sync_journal.dart';
@@ -53,6 +54,8 @@ final class LibraryWorkSummary {
     this.tags = const [],
     this.lastListenedAt,
     this.offline = false,
+    this.sourceId,
+    this.availability = 'available',
     this.sourceServerName,
     this.sourceLibraryName,
     this.providerMetadata = const {},
@@ -99,6 +102,11 @@ final class LibraryWorkSummary {
   final List<String> tags;
   final DateTime? lastListenedAt;
   final bool offline;
+
+  /// Stable origin identifier. It is distinct from the user-facing source
+  /// label and survives a vault moving to another mount point.
+  final String? sourceId;
+  final String availability;
   final String? sourceServerName;
   final String? sourceLibraryName;
 
@@ -118,9 +126,10 @@ final class WorkMetadataOrigin {
 }
 
 final class FundusDatabase {
-  FundusDatabase._(this._database);
+  FundusDatabase._(this._database, {String sourceId = 'local'})
+    : _sourceId = sourceId;
 
-  static const schemaVersion = 10;
+  static const schemaVersion = 11;
   static const supportedContentSensitivities = {
     'general',
     'mature',
@@ -129,26 +138,37 @@ final class FundusDatabase {
   };
 
   final Database _database;
+  final String _sourceId;
 
-  factory FundusDatabase.openFile(File file, {bool readOnly = false}) {
+  factory FundusDatabase.openFile(
+    File file, {
+    bool readOnly = false,
+    String sourceId = 'local',
+  }) {
     if (!readOnly) file.parent.createSync(recursive: true);
     final instance = FundusDatabase._(
       sqlite3.open(
         file.path,
         mode: readOnly ? OpenMode.readOnly : OpenMode.readWriteCreate,
       ),
+      sourceId: sourceId,
     );
     instance._initialize(readOnly: readOnly);
     return instance;
   }
 
-  factory FundusDatabase.inMemory() {
-    final instance = FundusDatabase._(sqlite3.openInMemory());
+  factory FundusDatabase.inMemory({String sourceId = 'local'}) {
+    final instance = FundusDatabase._(
+      sqlite3.openInMemory(),
+      sourceId: sourceId,
+    );
     instance._initialize();
     return instance;
   }
 
   int get userVersion => _database.userVersion;
+
+  String get sourceId => _sourceId;
 
   bool tableExists(String name) {
     final result = _database.select(
@@ -164,6 +184,125 @@ final class FundusDatabase {
     return _database
         .select('PRAGMA table_info($safeTable)')
         .any((row) => row['name'] == column);
+  }
+
+  List<LibrarySource> listSources() {
+    if (!tableExists('sources')) return const [];
+    return _database
+        .select('SELECT * FROM sources ORDER BY display_name COLLATE NOCASE')
+        .map(_sourceFromRow)
+        .toList(growable: false);
+  }
+
+  LibrarySource? loadSource(String id) {
+    if (!tableExists('sources')) return null;
+    final rows = _database.select('SELECT * FROM sources WHERE id = ?', [id]);
+    return rows.isEmpty ? null : _sourceFromRow(rows.first);
+  }
+
+  void saveSource(LibrarySource source) {
+    _ensureWritableSource(source);
+    _database.execute(
+      '''INSERT INTO sources (
+           id, kind, display_name, library_id, vault_path, base_url,
+           cert_pin, sync_cursor, status, last_seen_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           kind = excluded.kind,
+           display_name = excluded.display_name,
+           library_id = excluded.library_id,
+           vault_path = excluded.vault_path,
+           base_url = excluded.base_url,
+           cert_pin = excluded.cert_pin,
+           sync_cursor = excluded.sync_cursor,
+           status = excluded.status,
+           last_seen_at = excluded.last_seen_at''',
+      [
+        source.id,
+        source.kind.name,
+        source.displayName,
+        source.libraryId,
+        source.vaultPath,
+        source.baseUrl,
+        source.certificatePin,
+        source.syncCursor,
+        source.availability.name,
+        source.lastSeenAt?.toUtc().millisecondsSinceEpoch,
+      ],
+    );
+  }
+
+  /// Associates legacy rows (created before source-aware schema v11) with the
+  /// stable vault source. A local Fundus database contains one vault only, so
+  /// this is safe and makes upgrades immediately visible to the unified view.
+  void adoptSourceId(String id) {
+    if (!tableExists('sources')) return;
+    transaction(() {
+      if (tableExists('files') && columnExists('files', 'source_id')) {
+        _database.execute(
+          'UPDATE files SET source_id = ? WHERE source_id = ?',
+          [id, 'local'],
+        );
+      }
+      if (tableExists('works') && columnExists('works', 'source_id')) {
+        _database.execute(
+          'UPDATE works SET source_id = ? WHERE source_id = ?',
+          [id, 'local'],
+        );
+      }
+    });
+  }
+
+  void updateSourceStatus(
+    String id, {
+    LibrarySourceAvailability? availability,
+    int? syncCursor,
+    DateTime? lastSeenAt,
+  }) {
+    final current = loadSource(id);
+    if (current == null) return;
+    saveSource(
+      current.copyWith(
+        availability: availability,
+        syncCursor: syncCursor,
+        lastSeenAt: lastSeenAt,
+      ),
+    );
+  }
+
+  LibrarySource _sourceFromRow(Map<String, Object?> row) => LibrarySource(
+    id: row['id'] as String,
+    kind: LibrarySourceKind.values.firstWhere(
+      (value) => value.name == row['kind'],
+      orElse: () => LibrarySourceKind.vault,
+    ),
+    displayName: row['display_name'] as String,
+    libraryId: row['library_id'] as String,
+    vaultPath: row['vault_path'] as String?,
+    baseUrl: row['base_url'] as String?,
+    certificatePin: row['cert_pin'] as String?,
+    syncCursor: row['sync_cursor'] as int? ?? 0,
+    availability: LibrarySourceAvailability.values.firstWhere(
+      (value) => value.name == row['status'],
+      orElse: () => LibrarySourceAvailability.unknown,
+    ),
+    lastSeenAt: row['last_seen_at'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(
+            row['last_seen_at'] as int,
+            isUtc: true,
+          )
+        : null,
+  );
+
+  void _ensureWritableSource(LibrarySource source) {
+    if (!tableExists('sources')) {
+      throw StateError('Das Datenbankschema unterstützt keine Quellen.');
+    }
+    if (source.id.trim().isEmpty || source.libraryId.trim().isEmpty) {
+      throw ArgumentError(
+        'Quellen-ID und Bibliotheks-ID dürfen nicht leer sein.',
+      );
+    }
   }
 
   T transaction<T>(T Function() action) {
@@ -190,9 +329,9 @@ final class FundusDatabase {
       '''
       INSERT INTO files (
         id, path, filename, extension, size, mime_type, file_modified_at,
-        indexed_at, status, container, audio_codec, codec_profile,
+        indexed_at, status, source_id, availability, container, audio_codec, codec_profile,
         audio_channels, sample_rate_hz, video_episode_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, 'available', ?, ?, ?, ?, ?, ?)
       ON CONFLICT(path) DO UPDATE SET
         filename = excluded.filename,
         extension = excluded.extension,
@@ -204,6 +343,8 @@ final class FundusDatabase {
         audio_channels = excluded.audio_channels,
         sample_rate_hz = excluded.sample_rate_hz,
         video_episode_json = excluded.video_episode_json,
+        source_id = excluded.source_id,
+        availability = 'available',
         file_modified_at = excluded.file_modified_at,
         indexed_at = excluded.indexed_at,
         status = 'available'
@@ -217,6 +358,7 @@ final class FundusDatabase {
         file.mimeType,
         file.modifiedAt.millisecondsSinceEpoch,
         now,
+        _sourceId,
         file.audioMetadata?.container,
         file.audioMetadata?.codec,
         file.audioMetadata?.profile,
@@ -636,7 +778,8 @@ final class FundusDatabase {
   List<LibraryWorkSummary> listWorks({bool includeMissing = false}) {
     final rows = _database.select('''
       SELECT w.id, w.kind, w.title, w.series_name, w.series_sequence, w.added_at,
-             w.metadata_json, w.status, COUNT(content.id) AS file_count,
+             w.metadata_json, w.status, w.source_id, w.availability,
+             COUNT(content.id) AS file_count,
              COALESCE(cover.path, w.generated_cover_path) AS cover_path,
              progress.numeric_value AS progress_position,
              progress.position_kind AS progress_kind,
@@ -733,6 +876,8 @@ final class FundusDatabase {
             progressTrackIndex: row['progress_track_index'] as int?,
             progressFinished: (row['progress_finished'] as int?) == 1,
             status: row['status'] as String,
+            sourceId: row['source_id'] as String?,
+            availability: row['availability'] as String? ?? 'available',
             metadataOrigins: _metadataOrigins(metadata),
             tags: _metadataStrings(jsonDecode(row['tags_json'] as String)),
             lastListenedAt: row['progress_updated_at'] is int
@@ -2361,7 +2506,7 @@ final class FundusDatabase {
         '''
         UPDATE works SET kind = ?, source_path = ?, parent_id = ?, title = ?,
           sort_title = ?, series_name = ?, series_sequence = ?, metadata_json = ?,
-          status = 'available'
+          status = 'available', source_id = ?, availability = 'available'
         WHERE id = ?
         ''',
         [
@@ -2373,6 +2518,7 @@ final class FundusDatabase {
           resolvedSeries,
           resolvedSequence,
           jsonEncode(mergedMetadata),
+          _sourceId,
           preferredId,
         ],
       );
@@ -2385,8 +2531,8 @@ final class FundusDatabase {
       '''
       INSERT INTO works (
         id, kind, source_path, parent_id, title, sort_title, series_name,
-        series_sequence, metadata_json, added_at, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available')
+        series_sequence, metadata_json, added_at, status, source_id, availability
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, 'available')
       ON CONFLICT(source_path) DO UPDATE SET
         kind = excluded.kind,
         parent_id = excluded.parent_id,
@@ -2395,7 +2541,9 @@ final class FundusDatabase {
         series_name = excluded.series_name,
         series_sequence = excluded.series_sequence,
         metadata_json = excluded.metadata_json,
-        status = 'available'
+        status = 'available',
+        source_id = excluded.source_id,
+        availability = 'available'
       ''',
       [
         id,
@@ -2408,6 +2556,7 @@ final class FundusDatabase {
         resolvedSequence,
         jsonEncode(mergedMetadata),
         DateTime.now().millisecondsSinceEpoch,
+        _sourceId,
       ],
     );
     return id;
@@ -2530,6 +2679,7 @@ final class FundusDatabase {
     if (_database.userVersion == 7 && !readOnly) _migrateToVersion8();
     if (_database.userVersion == 8 && !readOnly) _migrateToVersion9();
     if (_database.userVersion == 9 && !readOnly) _migrateToVersion10();
+    if (_database.userVersion == 10 && !readOnly) _migrateToVersion11();
   }
 
   void _migrateToVersion1() {
@@ -2711,6 +2861,34 @@ final class FundusDatabase {
     try {
       _database.execute(_syncEntityHeadsTableStatement);
       _database.userVersion = 10;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  void _migrateToVersion11() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      _database.execute(_sourcesTableStatement);
+      for (final table in ['files', 'works']) {
+        if (!tableExists(table)) continue;
+        if (!columnExists(table, 'source_id')) {
+          _database.execute(
+            "ALTER TABLE $table ADD COLUMN source_id TEXT NOT NULL DEFAULT 'local'",
+          );
+        }
+        if (!columnExists(table, 'availability')) {
+          _database.execute(
+            "ALTER TABLE $table ADD COLUMN availability TEXT NOT NULL DEFAULT 'available'",
+          );
+        }
+        _database.execute(
+          'CREATE INDEX IF NOT EXISTS ${table}_source_idx ON $table(source_id, availability)',
+        );
+      }
+      _database.userVersion = 11;
       _database.execute('COMMIT');
     } catch (_) {
       _database.execute('ROLLBACK');
@@ -2991,5 +3169,20 @@ CREATE TABLE IF NOT EXISTS sync_entity_heads (
   device_id TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   PRIMARY KEY (entity, entity_id)
+)
+''';
+
+const _sourcesTableStatement = '''
+CREATE TABLE IF NOT EXISTS sources (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('vault', 'peer')),
+  display_name TEXT NOT NULL,
+  library_id TEXT NOT NULL,
+  vault_path TEXT,
+  base_url TEXT,
+  cert_pin TEXT,
+  sync_cursor INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'unknown',
+  last_seen_at INTEGER
 )
 ''';

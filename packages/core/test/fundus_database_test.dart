@@ -26,6 +26,39 @@ void main() {
     expect(database.columnExists('progress', 'scroll_offset'), isTrue);
     expect(database.tableExists('search_index'), isTrue);
     expect(database.tableExists('sync_journal'), isTrue);
+    expect(database.tableExists('sources'), isTrue);
+    expect(database.columnExists('files', 'source_id'), isTrue);
+    expect(database.columnExists('files', 'availability'), isTrue);
+    expect(database.columnExists('works', 'source_id'), isTrue);
+    expect(database.columnExists('works', 'availability'), isTrue);
+  });
+
+  test('sources persist origin identity and availability independently', () {
+    final database = FundusDatabase.inMemory();
+    addTearDown(database.close);
+    final source = LibrarySource(
+      id: 'peer:server/library',
+      kind: LibrarySourceKind.peer,
+      displayName: 'Wohnzimmer-Server',
+      libraryId: 'library',
+      baseUrl: 'https://server.example',
+      certificatePin: 'sha256:test',
+      syncCursor: 42,
+      availability: LibrarySourceAvailability.available,
+      lastSeenAt: DateTime.utc(2026, 9, 4),
+    );
+    database.saveSource(source);
+    expect(database.loadSource(source.id)?.displayName, 'Wohnzimmer-Server');
+    expect(database.loadSource(source.id)?.syncCursor, 42);
+    database.updateSourceStatus(
+      source.id,
+      availability: LibrarySourceAvailability.unreachable,
+      syncCursor: 43,
+    );
+    final updated = database.loadSource(source.id)!;
+    expect(updated.availability, LibrarySourceAvailability.unreachable);
+    expect(updated.syncCursor, 43);
+    expect(database.listSources(), hasLength(1));
   });
 
   test('sync journal is durable, ordered and idempotent', () {

@@ -73,6 +73,10 @@ void main() {
     expect(works.single.seriesSequence, 1);
     expect(works.single.fileCount, 2);
     expect(works.single.coverPath, endsWith('cover.jpg'));
+    expect(works.single.sourceId, 'vault:${library.manifest.libraryId}');
+    expect(works.single.availability, 'available');
+    expect(library.source.kind, LibrarySourceKind.vault);
+    expect(library.listSources().single.id, library.source.id);
     expect(library.workDirectoryPath(works.single.id), book.path);
 
     final tracks = library.playbackTracks(works.single.id);

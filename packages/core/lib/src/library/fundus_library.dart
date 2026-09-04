@@ -16,6 +16,7 @@ import '../model/library_collection.dart';
 import '../model/library_manifest.dart';
 import '../model/library_playlist.dart';
 import '../model/library_saved_view.dart';
+import '../model/library_source.dart';
 import '../model/media_position.dart';
 import '../model/playback_session.dart';
 import '../model/sync_journal.dart';
@@ -95,13 +96,19 @@ final class FundusLibrary {
     await manifest.write(manifestFile);
     final configuration = LibraryConfiguration();
     await configuration.write(_configurationFile(root));
-    return FundusLibrary._(
+    final database = FundusDatabase.openFile(
+      _databaseFile(root),
+      sourceId: 'vault:${manifest.libraryId}',
+    );
+    final library = FundusLibrary._(
       root: root.absolute,
       manifest: manifest,
       configuration: configuration,
       openMode: LibraryOpenMode.readWrite,
-      database: FundusDatabase.openFile(_databaseFile(root)),
+      database: database,
     );
+    library._saveSourceMetadata();
+    return library;
   }
 
   static Future<FundusLibrary> open(Directory root) async {
@@ -120,16 +127,40 @@ final class FundusLibrary {
     if (compatibility.mode == LibraryOpenMode.incompatible) {
       throw StateError(compatibility.message);
     }
-    return FundusLibrary._(
+    final database = FundusDatabase.openFile(
+      _databaseFile(root),
+      readOnly: compatibility.mode == LibraryOpenMode.readOnly,
+      sourceId: 'vault:${manifest.libraryId}',
+    );
+    final library = FundusLibrary._(
       root: root.absolute,
       manifest: manifest,
       configuration: configuration,
       openMode: compatibility.mode,
-      database: FundusDatabase.openFile(
-        _databaseFile(root),
-        readOnly: compatibility.mode == LibraryOpenMode.readOnly,
-      ),
+      database: database,
     );
+    library._saveSourceMetadata();
+    return library;
+  }
+
+  LibrarySource get source => LibrarySource(
+    id: 'vault:${manifest.libraryId}',
+    kind: LibrarySourceKind.vault,
+    displayName: p.basename(root.path),
+    libraryId: manifest.libraryId,
+    vaultPath: root.path,
+    availability: isReadOnly
+        ? LibrarySourceAvailability.readOnly
+        : LibrarySourceAvailability.available,
+    lastSeenAt: DateTime.now().toUtc(),
+  );
+
+  List<LibrarySource> listSources() => _database.listSources();
+
+  void _saveSourceMetadata() {
+    if (isReadOnly || !_database.tableExists('sources')) return;
+    _database.saveSource(source);
+    _database.adoptSourceId(source.id);
   }
 
   List<LibraryWorkSummary> listWorks({bool includeMissing = false}) => _database
@@ -1230,6 +1261,8 @@ final class FundusLibrary {
       tags: work.tags,
       lastListenedAt: work.lastListenedAt,
       offline: work.offline,
+      sourceId: work.sourceId,
+      availability: work.availability,
       sourceServerName: work.sourceServerName,
       sourceLibraryName: work.sourceLibraryName,
       providerMetadata: work.providerMetadata,
