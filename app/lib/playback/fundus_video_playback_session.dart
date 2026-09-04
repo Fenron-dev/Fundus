@@ -48,7 +48,13 @@ final class FundusVideoPlaybackSession {
     required VideoController videoController,
     Duration? target,
     Duration timeout = const Duration(seconds: 3),
+    bool Function()? isActive,
   }) async {
+    bool active() => isActive?.call() ?? true;
+
+    // Decoder waits outlive a route occasionally. Never mutate a shared
+    // player after its fullscreen route has already been dismissed.
+    if (!active()) return false;
     final desired = target ?? player.state.position;
     if (desired > Duration.zero) {
       // Reopening the fullscreen route can keep the native texture alive
@@ -59,15 +65,19 @@ final class FundusVideoPlaybackSession {
       // the already-created surface.  Do this only for resumed playback so a
       // new title does not incur an unnecessary decoder restart.
       try {
+        if (!active()) return false;
         await player.setVideoTrack(VideoTrack.auto());
       } catch (_) {
         // Audio-only files and platforms without video-track selection can
         // continue with the normal pause/seek/play path below.
       }
     }
+    if (!active()) return false;
     await player.pause();
     await Future<void>.delayed(const Duration(milliseconds: 120));
+    if (!active()) return false;
     await player.seek(desired);
+    if (!active()) return false;
     await player.play();
 
     try {
@@ -77,10 +87,14 @@ final class FundusVideoPlaybackSession {
       // Some native surfaces miss the first resize event when a file is
       // resumed. Recreate the decoder's initial frame once, then restore the
       // requested position before returning control to the caller.
+      if (!active()) return false;
       await player.pause();
+      if (!active()) return false;
       await player.seek(Duration.zero);
       await Future<void>.delayed(const Duration(milliseconds: 100));
+      if (!active()) return false;
       await player.seek(desired);
+      if (!active()) return false;
       await player.play();
       try {
         await videoController.waitUntilFirstFrameRendered.timeout(timeout);

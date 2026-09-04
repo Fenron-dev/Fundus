@@ -2852,6 +2852,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                     else
                       FundusVideoDetailHero(
                         work: detail.summary,
+                        breadcrumbs: _remoteDetailBreadcrumbs(
+                          detail,
+                          onPrevious: () => Navigator.of(context).maybePop(),
+                        ),
                         coverBuilder: (_) => work.hasCover
                             ? _remoteCover(
                                 server,

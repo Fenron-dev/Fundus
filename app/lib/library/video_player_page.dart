@@ -86,10 +86,12 @@ final class _FundusVideoPlayerPage extends StatefulWidget {
 
 final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
   var _fitMode = _VideoFitMode.contain;
+  var _primeGeneration = 0;
 
   @override
   void initState() {
     super.initState();
+    final generation = ++_primeGeneration;
     // The controller is opened before this route exists so local, remote and
     // offline playback can share the same setup.  The native surface is only
     // attached after the first frame of this route.  Explicitly prime it here
@@ -108,11 +110,20 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
           player: widget.player,
           videoController: widget.videoController,
           target: target,
+          isActive: () => mounted && generation == _primeGeneration,
         );
       } catch (_) {
         // Playback errors are surfaced by media_kit's error stream/controls.
       }
     });
+  }
+
+  @override
+  void dispose() {
+    // Invalidate pending decoder work before this route is removed. The
+    // shared player may immediately be reused by another work.
+    _primeGeneration++;
+    super.dispose();
   }
 
   @override
