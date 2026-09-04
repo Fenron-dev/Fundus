@@ -157,6 +157,43 @@ void main() {
     expect(loaded?.fileId, detail.tracks.single.id);
     expect(loaded?.position, const Duration(seconds: 2));
     expect(loaded?.duration, const Duration(seconds: 3));
+    final synced = await client.syncChanges(
+      profile,
+      libraries.single.id,
+      since: 0,
+      limit: 50,
+    );
+    expect(
+      synced.entries.any(
+        (entry) => entry.operationId == 'remote-progress-test',
+      ),
+      isTrue,
+    );
+    final pushedSync = await client.pushSyncChanges(
+      profile,
+      libraries.single.id,
+      [
+        LibrarySyncJournalEntry(
+          sequence: 0,
+          entity: 'note',
+          entityId: works.single.id,
+          operation: 'upsert',
+          payload: {'work_id': works.single.id, 'markdown': 'Client-Sync'},
+          revision: 1,
+          deviceId: 'client-test',
+          operationId: 'client-sync-note',
+          createdAt: DateTime.utc(2026, 1, 1),
+        ),
+      ],
+    );
+    expect(pushedSync.applied, 1);
+    expect(
+      (await client.syncChanges(
+        profile,
+        libraries.single.id,
+      )).entries.any((entry) => entry.operationId == 'client-sync-note'),
+      isTrue,
+    );
     final history = await client.progressRevisions(
       profile,
       libraries.single.id,

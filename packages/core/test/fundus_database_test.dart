@@ -25,6 +25,54 @@ void main() {
     expect(database.columnExists('progress', 'element_id'), isTrue);
     expect(database.columnExists('progress', 'scroll_offset'), isTrue);
     expect(database.tableExists('search_index'), isTrue);
+    expect(database.tableExists('sync_journal'), isTrue);
+  });
+
+  test('sync journal is durable, ordered and idempotent', () {
+    final database = FundusDatabase.inMemory();
+    addTearDown(database.close);
+
+    final first = database.appendSyncChange(
+      entity: 'note',
+      entityId: 'work-1',
+      operation: 'upsert',
+      payload: {'markdown': 'Notiz'},
+      revision: 1,
+      deviceId: 'phone-1',
+      operationId: 'op-1',
+      createdAt: DateTime.utc(2026, 1, 1),
+    );
+    final retry = database.appendSyncChange(
+      entity: 'note',
+      entityId: 'work-1',
+      operation: 'upsert',
+      payload: {'markdown': 'andere Fassung'},
+      revision: 99,
+      deviceId: 'tablet-1',
+      operationId: 'op-1',
+      createdAt: DateTime.utc(2026, 1, 2),
+    );
+    final second = database.appendSyncChange(
+      entity: 'bookmark',
+      entityId: 'bookmark-1',
+      operation: 'delete',
+      payload: const {},
+      revision: 2,
+      deviceId: 'phone-1',
+      operationId: 'op-2',
+    );
+
+    expect(retry.sequence, first.sequence);
+    expect(retry.payload, {'markdown': 'Notiz'});
+    expect(database.syncJournalCursor, second.sequence);
+    final page = database.listSyncChanges(since: 0, limit: 1);
+    expect(page, hasLength(1));
+    expect(page.single.operationId, first.operationId);
+    expect(page.single.payload, first.payload);
+    final tail = database.listSyncChanges(since: first.sequence);
+    expect(tail, hasLength(1));
+    expect(tail.single.operationId, second.operationId);
+    expect(database.hasSyncOperation('op-2'), isTrue);
   });
 
   test('collections persist names, rules and ordered work references', () {

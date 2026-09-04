@@ -475,6 +475,77 @@ void main() {
     );
   });
 
+  test(
+    'exposes an ordered sync cursor and accepts idempotent changes',
+    () async {
+      final libraryId = firstLibrary.manifest.libraryId;
+      final path = '/v1/libraries/$libraryId/sync/changes';
+      final change = LibrarySyncJournalEntry(
+        sequence: 0,
+        entity: 'note',
+        entityId: work.id,
+        operation: 'upsert',
+        payload: {'work_id': work.id, 'markdown': 'Offline-Notiz'},
+        revision: 1,
+        deviceId: 'phone-test',
+        operationId: 'sync-note-1',
+        createdAt: DateTime.utc(2026, 1, 1),
+      );
+      final pushed = await _post(
+        server,
+        path,
+        jsonEncode({
+          'entries': [change.toJson()],
+        }),
+      );
+      final pushedBody = await _json(pushed);
+      expect(pushed.statusCode, 200);
+      expect(pushedBody['applied'], 1);
+      expect(pushedBody['ignored'], 0);
+
+      final repeated = await _post(
+        server,
+        path,
+        jsonEncode({
+          'entries': [change.toJson()],
+        }),
+      );
+      final repeatedBody = await _json(repeated);
+      expect(repeatedBody['applied'], 0);
+      expect(repeatedBody['ignored'], 1);
+
+      final pulled = await _json(await _get(server, '$path?since=0&limit=10'));
+      expect(pulled['has_more'], isFalse);
+      final entries = pulled['entries']! as List;
+      expect(entries, hasLength(1));
+      expect((entries.single as Map)['operation_id'], 'sync-note-1');
+      expect(pulled['next_cursor'], 1);
+    },
+  );
+
+  test('progress writes also appear in the sync journal', () async {
+    final libraryId = firstLibrary.manifest.libraryId;
+    final progressPath = '/v1/libraries/$libraryId/progress/${work.id}';
+    await _put(
+      server,
+      progressPath,
+      jsonEncode({
+        'operation_id': 'journal-progress-1',
+        'device_id': 'tablet-test',
+        'file_id': track.fileId,
+        'position_seconds': 12,
+      }),
+    );
+    final pulled = await _json(
+      await _get(server, '/v1/libraries/$libraryId/sync/changes?since=0'),
+    );
+    final entries = pulled['entries']! as List;
+    expect(entries, hasLength(1));
+    final entry = entries.single as Map;
+    expect(entry['entity'], 'progress');
+    expect(entry['operation_id'], 'journal-progress-1');
+  });
+
   test('stores media-neutral reader positions with anchors', () async {
     final libraryId = firstLibrary.manifest.libraryId;
     final path = '/v1/libraries/$libraryId/progress/${work.id}';

@@ -128,6 +128,8 @@ final class FundusServerHandler {
       ..get('/v1/libraries', _libraries)
       ..get('/v1/libraries/<libraryId>/works', _works)
       ..get('/v1/libraries/<libraryId>/catalog', _catalog)
+      ..get('/v1/libraries/<libraryId>/sync/changes', _syncChanges)
+      ..post('/v1/libraries/<libraryId>/sync/changes', _pushSyncChanges)
       ..get('/v1/libraries/<libraryId>/works/<workId>', _work)
       ..get('/v1/libraries/<libraryId>/works/<workId>/cover', _cover)
       ..get('/v1/libraries/<libraryId>/files/<fileId>', _file)
@@ -260,6 +262,7 @@ final class FundusServerHandler {
     if (segments.contains('progress')) return 'progress';
     if (segments.contains('annotations')) return 'annotations';
     if (segments.contains('reader-settings')) return 'reader_settings';
+    if (segments.contains('sync')) return 'sync';
     if (segments.contains('works')) return 'works';
     if (segments.contains('libraries')) return 'libraries';
     if (segments.contains('pairing')) return 'pairing';
@@ -319,6 +322,7 @@ final class FundusServerHandler {
     'server_id': serverId,
     'server_name': serverName,
     'api_version': 1,
+    'protocol_version': 1,
     'library_format_version': LibraryManifest.currentFormatVersion,
     'min_reader_version': LibraryManifest.currentReaderVersion,
     'capabilities': [
@@ -339,6 +343,9 @@ final class FundusServerHandler {
       'playback_session_revisions',
       'annotations',
       'portable_reader_profiles',
+      'sync_journal',
+      'sync_progress',
+      'sync_annotations',
     ],
   });
 
@@ -1150,6 +1157,127 @@ final class FundusServerHandler {
       'work_id': workId,
       'progress': progress == null ? null : _progressJson(progress),
     });
+  }
+
+  Response _syncChanges(Request request, String libraryId) {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    final since = int.tryParse(request.url.queryParameters['since'] ?? '') ?? 0;
+    final requestedLimit =
+        int.tryParse(request.url.queryParameters['limit'] ?? '') ?? 500;
+    final limit = requestedLimit.clamp(1, 500);
+    final changes = entry.library
+        .syncChanges(since: since < 0 ? 0 : since, limit: limit + 1)
+        .where((change) => _canViewSyncChange(request, entry, change))
+        .toList(growable: false);
+    final hasMore = changes.length > limit;
+    final visible = hasMore ? changes.take(limit).toList() : changes;
+    final nextCursor = visible.isEmpty
+        ? (since < 0 ? 0 : since)
+        : visible.last.sequence;
+    return _json({
+      'library_id': libraryId,
+      'entries': [for (final change in visible) change.toJson()],
+      'next_cursor': nextCursor,
+      'has_more': hasMore,
+    });
+  }
+
+  Future<Response> _pushSyncChanges(Request request, String libraryId) async {
+    final entry = registry.lookup(libraryId);
+    if (entry == null) return _notFound('library_not_found');
+    if (entry.library.isReadOnly) {
+      return _json({'error': 'library_read_only'}, statusCode: 403);
+    }
+    final decoded = await _readJson(request);
+    final rawEntries = decoded?['entries'];
+    if (rawEntries is! List || rawEntries.length > 500) {
+      return _badRequest('invalid_sync_entries');
+    }
+    var applied = 0;
+    var ignored = 0;
+    for (final raw in rawEntries) {
+      final change = LibrarySyncJournalEntry.fromJson(raw);
+      if (change == null || change.operationId.trim().isEmpty) {
+        return _badRequest('invalid_sync_entry');
+      }
+      if (entry.library.hasSyncOperation(change.operationId)) {
+        ignored++;
+        continue;
+      }
+      final result = _applySyncChange(request, entry, change);
+      if (result == null) return _badRequest('invalid_sync_entry');
+      if (result) {
+        applied++;
+      } else {
+        entry.library.appendSyncChange(
+          entity: change.entity,
+          entityId: change.entityId,
+          operation: change.operation,
+          payload: change.payload,
+          revision: change.revision,
+          deviceId: change.deviceId,
+          operationId: change.operationId,
+          createdAt: change.createdAt,
+        );
+        applied++;
+      }
+    }
+    return _json({
+      'library_id': libraryId,
+      'applied': applied,
+      'ignored': ignored,
+      'cursor': entry.library.syncCursor,
+    });
+  }
+
+  /// Applies entities that have a concrete local representation. Unknown
+  /// entities are still retained in the durable journal so a newer peer can
+  /// apply them later; this is the forward-compatible part of the protocol.
+  bool? _applySyncChange(
+    Request request,
+    SharedFundusLibrary entry,
+    LibrarySyncJournalEntry change,
+  ) {
+    final payloadWorkId = change.payload['work_id'];
+    if (payloadWorkId is String &&
+        !_canViewWorkId(request, entry, payloadWorkId)) {
+      return null;
+    }
+    if (change.entity != 'progress' || change.operation != 'upsert') {
+      return false;
+    }
+    final workId = change.payload['work_id'] is String
+        ? change.payload['work_id'] as String
+        : change.entityId.split('/').first;
+    final fileId = change.payload['file_id'];
+    final position = change.payload['position'];
+    if (workId.isEmpty || fileId is! String || position is! Map) return null;
+    if (!_canViewWorkId(request, entry, workId)) return null;
+    if (!entry.tracksFor(workId).any((track) => track.fileId == fileId)) {
+      return null;
+    }
+    final decodedPosition = MediaPosition.fromJson(
+      Map<String, Object?>.from(position),
+    );
+    entry.library.saveMediaProgress(
+      workId: workId,
+      fileId: fileId,
+      position: decodedPosition,
+      finished: change.payload['finished'] == true,
+      deviceId: change.deviceId,
+      operationId: change.operationId,
+    );
+    return true;
+  }
+
+  bool _canViewSyncChange(
+    Request request,
+    SharedFundusLibrary entry,
+    LibrarySyncJournalEntry change,
+  ) {
+    final workId = change.payload['work_id'];
+    return workId is! String || _canViewWorkId(request, entry, workId);
   }
 
   Response _annotations(Request request, String libraryId, String workId) {

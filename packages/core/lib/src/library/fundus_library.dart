@@ -18,6 +18,7 @@ import '../model/library_playlist.dart';
 import '../model/library_saved_view.dart';
 import '../model/media_position.dart';
 import '../model/playback_session.dart';
+import '../model/sync_journal.dart';
 import '../playback/library_playback.dart';
 import '../publication/epub_package.dart';
 import '../scan/library_scanner.dart';
@@ -424,6 +425,40 @@ final class FundusLibrary {
     deviceId: deviceId,
     operationId: operationId ?? FundusId.generate(),
   );
+
+  /// Returns durable changes after [since]. The cursor is local to this
+  /// library and monotonically increases, making retries safe across process
+  /// restarts.
+  List<LibrarySyncJournalEntry> syncChanges({int since = 0, int limit = 500}) =>
+      _database.listSyncChanges(since: since, limit: limit);
+
+  int get syncCursor => _database.syncJournalCursor;
+
+  bool hasSyncOperation(String operationId) =>
+      _database.hasSyncOperation(operationId);
+
+  LibrarySyncJournalEntry appendSyncChange({
+    required String entity,
+    required String entityId,
+    required String operation,
+    required Map<String, Object?> payload,
+    required int revision,
+    required String deviceId,
+    required String operationId,
+    DateTime? createdAt,
+  }) {
+    _ensureWritable();
+    return _database.appendSyncChange(
+      entity: entity,
+      entityId: entityId,
+      operation: operation,
+      payload: payload,
+      revision: revision,
+      deviceId: deviceId,
+      operationId: operationId,
+      createdAt: createdAt,
+    );
+  }
 
   Future<String> cacheGeneratedCover({
     required String workId,
@@ -975,7 +1010,7 @@ final class FundusLibrary {
     if (existing.tags.isNotEmpty) return;
     final tags = {...metadata.tags, ...metadata.genres};
     if (tags.isEmpty) return;
-    _database.replaceWorkTags(workId, tags);
+    _database.replaceWorkTags(workId, tags, recordSync: false);
   }
 
   Future<AudiobookImportCandidate> _withEmbeddedIdentity(
@@ -1283,6 +1318,7 @@ final class FundusLibrary {
           workId,
           source.trim(),
           updatedAt: await noteFile.lastModified(),
+          recordSync: false,
         );
       } else {
         for (final note in notes) {
@@ -1290,6 +1326,7 @@ final class FundusLibrary {
             workId,
             note.markdown,
             updatedAt: note.createdAt,
+            recordSync: false,
           );
         }
       }
@@ -1302,6 +1339,7 @@ final class FundusLibrary {
           _database.replaceWorkTags(
             workId,
             (value['tags'] as List).whereType<String>(),
+            recordSync: false,
           );
         }
         final title = value['title'];
@@ -1384,6 +1422,7 @@ final class FundusLibrary {
                 createdAt: createdAt is String
                     ? DateTime.tryParse(createdAt)
                     : null,
+                recordSync: false,
               );
               continue;
             } catch (_) {
@@ -1402,6 +1441,7 @@ final class FundusLibrary {
               createdAt: createdAt is String
                   ? DateTime.tryParse(createdAt)
                   : null,
+              recordSync: false,
             );
           }
         }
@@ -1437,6 +1477,7 @@ final class FundusLibrary {
               createdAt: item['created_at'] is String
                   ? DateTime.tryParse(item['created_at'] as String)
                   : null,
+              recordSync: false,
             );
           } on FormatException {
             // Ignore one malformed portable highlight.

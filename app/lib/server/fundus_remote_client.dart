@@ -451,6 +451,30 @@ final class FundusRemoteCatalogPage {
   final bool notModified;
 }
 
+final class FundusRemoteSyncChanges {
+  const FundusRemoteSyncChanges({
+    required this.entries,
+    required this.nextCursor,
+    required this.hasMore,
+  });
+
+  final List<LibrarySyncJournalEntry> entries;
+  final int nextCursor;
+  final bool hasMore;
+}
+
+final class FundusRemoteSyncResult {
+  const FundusRemoteSyncResult({
+    required this.applied,
+    required this.ignored,
+    required this.cursor,
+  });
+
+  final int applied;
+  final int ignored;
+  final int cursor;
+}
+
 final class FundusRemoteTrack {
   const FundusRemoteTrack({
     required this.id,
@@ -908,6 +932,59 @@ final class FundusRemoteClient {
       hasMore: value['has_more'] == true,
       etag: value['etag'] is String ? value['etag'] as String : null,
       notModified: value['not_modified'] == true,
+    );
+  }
+
+  Future<FundusRemoteSyncChanges> syncChanges(
+    FundusRemoteServer server,
+    String libraryId, {
+    int since = 0,
+    int limit = 500,
+  }) async {
+    final safeSince = since < 0 ? 0 : since;
+    final safeLimit = limit.clamp(1, 500);
+    final value = await _json(
+      server,
+      '/v1/libraries/$libraryId/sync/changes?since=$safeSince&limit=$safeLimit',
+    );
+    final raw = value['entries'];
+    final entries = raw is List
+        ? raw
+              .map(LibrarySyncJournalEntry.fromJson)
+              .whereType<LibrarySyncJournalEntry>()
+              .toList(growable: false)
+        : const <LibrarySyncJournalEntry>[];
+    return FundusRemoteSyncChanges(
+      entries: entries,
+      nextCursor: value['next_cursor'] is int
+          ? value['next_cursor'] as int
+          : safeSince,
+      hasMore: value['has_more'] == true,
+    );
+  }
+
+  Future<FundusRemoteSyncResult> pushSyncChanges(
+    FundusRemoteServer server,
+    String libraryId,
+    Iterable<LibrarySyncJournalEntry> entries,
+  ) async {
+    final bytes = await _request(
+      server.baseUri.resolve('/v1/libraries/$libraryId/sync/changes'),
+      fingerprint: server.certificateFingerprint,
+      token: server.token,
+      method: 'POST',
+      body: jsonEncode({
+        'entries': entries.map((entry) => entry.toJson()).toList(),
+      }),
+    );
+    final decoded = jsonDecode(utf8.decode(bytes));
+    if (decoded is! Map) {
+      throw const HttpException('Ungültige Synchronisations-Antwort.');
+    }
+    return FundusRemoteSyncResult(
+      applied: decoded['applied'] is int ? decoded['applied'] as int : 0,
+      ignored: decoded['ignored'] is int ? decoded['ignored'] as int : 0,
+      cursor: decoded['cursor'] is int ? decoded['cursor'] as int : 0,
     );
   }
 

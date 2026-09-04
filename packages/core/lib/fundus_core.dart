@@ -15,6 +15,7 @@ export 'src/model/library_playlist.dart';
 export 'src/model/library_saved_view.dart';
 export 'src/model/media_position.dart';
 export 'src/model/playback_session.dart';
+export 'src/model/sync_journal.dart';
 export 'src/playback/library_playback.dart';
 export 'src/publication/publication_engine.dart';
 export 'src/publication/epub_package.dart';

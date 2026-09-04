@@ -11,6 +11,7 @@ import '../model/library_collection.dart';
 import '../model/library_playlist.dart';
 import '../model/media_position.dart';
 import '../model/playback_session.dart';
+import '../model/sync_journal.dart';
 import '../playback/library_playback.dart';
 import '../scan/library_scanner.dart';
 import '../scan/audio_technical_metadata.dart';
@@ -119,7 +120,7 @@ final class WorkMetadataOrigin {
 final class FundusDatabase {
   FundusDatabase._(this._database);
 
-  static const schemaVersion = 8;
+  static const schemaVersion = 9;
   static const supportedContentSensitivities = {
     'general',
     'mature',
@@ -1091,6 +1092,28 @@ final class FundusDatabase {
         ''',
         [workId, revision, operationId, snapshot, now],
       );
+      appendSyncChange(
+        entity: 'progress',
+        entityId: '$workId/default',
+        operation: 'upsert',
+        payload: {
+          'work_id': workId,
+          'file_id': fileId,
+          'position': mediaPosition.toJson(),
+          'finished': finished,
+          'revision': revision,
+          'updated_at': DateTime.fromMillisecondsSinceEpoch(
+            now,
+            isUtc: true,
+          ).toUtc().toIso8601String(),
+          'device_id': deviceId,
+          'operation_id': operationId,
+        },
+        revision: revision,
+        deviceId: deviceId,
+        operationId: operationId,
+        createdAt: DateTime.fromMillisecondsSinceEpoch(now, isUtc: true),
+      );
       return loadProgress(workId)!;
     });
   }
@@ -1309,12 +1332,41 @@ final class FundusDatabase {
           [FundusId.generate(), id, workIds[position], position],
         );
       }
+      appendSyncChange(
+        entity: 'playlist',
+        entityId: id,
+        operation: 'upsert',
+        payload: {
+          'id': id,
+          'name': normalizedName,
+          'kind': kind.name,
+          'media_type': normalizedMediaType,
+          'work_ids': workIds,
+          'revision': revision,
+        },
+        revision: revision,
+        deviceId: 'desktop-local',
+        operationId: FundusId.generate(),
+      );
       return loadPlaylist(id)!;
     });
   }
 
   void deletePlaylist(String playlistId) {
+    final exists = _database.select('SELECT 1 FROM playlists WHERE id = ?', [
+      playlistId,
+    ]);
     _database.execute('DELETE FROM playlists WHERE id = ?', [playlistId]);
+    if (exists.isEmpty) return;
+    appendSyncChange(
+      entity: 'playlist',
+      entityId: playlistId,
+      operation: 'delete',
+      payload: {'id': playlistId},
+      revision: 1,
+      deviceId: 'desktop-local',
+      operationId: FundusId.generate(),
+    );
   }
 
   List<LibraryCollection> listCollections() {
@@ -1344,6 +1396,7 @@ final class FundusDatabase {
       throw ArgumentError.value(name, 'name', 'Sammlungsname ist leer.');
     }
     final id = collectionId ?? FundusId.generate();
+    final normalizedWorkIds = workIds.toList(growable: false);
     return transaction(() {
       final previous = _database.select(
         'SELECT created_at, revision FROM collections WHERE id = ?',
@@ -1386,19 +1439,49 @@ final class FundusDatabase {
         [id],
       );
       var position = 0;
-      for (final workId in workIds) {
+      for (final workId in normalizedWorkIds) {
         _database.execute(
           '''INSERT INTO collection_works (collection_id, work_id, position)
              VALUES (?, ?, ?)''',
           [id, workId, position++],
         );
       }
+      appendSyncChange(
+        entity: 'collection',
+        entityId: id,
+        operation: 'upsert',
+        payload: {
+          'id': id,
+          'name': normalizedName,
+          'parent_id': parentId,
+          'kind': kind,
+          'rules': rules,
+          'work_ids': normalizedWorkIds,
+          'revision': revision,
+        },
+        revision: revision,
+        deviceId: 'desktop-local',
+        operationId: FundusId.generate(),
+      );
       return loadCollection(id)!;
     });
   }
 
   void deleteCollection(String collectionId) {
+    final exists = _database.select('SELECT 1 FROM collections WHERE id = ?', [
+      collectionId,
+    ]);
     _database.execute('DELETE FROM collections WHERE id = ?', [collectionId]);
+    if (exists.isEmpty) return;
+    appendSyncChange(
+      entity: 'collection',
+      entityId: collectionId,
+      operation: 'delete',
+      payload: {'id': collectionId},
+      revision: 1,
+      deviceId: 'desktop-local',
+      operationId: FundusId.generate(),
+    );
   }
 
   LibraryCollection _collectionFromRow(Row row) {
@@ -1634,7 +1717,11 @@ final class FundusDatabase {
     );
   }
 
-  void replaceWorkTags(String workId, Iterable<String> names) {
+  void replaceWorkTags(
+    String workId,
+    Iterable<String> names, {
+    bool recordSync = true,
+  }) {
     final normalized =
         {
             for (final name in names)
@@ -1662,18 +1749,55 @@ final class FundusDatabase {
           [workId, tagId],
         );
       }
+      if (recordSync) {
+        appendSyncChange(
+          entity: 'work_tags',
+          entityId: workId,
+          operation: 'upsert',
+          payload: {'work_id': workId, 'tags': normalized},
+          revision: 1,
+          deviceId: 'desktop-local',
+          operationId: FundusId.generate(),
+        );
+      }
     });
   }
 
-  void saveWorkNote(String workId, String markdown, {DateTime? updatedAt}) {
+  void saveWorkNote(
+    String workId,
+    String markdown, {
+    DateTime? updatedAt,
+    bool recordSync = true,
+  }) {
     final now = (updatedAt ?? DateTime.now()).millisecondsSinceEpoch;
+    final noteId = FundusId.generate();
     _database.execute(
       '''
       INSERT INTO notes (id, work_id, user_id, markdown, revision, updated_at)
       VALUES (?, ?, 'default', ?, 1, ?)
       ''',
-      [FundusId.generate(), workId, markdown, now],
+      [noteId, workId, markdown, now],
     );
+    if (recordSync) {
+      appendSyncChange(
+        entity: 'note',
+        entityId: noteId,
+        operation: 'upsert',
+        payload: {
+          'id': noteId,
+          'work_id': workId,
+          'markdown': markdown,
+          'updated_at': DateTime.fromMillisecondsSinceEpoch(
+            now,
+            isUtc: true,
+          ).toIso8601String(),
+        },
+        revision: 1,
+        deviceId: 'desktop-local',
+        operationId: FundusId.generate(),
+        createdAt: DateTime.fromMillisecondsSinceEpoch(now, isUtc: true),
+      );
+    }
   }
 
   LibraryBookmark addBookmark({
@@ -1684,6 +1808,7 @@ final class FundusDatabase {
     String? note,
     String? id,
     DateTime? createdAt,
+    bool recordSync = true,
   }) => addMediaBookmark(
     workId: workId,
     fileId: fileId,
@@ -1696,6 +1821,7 @@ final class FundusDatabase {
     note: note,
     id: id,
     createdAt: createdAt,
+    recordSync: recordSync,
   );
 
   LibraryBookmark addMediaBookmark({
@@ -1706,6 +1832,7 @@ final class FundusDatabase {
     String? note,
     String? id,
     DateTime? createdAt,
+    bool recordSync = true,
   }) {
     var bookmarkId = id ?? FundusId.generate();
     if (id != null) {
@@ -1754,11 +1881,46 @@ final class FundusDatabase {
         bookmark.createdAt.millisecondsSinceEpoch,
       ],
     );
+    if (recordSync) {
+      appendSyncChange(
+        entity: 'bookmark',
+        entityId: bookmark.id,
+        operation: 'upsert',
+        payload: {
+          'id': bookmark.id,
+          'work_id': bookmark.workId,
+          'file_id': bookmark.fileId,
+          'position': bookmark.mediaPosition.toJson(),
+          'label': bookmark.label,
+          'note': bookmark.note,
+          'created_at': bookmark.createdAt.toUtc().toIso8601String(),
+        },
+        revision: 1,
+        deviceId: 'desktop-local',
+        operationId: FundusId.generate(),
+        createdAt: bookmark.createdAt,
+      );
+    }
     return bookmark;
   }
 
-  void deleteBookmark(String bookmarkId) =>
-      _database.execute('DELETE FROM bookmarks WHERE id = ?', [bookmarkId]);
+  void deleteBookmark(String bookmarkId) {
+    final rows = _database.select(
+      'SELECT work_id FROM bookmarks WHERE id = ?',
+      [bookmarkId],
+    );
+    _database.execute('DELETE FROM bookmarks WHERE id = ?', [bookmarkId]);
+    if (rows.isEmpty) return;
+    appendSyncChange(
+      entity: 'bookmark',
+      entityId: bookmarkId,
+      operation: 'delete',
+      payload: {'id': bookmarkId, 'work_id': rows.single['work_id']},
+      revision: 1,
+      deviceId: 'desktop-local',
+      operationId: FundusId.generate(),
+    );
+  }
 
   LibraryHighlight addTextHighlight({
     String? id,
@@ -1769,6 +1931,7 @@ final class FundusDatabase {
     String color = '#FFF176',
     String? note,
     DateTime? createdAt,
+    bool recordSync = true,
   }) {
     final highlight = LibraryHighlight(
       id: id ?? FundusId.generate(),
@@ -1801,10 +1964,148 @@ final class FundusDatabase {
         highlight.createdAt.millisecondsSinceEpoch,
       ],
     );
+    if (recordSync) {
+      appendSyncChange(
+        entity: 'highlight',
+        entityId: highlight.id,
+        operation: 'upsert',
+        payload: {
+          'id': highlight.id,
+          'work_id': highlight.workId,
+          'file_id': highlight.fileId,
+          'position': highlight.mediaPosition.toJson(),
+          'quote': highlight.quote,
+          'color': highlight.color,
+          'note': highlight.note,
+          'created_at': highlight.createdAt.toUtc().toIso8601String(),
+        },
+        revision: 1,
+        deviceId: 'desktop-local',
+        operationId: FundusId.generate(),
+        createdAt: highlight.createdAt,
+      );
+    }
     return highlight;
   }
 
   void deleteHighlight(String highlightId) => deleteBookmark(highlightId);
+
+  /// Appends a synchronisable change exactly once. The operation id is the
+  /// idempotency key shared by clients and servers, so retrying a request
+  /// after a connection loss cannot create duplicate journal entries.
+  LibrarySyncJournalEntry appendSyncChange({
+    required String entity,
+    required String entityId,
+    required String operation,
+    required Map<String, Object?> payload,
+    required int revision,
+    required String deviceId,
+    required String operationId,
+    DateTime? createdAt,
+  }) {
+    if (entity.trim().isEmpty || entityId.trim().isEmpty) {
+      throw ArgumentError(
+        'Synchronisierbare Entität und ID dürfen nicht leer sein.',
+      );
+    }
+    if (operation != 'upsert' && operation != 'delete') {
+      throw ArgumentError.value(
+        operation,
+        'operation',
+        'Erwartet upsert oder delete.',
+      );
+    }
+    if (revision < 1) {
+      throw ArgumentError.value(
+        revision,
+        'revision',
+        'Revision muss positiv sein.',
+      );
+    }
+    if (deviceId.trim().isEmpty || operationId.trim().isEmpty) {
+      throw ArgumentError('Geräte- und Operations-ID dürfen nicht leer sein.');
+    }
+    final existing = _database.select(
+      'SELECT * FROM sync_journal WHERE operation_id = ?',
+      [operationId],
+    );
+    if (existing.isNotEmpty) return _syncEntryFromRow(existing.first);
+    final timestamp = (createdAt ?? DateTime.now().toUtc()).toUtc();
+    _database.execute(
+      '''
+      INSERT INTO sync_journal (
+        entity, entity_id, op, payload_json, revision, device_id,
+        operation_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ''',
+      [
+        entity.trim(),
+        entityId.trim(),
+        operation,
+        jsonEncode(payload),
+        revision,
+        deviceId.trim(),
+        operationId.trim(),
+        timestamp.millisecondsSinceEpoch,
+      ],
+    );
+    final row = _database.select(
+      'SELECT * FROM sync_journal WHERE operation_id = ?',
+      [operationId],
+    ).single;
+    return _syncEntryFromRow(row);
+  }
+
+  List<LibrarySyncJournalEntry> listSyncChanges({
+    int since = 0,
+    int limit = 500,
+  }) {
+    final normalizedSince = since < 0 ? 0 : since;
+    final normalizedLimit = limit.clamp(1, 5000);
+    final rows = _database.select(
+      '''
+      SELECT * FROM sync_journal
+      WHERE seq > ?
+      ORDER BY seq
+      LIMIT ?
+      ''',
+      [normalizedSince, normalizedLimit],
+    );
+    return rows.map(_syncEntryFromRow).toList(growable: false);
+  }
+
+  int get syncJournalCursor {
+    final rows = _database.select(
+      'SELECT COALESCE(MAX(seq), 0) AS cursor FROM sync_journal',
+    );
+    return rows.single['cursor'] as int;
+  }
+
+  bool hasSyncOperation(String operationId) => _database.select(
+    'SELECT 1 FROM sync_journal WHERE operation_id = ?',
+    [operationId],
+  ).isNotEmpty;
+
+  LibrarySyncJournalEntry _syncEntryFromRow(Row row) {
+    final decoded = jsonDecode(row['payload_json'] as String);
+    final payload = decoded is Map
+        ? Map<String, Object?>.from(decoded)
+        : <String, Object?>{};
+    return LibrarySyncJournalEntry(
+      sequence: row['seq'] as int,
+      entity: row['entity'] as String,
+      entityId: row['entity_id'] as String,
+      operation: row['op'] as String,
+      payload: payload,
+      revision: row['revision'] as int,
+      deviceId: row['device_id'] as String,
+      operationId: row['operation_id'] as String,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        row['created_at'] as int,
+        isUtc: true,
+      ),
+    );
+  }
 
   void markUnseenFilesMissing(Set<String> seenPaths) {
     _database.execute("UPDATE files SET status = 'missing'");
@@ -2151,6 +2452,7 @@ final class FundusDatabase {
     if (_database.userVersion == 5 && !readOnly) _migrateToVersion6();
     if (_database.userVersion == 6 && !readOnly) _migrateToVersion7();
     if (_database.userVersion == 7 && !readOnly) _migrateToVersion8();
+    if (_database.userVersion == 8 && !readOnly) _migrateToVersion9();
   }
 
   void _migrateToVersion1() {
@@ -2304,6 +2606,22 @@ final class FundusDatabase {
         }
       }
       _database.userVersion = 8;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  void _migrateToVersion9() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      _database.execute(_syncJournalTableStatement);
+      _database.execute(
+        'CREATE INDEX IF NOT EXISTS sync_journal_entity_idx '
+        'ON sync_journal(entity, entity_id, seq)',
+      );
+      _database.userVersion = 9;
       _database.execute('COMMIT');
     } catch (_) {
       _database.execute('ROLLBACK');
@@ -2561,3 +2879,17 @@ const _version1Statements = <String>[
   )
   ''',
 ];
+
+const _syncJournalTableStatement = '''
+CREATE TABLE IF NOT EXISTS sync_journal (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
+  payload_json TEXT NOT NULL,
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  device_id TEXT NOT NULL,
+  operation_id TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL
+)
+''';
