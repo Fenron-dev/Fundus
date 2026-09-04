@@ -733,6 +733,13 @@ final class FundusRemoteServerStore {
 final class FundusRemoteClient {
   const FundusRemoteClient();
 
+  // Metadata requests are short-lived, but they are also frequent while a
+  // library is opened or refreshed. Keep one HttpClient per pinned endpoint so
+  // TLS sessions and keep-alive connections can be reused. Media streams keep
+  // their dedicated client because their lifetime is controlled by the
+  // player, not by a single request.
+  static final Map<String, HttpClient> _jsonClients = {};
+
   Future<FundusRemoteServer> verifyEndpoint(
     FundusRemoteServer server,
     Uri baseUri,
@@ -2041,31 +2048,68 @@ final class FundusRemoteClient {
     String? token,
     String? body,
   }) async {
-    final stream = await _open(
-      uri,
-      fingerprint: fingerprint,
-      method: method,
-      token: token,
-      body: body,
-    );
+    final poolKey = '$fingerprint|${uri.scheme}://${uri.host}:${uri.port}';
+    final client = _jsonClients.putIfAbsent(poolKey, () {
+      final value = HttpClient()
+        ..autoUncompress = false
+        ..connectionTimeout = const Duration(seconds: 4)
+        ..badCertificateCallback = (certificate, host, port) =>
+            _fingerprint(certificate) == fingerprint;
+      return value;
+    });
     try {
+      final request = await client.openUrl(method, uri);
+      request.followRedirects = false;
+      request.headers.set(HttpHeaders.acceptHeader, '*/*');
+      request.headers.set(HttpHeaders.acceptEncodingHeader, 'gzip');
+      if (token != null) {
+        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+      }
+      if (body != null) {
+        request.headers.contentType = ContentType.json;
+        request.write(body);
+      }
+      final response = await request.close();
+      final certificate = response.certificate;
+      if (certificate == null || _fingerprint(certificate) != fingerprint) {
+        await response.drain<void>();
+        throw const TlsException(
+          'Zertifikat stimmt nicht mit dem QR-Code überein.',
+        );
+      }
       final encoded = Uint8List.fromList(
-        await stream.response
+        await response
             .timeout(const Duration(seconds: 20))
             .expand((chunk) => chunk)
             .toList(),
       );
-      final contentEncoding = stream.response.headers
+      final contentEncoding = response.headers
           .value(HttpHeaders.contentEncodingHeader)
           ?.toLowerCase()
           .split(',')
           .map((value) => value.trim());
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final bodyBytes = contentEncoding?.contains('gzip') == true
+            ? gzip.decode(encoded)
+            : encoded;
+        throw FundusRemoteRequestException(
+          response.statusCode,
+          utf8.decode(bodyBytes),
+          requestUri: uri,
+        );
+      }
       if (contentEncoding?.contains('gzip') == true) {
         return Uint8List.fromList(gzip.decode(encoded));
       }
       return encoded;
-    } finally {
-      stream.close();
+    } catch (_) {
+      // A pooled client can retain a broken socket after a network change.
+      // Remove only this endpoint; unrelated paired servers stay healthy.
+      if (identical(_jsonClients[poolKey], client)) {
+        _jsonClients.remove(poolKey);
+        client.close(force: true);
+      }
+      rethrow;
     }
   }
 
