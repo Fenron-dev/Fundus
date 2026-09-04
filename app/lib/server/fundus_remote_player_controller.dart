@@ -71,7 +71,7 @@ FundusRemoteChapterTarget? resolveRemoteChapterTarget(
 }
 
 final class FundusRemotePlayerController extends ChangeNotifier
-    implements FundusPlaybackController {
+    implements FundusVideoPlaybackController {
   static const Set<FundusPlaybackCapability> _capabilities = {
     FundusPlaybackCapability.playPause,
     FundusPlaybackCapability.seek,
@@ -230,7 +230,9 @@ final class FundusRemotePlayerController extends ChangeNotifier
   String? get playbackTrackTitle => track?.title;
 
   /// The media-kit player is also used by the shared fullscreen video page.
+  @override
   Player get player => _player;
+  @override
   VideoController get videoController => _videoController;
   List<FundusRemoteWork> get workQueue => List.unmodifiable(_workQueue);
   int get workQueueIndex => _workQueueIndex;

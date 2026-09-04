@@ -18,7 +18,7 @@ import 'fundus_video_playback_session.dart';
 /// contract as publications and audio, so server synchronization can be added
 /// without changing the player UI later.
 final class FundusVideoPlayerController extends ChangeNotifier
-    implements FundusPlaybackController {
+    implements FundusVideoPlaybackController {
   static const Set<FundusPlaybackCapability> _capabilities = {
     FundusPlaybackCapability.playPause,
     FundusPlaybackCapability.seek,
@@ -125,7 +125,9 @@ final class FundusVideoPlayerController extends ChangeNotifier
   bool _closed = false;
   String? _error;
 
+  @override
   Player get player => _player;
+  @override
   VideoController get videoController => _videoController;
   LibraryWorkSummary? get work => _work;
   @override

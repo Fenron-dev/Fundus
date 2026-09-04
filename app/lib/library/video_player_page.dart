@@ -9,35 +9,23 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../playback/fundus_playback_controller.dart';
 import '../playback/fundus_video_player_controller.dart';
 
-const Set<FundusPlaybackCapability> _defaultVideoCapabilities = {
-  FundusPlaybackCapability.playPause,
-  FundusPlaybackCapability.seek,
-  FundusPlaybackCapability.previous,
-  FundusPlaybackCapability.next,
-  FundusPlaybackCapability.speed,
-  FundusPlaybackCapability.trackSelection,
-  FundusPlaybackCapability.subtitles,
-  FundusPlaybackCapability.screenshots,
-  FundusPlaybackCapability.bookmarks,
-};
-
 Future<void> showFundusVideoPlayer(
   BuildContext context, {
-  required FundusVideoPlayerController controller,
+  required FundusVideoPlaybackController controller,
 }) => showFundusVideoPlayerForPlayer(
   context,
-  player: controller.player,
-  videoController: controller.videoController,
-  fundusController: controller,
-  title: controller.work?.title ?? 'Video',
+  controller: controller,
+  fundusController: controller is FundusVideoPlayerController
+      ? controller
+      : null,
+  title: controller.playbackWorkTitle ?? 'Video',
   resumePlayback: true,
   initialPosition: controller.position,
 );
 
 Future<void> showFundusVideoPlayerForPlayer(
   BuildContext context, {
-  required Player player,
-  required VideoController videoController,
+  required FundusVideoPlaybackController controller,
   required String title,
   FundusVideoPlayerController? fundusController,
   Set<FundusPlaybackCapability>? capabilities,
@@ -51,14 +39,11 @@ Future<void> showFundusVideoPlayerForPlayer(
   MaterialPageRoute(
     fullscreenDialog: true,
     builder: (context) => _FundusVideoPlayerPage(
-      player: player,
-      videoController: videoController,
+      player: controller.player,
+      videoController: controller.videoController,
       title: title,
       fundusController: fundusController,
-      capabilities:
-          capabilities ??
-          fundusController?.capabilities ??
-          _defaultVideoCapabilities,
+      capabilities: capabilities ?? controller.capabilities,
       resumePlayback: resumePlayback,
       initialPosition: initialPosition,
       onAudioTrackSelected: onAudioTrackSelected,
