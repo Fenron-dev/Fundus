@@ -13,6 +13,7 @@ import 'playback_shake_restart.dart';
 import 'playback_resume_policy.dart';
 import 'fundus_system_media_session.dart';
 import 'playlist_session_conflict.dart';
+import 'fundus_playback_controller.dart';
 
 final class PlayerWorkProgress {
   const PlayerWorkProgress({
@@ -28,7 +29,8 @@ final class PlayerWorkProgress {
   final bool finished;
 }
 
-final class FundusPlayerController extends ChangeNotifier {
+final class FundusPlayerController extends ChangeNotifier
+    implements FundusPlaybackController {
   FundusPlayerController({
     this.onConflict,
     this.onPlaylistConflict,
@@ -136,9 +138,21 @@ final class FundusPlayerController extends ChangeNotifier {
       PlaybackAutosaveSettings.interval(_work?.kind ?? 'audiobook');
 
   LibraryWorkSummary? get work => _work;
+  @override
+  String? get playbackWorkId => _work?.id;
+  @override
+  String? get playbackWorkTitle => _work?.title;
+  @override
+  String? get playbackKind => _work?.kind;
+  @override
+  String? get playbackTrackId => track?.fileId;
+  @override
+  String? get playbackTrackTitle => track?.title;
   LibraryPlaybackTrack? get track =>
       _tracks.isEmpty ? null : _tracks[_currentIndex];
+  @override
   int get currentIndex => _currentIndex;
+  @override
   int get trackCount => _tracks.length;
   List<LibraryPlaybackTrack> get tracks => List.unmodifiable(_tracks);
   List<LibraryPlaybackChapter> get chapters => List.unmodifiable(_chapters);
@@ -152,11 +166,16 @@ final class FundusPlayerController extends ChangeNotifier {
     return result;
   }
 
+  @override
   Duration get position => _position;
+  @override
   Duration get duration => _duration;
+  @override
   bool get playing => _playing;
+  @override
   bool get loading => _loading;
   double get rate => _rate;
+  @override
   String? get error => _error;
   PlaybackSleepTimer get sleepTimer => _sleepTimer;
   List<LibraryWorkSummary> get queue => List.unmodifiable(_queue);
@@ -286,6 +305,7 @@ final class FundusPlayerController extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> playOrPause() async {
     if (_player.state.playing) {
       await _pauseAndPersist();
@@ -452,6 +472,7 @@ final class FundusPlayerController extends ChangeNotifier {
   /// Returns the user-facing name stored for a synchronized device.
   String displayNameForDevice(String value) => _resolveDeviceName(value);
 
+  @override
   Future<void> next() async {
     if (_currentIndex >= _tracks.length - 1) return;
     await persist();
@@ -491,6 +512,7 @@ final class FundusPlayerController extends ChangeNotifier {
     await persist();
   }
 
+  @override
   Future<void> previous() async {
     if (_position > const Duration(seconds: 5)) {
       await _player.seek(Duration.zero);
@@ -502,6 +524,7 @@ final class FundusPlayerController extends ChangeNotifier {
     await _player.previous();
   }
 
+  @override
   Future<void> seek(Duration value) async {
     await _player.seek(value);
     _position = value;
@@ -698,6 +721,7 @@ final class FundusPlayerController extends ChangeNotifier {
     unawaited(_persistPlaybackSession());
   }
 
+  @override
   Future<void> persist({bool finished = false}) async {
     if (!_ready || _persisting || _closed) return;
     final library = _library;
@@ -764,6 +788,7 @@ final class FundusPlayerController extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> close() async {
     if (_closed) return;
     await persist();

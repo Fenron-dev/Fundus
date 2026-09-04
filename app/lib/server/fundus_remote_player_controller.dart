@@ -19,6 +19,7 @@ import '../playback/video_track_preferences.dart';
 import 'fundus_remote_client.dart';
 import 'fundus_remote_stream_proxy.dart';
 import 'fundus_offline_store.dart';
+import '../playback/fundus_playback_controller.dart';
 
 typedef FundusRemoteServerResolver =
     Future<FundusRemoteServer> Function(FundusRemoteServer server);
@@ -68,7 +69,8 @@ FundusRemoteChapterTarget? resolveRemoteChapterTarget(
   );
 }
 
-final class FundusRemotePlayerController extends ChangeNotifier {
+final class FundusRemotePlayerController extends ChangeNotifier
+    implements FundusPlaybackController {
   FundusRemotePlayerController({
     required this.deviceId,
     required this.deviceName,
@@ -202,6 +204,21 @@ final class FundusRemotePlayerController extends ChangeNotifier {
 
   FundusRemoteWork? get work => _work;
 
+  @override
+  String? get playbackWorkId => _work?.id;
+
+  @override
+  String? get playbackWorkTitle => _work?.title;
+
+  @override
+  String? get playbackKind => _work?.kind;
+
+  @override
+  String? get playbackTrackId => track?.id;
+
+  @override
+  String? get playbackTrackTitle => track?.title;
+
   /// The media-kit player is also used by the shared fullscreen video page.
   Player get player => _player;
   VideoController get videoController => _videoController;
@@ -214,7 +231,11 @@ final class FundusRemotePlayerController extends ChangeNotifier {
   List<FundusRemoteTrack> get tracks => List.unmodifiable(_tracks);
   List<FundusRemoteChapter> get chapters => List.unmodifiable(_chapters);
   String? get offlineCoverPath => _offlineWork?.coverPath;
+  @override
   int get currentIndex => _currentIndex;
+
+  @override
+  int get trackCount => _tracks.length;
   int? get currentChapterIndex {
     int? result;
     for (var index = 0; index < _chapters.length; index++) {
@@ -225,11 +246,16 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     return result;
   }
 
+  @override
   Duration get position => _position;
+  @override
   Duration get duration => _duration;
+  @override
   bool get playing => _playing;
+  @override
   bool get loading => _loading;
   double get rate => _rate;
+  @override
   String? get error => _error;
   PlaybackSleepTimer get sleepTimer => _sleepTimer;
 
@@ -669,6 +695,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> playOrPause() async {
     if (!_ready) return;
     if (_playing) {
@@ -847,6 +874,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     return current?.title;
   }
 
+  @override
   Future<void> seek(Duration value) async {
     await _player.seek(value);
     _position = value;
@@ -876,6 +904,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     await _player.setRate(value);
   }
 
+  @override
   Future<void> next() async {
     if (!_ready) return;
     if (_currentIndex < _tracks.length - 1) {
@@ -886,6 +915,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     await _advanceWorkQueue();
   }
 
+  @override
   Future<void> previous() async {
     if (!_ready) return;
     if (_position > const Duration(seconds: 5)) {
@@ -1044,6 +1074,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     await persist();
   }
 
+  @override
   Future<void> persist({bool finished = false}) async {
     if (!_ready || _persisting || _closed) return;
     final server = _server;
@@ -1122,6 +1153,7 @@ final class FundusRemotePlayerController extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> close() async {
     if (_closed) return;
     await persist();

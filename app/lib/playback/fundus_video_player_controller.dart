@@ -9,13 +9,15 @@ import '../diagnostics/fundus_diagnostics.dart';
 import 'playback_resume_policy.dart';
 import 'playback_autosave_settings.dart';
 import 'video_track_preferences.dart';
+import 'fundus_playback_controller.dart';
 
 /// Local video playback kept separate from the audiobook controller.
 ///
 /// The controller deliberately uses the same media-neutral `MediaPosition`
 /// contract as publications and audio, so server synchronization can be added
 /// without changing the player UI later.
-final class FundusVideoPlayerController extends ChangeNotifier {
+final class FundusVideoPlayerController extends ChangeNotifier
+    implements FundusPlaybackController {
   FundusVideoPlayerController() : _player = Player() {
     // Attach the native video output before a medium is opened. Creating it
     // only in the fullscreen route lets audio decode and seek correctly while
@@ -119,15 +121,36 @@ final class FundusVideoPlayerController extends ChangeNotifier {
   Player get player => _player;
   VideoController get videoController => _videoController;
   LibraryWorkSummary? get work => _work;
+  @override
+  String? get playbackWorkId => _work?.id;
+  @override
+  String? get playbackWorkTitle => _work?.title;
+  @override
+  String? get playbackKind => _work?.kind;
+  @override
+  String? get playbackTrackId => track?.fileId;
+  @override
+  String? get playbackTrackTitle => track?.title;
   List<LibraryPlaybackTrack> get tracks => List.unmodifiable(_tracks);
   LibraryPlaybackTrack? get track =>
       _tracks.isEmpty ? null : _tracks[_currentIndex];
+  @override
   int get currentIndex => _currentIndex;
+  @override
+  int get trackCount => _tracks.length;
+  @override
   Duration get position => _position;
+  @override
   Duration get duration => _duration;
+  @override
   bool get playing => _playing;
+  @override
   bool get loading => _loading;
+  @override
   String? get error => _error;
+
+  @override
+  Future<void> playOrPause() => toggle();
 
   Future<void> open(
     FundusLibrary library,
@@ -245,6 +268,7 @@ final class FundusVideoPlayerController extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> persist({bool finished = false}) async {
     if (!_ready ||
         _restoringPosition ||
@@ -302,6 +326,7 @@ final class FundusVideoPlayerController extends ChangeNotifier {
     await persist();
   }
 
+  @override
   Future<void> seek(Duration position) async {
     if (!_ready) return;
     final maximum = _duration;
@@ -318,12 +343,14 @@ final class FundusVideoPlayerController extends ChangeNotifier {
     if (!_playing) await persist();
   }
 
+  @override
   Future<void> next() async {
     if (!_ready || _currentIndex >= _tracks.length - 1) return;
     await persist();
     await _player.next();
   }
 
+  @override
   Future<void> previous() async {
     if (!_ready) return;
     if (_position > const Duration(seconds: 5)) {
@@ -412,6 +439,7 @@ final class FundusVideoPlayerController extends ChangeNotifier {
     );
   }
 
+  @override
   Future<void> close() async {
     if (_closed) return;
     await persist();
