@@ -11,10 +11,172 @@ import '../playback/playback_shake_restart.dart';
 import '../playback/video_track_preferences.dart';
 import '../video/video_metadata_dialog.dart';
 import '../settings/fundus_settings_snapshot.dart';
+import '../settings/hhh_content_settings.dart';
 import 'annotation_sync_settings.dart';
 import 'fundus_peer_server_controller.dart';
 import 'fundus_offline_store.dart';
 import 'remote_servers_view.dart';
+
+/// Settings tile for the two-stage HHH visibility policy. The policy itself
+/// is device-local; only the resulting visibility is passed to the library
+/// shell so remote and offline catalogs follow the same rule.
+class HhhVisibilityModeSettingTile extends StatefulWidget {
+  const HhhVisibilityModeSettingTile({super.key, this.onVisibilityChanged});
+
+  final ValueChanged<bool>? onVisibilityChanged;
+
+  @override
+  State<HhhVisibilityModeSettingTile> createState() =>
+      _HhhVisibilityModeSettingTileState();
+}
+
+class _HhhVisibilityModeSettingTileState
+    extends State<HhhVisibilityModeSettingTile> {
+  HhhVisibilityMode? _mode;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final value = await HhhContentSettings.mode();
+    if (mounted) setState(() => _mode = value);
+  }
+
+  Future<void> _select(HhhVisibilityMode value) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      if (value == HhhVisibilityMode.protected &&
+          !await HhhContentSettings.hasPin()) {
+        final pin = await _pinDialog(setup: true);
+        if (pin == null) return;
+        await HhhContentSettings.setPin(pin);
+      }
+      await HhhContentSettings.setMode(value);
+      if (!mounted) return;
+      setState(() => _mode = value);
+      widget.onVisibilityChanged?.call(value == HhhVisibilityMode.visible);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _unlock() async {
+    if (_busy) return;
+    final pin = await _pinDialog(setup: false);
+    if (pin == null || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final unlocked = await HhhContentSettings.unlock(pin);
+      if (!mounted) return;
+      if (!unlocked) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('PIN ist nicht korrekt.')));
+        return;
+      }
+      widget.onVisibilityChanged?.call(true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<String?> _pinDialog({required bool setup}) async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(setup ? 'HHH-Schutz einrichten' : 'HHH-Inhalte freigeben'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          obscureText: true,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            labelText: setup ? 'Neue PIN (mind. 4 Zeichen)' : 'PIN',
+          ),
+          onSubmitted: (value) => Navigator.pop(context, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: Text(setup ? 'Einrichten' : 'Freigeben'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return result?.trim().isEmpty == true ? null : result?.trim();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mode = _mode;
+    return ListTile(
+      leading: const Icon(Icons.shield_outlined),
+      title: const Text('HHH-Schutzmodus'),
+      subtitle: Text(
+        mode == null
+            ? 'Wird geladen …'
+            : switch (mode) {
+                HhhVisibilityMode.hidden =>
+                  'Vollständig ausgeblendet (keine Navigation oder Suche)',
+                HhhVisibilityMode.protected =>
+                  'Per PIN für 20 Minuten freigeben',
+                HhhVisibilityMode.visible => 'Auf diesem Gerät sichtbar',
+              },
+      ),
+      trailing: mode == null
+          ? const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Wrap(
+              spacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                DropdownButton<HhhVisibilityMode>(
+                  value: mode,
+                  onChanged: _busy
+                      ? null
+                      : (value) {
+                          if (value != null) _select(value);
+                        },
+                  items: const [
+                    DropdownMenuItem(
+                      value: HhhVisibilityMode.hidden,
+                      child: Text('Ausblenden'),
+                    ),
+                    DropdownMenuItem(
+                      value: HhhVisibilityMode.protected,
+                      child: Text('Geschützt'),
+                    ),
+                    DropdownMenuItem(
+                      value: HhhVisibilityMode.visible,
+                      child: Text('Anzeigen'),
+                    ),
+                  ],
+                ),
+                if (mode == HhhVisibilityMode.protected)
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _unlock,
+                    icon: const Icon(Icons.lock_open_outlined),
+                    label: const Text('Freigeben'),
+                  ),
+              ],
+            ),
+    );
+  }
+}
 
 Future<void> showFundusServerSettings(
   BuildContext context,
@@ -142,10 +304,14 @@ class _ServerSettings extends StatelessWidget {
                 title: const Text('HHH-Inhalte anzeigen'),
                 subtitle: const Text(
                   'Explizite Inhalte medienübergreifend ein- oder ausblenden. '
-                  'Der geschützte Serverfilter folgt als eigener Schritt.',
+                  'Der Schutz gilt für Bibliothek, Suche, Resume und Statistik.',
                 ),
                 value: hhhEnabled,
                 onChanged: onHhhEnabledChanged,
+              ),
+              const Divider(),
+              HhhVisibilityModeSettingTile(
+                onVisibilityChanged: onHhhEnabledChanged,
               ),
             ]),
             _librarySettings(context),
