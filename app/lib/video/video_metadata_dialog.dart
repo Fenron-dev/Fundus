@@ -15,8 +15,16 @@ abstract final class VideoMetadataLanguagePreferences {
       await _secureStorage.read(key: _metadataLanguageStorageKey) ??
       defaultLanguage;
 
-  static Future<void> save(String language) =>
-      _secureStorage.write(key: _metadataLanguageStorageKey, value: language);
+  static Future<void> save(String language) async {
+    await _secureStorage.write(
+      key: _metadataLanguageStorageKey,
+      value: language,
+    );
+    // A language change must not keep showing a result from the previous
+    // locale. The provider cache is process-local and otherwise lives for
+    // ten minutes.
+    VideoMetadataService.clearCache();
+  }
 }
 
 final class VideoMetadataLanguageSettingTile extends StatefulWidget {
@@ -48,7 +56,8 @@ final class _VideoMetadataLanguageSettingTileState
       leading: const Icon(Icons.translate_outlined),
       title: const Text('Sprache für Film- und Seriendetails'),
       subtitle: const Text(
-        'AniList und TMDB verwenden diese Sprache beim Laden neuer Metadaten.',
+        'TMDB liefert lokalisierte Texte. AniList nutzt bei Deutsch den '
+        'englischen bzw. japanischen Originaltitel als Fallback.',
       ),
       trailing: DropdownButton<String>(
         value: _language,
