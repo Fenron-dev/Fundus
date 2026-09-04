@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:fundus_core/fundus_core.dart';
 
+import 'fundus_breadcrumbs.dart';
 import 'media_content_schema.dart';
 
 /// Shared Plex-inspired identity block for video works.
@@ -21,6 +22,10 @@ class FundusVideoDetailHero extends StatelessWidget {
     this.onSelectTag,
     this.onSelectCollection,
     this.collectionNames = const [],
+    this.favorite = false,
+    this.onToggleFavorite,
+    this.onCoverTap,
+    this.breadcrumbs = const [],
   });
 
   final LibraryWorkSummary work;
@@ -33,6 +38,10 @@ class FundusVideoDetailHero extends StatelessWidget {
   final ValueChanged<String>? onSelectTag;
   final ValueChanged<String>? onSelectCollection;
   final List<String> collectionNames;
+  final bool favorite;
+  final VoidCallback? onToggleFavorite;
+  final VoidCallback? onCoverTap;
+  final List<FundusBreadcrumb> breadcrumbs;
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
@@ -60,7 +69,26 @@ class FundusVideoDetailHero extends StatelessWidget {
       final details = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(work.title, style: Theme.of(context).textTheme.headlineMedium),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  work.title,
+                  style: Theme.of(context).textTheme.headlineMedium,
+                ),
+              ),
+              if (onToggleFavorite != null)
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: favorite
+                      ? 'Aus Favoriten entfernen'
+                      : 'Als Favorit markieren',
+                  onPressed: onToggleFavorite,
+                  icon: Icon(favorite ? Icons.star : Icons.star_border),
+                ),
+            ],
+          ),
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,
@@ -242,14 +270,22 @@ class FundusVideoDetailHero extends StatelessWidget {
           ],
         ],
       );
-      final cover = AspectRatio(
+      final coverImage = AspectRatio(
         aspectRatio: .68,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(14),
           child: coverBuilder(context),
         ),
       );
-      return ClipRRect(
+      final cover = onCoverTap == null
+          ? coverImage
+          : InkWell(
+              key: const ValueKey('video-detail-cover-action'),
+              borderRadius: BorderRadius.circular(14),
+              onTap: onCoverTap,
+              child: coverImage,
+            );
+      final card = ClipRRect(
         borderRadius: BorderRadius.circular(18),
         child: Stack(
           children: [
@@ -299,6 +335,15 @@ class FundusVideoDetailHero extends StatelessWidget {
             ),
           ],
         ),
+      );
+      if (breadcrumbs.isEmpty) return card;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          FundusBreadcrumbs(items: breadcrumbs, compact: true),
+          const SizedBox(height: 8),
+          card,
+        ],
       );
     },
   );

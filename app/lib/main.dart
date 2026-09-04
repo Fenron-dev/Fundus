@@ -7012,56 +7012,101 @@ class _DetailPanelState extends State<_DetailPanel> {
           padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
           child: Column(
             children: [
-              WorkDetailHeader(
-                detail: detail,
-                breadcrumbs: _detailBreadcrumbs(
-                  work,
-                  onPrevious: () => Navigator.of(context).maybePop(),
-                ),
-                coverBuilder: (_) => _WorkCover(work: work, iconSize: 58),
-                onCoverTap: () => showDialog<void>(
-                  context: context,
-                  builder: (dialogContext) => Dialog(
-                    clipBehavior: Clip.antiAlias,
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        maxWidth: 520,
-                        maxHeight: 720,
-                      ),
-                      child: AspectRatio(
-                        aspectRatio: 2 / 3,
-                        child: _WorkCover(work: work, iconSize: 84),
+              if (video)
+                FundusVideoDetailHero(
+                  work: work,
+                  directoryPath: directoryPath,
+                  breadcrumbs: _detailBreadcrumbs(
+                    work,
+                    onPrevious: () => Navigator.of(context).maybePop(),
+                  ),
+                  coverBuilder: (_) => _WorkCover(work: work, iconSize: 58),
+                  onCoverTap: () => showDialog<void>(
+                    context: context,
+                    builder: (dialogContext) => Dialog(
+                      clipBehavior: Clip.antiAlias,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: 520,
+                          maxHeight: 720,
+                        ),
+                        child: AspectRatio(
+                          aspectRatio: 2 / 3,
+                          child: _WorkCover(work: work, iconSize: 84),
+                        ),
                       ),
                     ),
                   ),
+                  favorite: _annotations.tags.contains(_favoriteTag),
+                  onToggleFavorite: widget.library == null || _saving
+                      ? null
+                      : _toggleFavorite,
+                  collectionNames: _collectionsFor(work),
+                  onSelectCollection: widget.onSelectCollection,
+                  onSelectPerson: widget.onSelectPerson,
+                  onSelectTag: widget.onSelectTag,
+                  onOpen: videoFiles.isEmpty
+                      ? null
+                      : () => _openDocumentWork(work, videoFiles),
+                  onLoadMetadata:
+                      widget.library == null ||
+                          widget.library!.isReadOnly ||
+                          _saving
+                      ? null
+                      : () => _loadVideoMetadata(work),
+                  onChangeType:
+                      widget.library == null ||
+                          widget.library!.isReadOnly ||
+                          _saving
+                      ? null
+                      : () => _changeVideoType(work),
+                )
+              else
+                WorkDetailHeader(
+                  detail: detail,
+                  breadcrumbs: _detailBreadcrumbs(
+                    work,
+                    onPrevious: () => Navigator.of(context).maybePop(),
+                  ),
+                  coverBuilder: (_) => _WorkCover(work: work, iconSize: 58),
+                  onCoverTap: () => showDialog<void>(
+                    context: context,
+                    builder: (dialogContext) => Dialog(
+                      clipBehavior: Clip.antiAlias,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: 520,
+                          maxHeight: 720,
+                        ),
+                        child: AspectRatio(
+                          aspectRatio: 2 / 3,
+                          child: _WorkCover(work: work, iconSize: 84),
+                        ),
+                      ),
+                    ),
+                  ),
+                  favorite: _annotations.tags.contains(_favoriteTag),
+                  onToggleFavorite: widget.library == null || _saving
+                      ? null
+                      : _toggleFavorite,
+                  primaryAction: openable.isEmpty
+                      ? null
+                      : WorkDetailHeaderAction(
+                          label: progress == null ? 'Lesen' : 'Fortsetzen',
+                          icon: Icons.menu_book_outlined,
+                          onPressed: () => _openDocumentWork(work, files),
+                        ),
+                  secondaryAction:
+                      widget.library?.listProgressRevisions(work.id).isEmpty ??
+                          true
+                      ? null
+                      : WorkDetailHeaderAction(
+                          label: 'Gerätestände',
+                          icon: Icons.history,
+                          onPressed: () =>
+                              _showLocalReaderProgressHistory(work, files),
+                        ),
                 ),
-                favorite: _annotations.tags.contains(_favoriteTag),
-                onToggleFavorite: widget.library == null || _saving
-                    ? null
-                    : _toggleFavorite,
-                primaryAction: openable.isEmpty
-                    ? null
-                    : WorkDetailHeaderAction(
-                        label: video
-                            ? (progress == null ? 'Abspielen' : 'Fortsetzen')
-                            : (progress == null ? 'Lesen' : 'Fortsetzen'),
-                        icon: video
-                            ? Icons.play_arrow
-                            : Icons.menu_book_outlined,
-                        onPressed: () =>
-                            _openDocumentWork(work, video ? videoFiles : files),
-                      ),
-                secondaryAction:
-                    widget.library?.listProgressRevisions(work.id).isEmpty ??
-                        true
-                    ? null
-                    : WorkDetailHeaderAction(
-                        label: 'Gerätestände',
-                        icon: Icons.history,
-                        onPressed: () =>
-                            _showLocalReaderProgressHistory(work, files),
-                      ),
-              ),
               const SizedBox(height: 12),
               WorkDetailSectionSelector(
                 selected: _mobileDetailTab,
