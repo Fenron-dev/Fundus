@@ -9,6 +9,7 @@ import 'package:fundus_core/fundus_core.dart';
 import 'package:http/http.dart' as http;
 import 'package:media_kit/media_kit.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import 'diagnostics/fundus_diagnostics.dart';
 import 'library/android_storage_access.dart';
@@ -67,6 +68,41 @@ String _sourceDisplayName(String? server, String? library) {
     return libraryLabel.isEmpty ? 'Unbekannte Quelle' : libraryLabel;
   if (libraryLabel.isEmpty) return serverLabel;
   return '$serverLabel · $libraryLabel';
+}
+
+bool _isMountedStoragePath(String path) {
+  final normalized = p.normalize(path);
+  if (Platform.isMacOS) {
+    return normalized.startsWith('/Volumes/') ||
+        normalized.startsWith('/Network/');
+  }
+  if (Platform.isWindows) {
+    return normalized.startsWith(r'\\') || normalized.startsWith('//');
+  }
+  return normalized.startsWith('/mnt/') || normalized.startsWith('/media/');
+}
+
+/// SQLite must not be hosted on SMB/NFS/external mounts. WAL locking and
+/// every catalog query would otherwise cross the network. The vault keeps its
+/// portable sidecars and media; only the rebuildable index is placed in the
+/// app-support cache and keyed by the manifest's stable library id.
+Future<File?> _networkVaultIndex(String path) async {
+  if (!_isMountedStoragePath(path)) return null;
+  try {
+    final manifest = await LibraryManifest.read(
+      File(p.join(path, FundusLibrary.metadataDirectoryName, 'version.json')),
+    );
+    final support = await getApplicationSupportDirectory();
+    final directory = Directory(
+      p.join(support.path, 'Fundus', 'indexes', manifest.libraryId),
+    );
+    await directory.create(recursive: true);
+    return File(p.join(directory.path, FundusLibrary.databaseFileName));
+  } on Object {
+    // If the mount is only partially available, retain the normal open path
+    // so the caller receives the existing, actionable vault error.
+    return null;
+  }
 }
 
 typedef WorkPlaybackCallback =
@@ -493,9 +529,16 @@ class _FundusAppState extends State<FundusApp> {
       _error = null;
     });
     try {
+      final databaseFile = await _networkVaultIndex(path);
       final library = create
-          ? await FundusLibrary.create(Directory(path))
-          : await FundusLibrary.open(Directory(path));
+          ? await FundusLibrary.create(
+              Directory(path),
+              databaseFile: databaseFile,
+            )
+          : await FundusLibrary.open(
+              Directory(path),
+              databaseFile: databaseFile,
+            );
       final libraryOpenMilliseconds = openTimer.elapsedMilliseconds;
       await _stopPlayer();
       _library?.close();
@@ -516,6 +559,8 @@ class _FundusAppState extends State<FundusApp> {
         'adopted_downloads': adoptedDownloads,
         'library_open_ms': libraryOpenMilliseconds,
         'catalogue_load_ms': catalogueMilliseconds,
+        'network_index': databaseFile != null,
+        'index_path': databaseFile?.path,
         'total_ms': openTimer.elapsedMilliseconds,
       });
       await _recentStoreReady;

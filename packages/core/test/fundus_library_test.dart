@@ -171,6 +171,28 @@ void main() {
     expect(resumed.revision, 3);
   });
 
+  test('can keep the index outside a network-mounted vault', () async {
+    final root = await Directory.systemTemp.createTemp('fundus-network-vault-');
+    final cache = await Directory.systemTemp.createTemp('fundus-index-cache-');
+    addTearDown(() => root.delete(recursive: true));
+    addTearDown(() => cache.delete(recursive: true));
+    final book = Directory('${root.path}/Books/Author/Title');
+    await book.create(recursive: true);
+    await File('${book.path}/01 - Chapter.mp3').writeAsBytes([1, 2, 3]);
+
+    final indexFile = File('${cache.path}/index.db');
+    final created = await FundusLibrary.create(root, databaseFile: indexFile);
+    await created.index().drain<void>();
+    expect(await indexFile.exists(), isTrue);
+    expect(await File('${root.path}/.library/index.db').exists(), isFalse);
+    final workId = created.listWorks().single.id;
+    created.close();
+
+    final reopened = await FundusLibrary.open(root, databaseFile: indexFile);
+    addTearDown(reopened.close);
+    expect(reopened.listWorks().single.id, workId);
+  });
+
   test('persists named library views portably', () async {
     final root = await Directory.systemTemp.createTemp('fundus-views-');
     addTearDown(() => root.delete(recursive: true));

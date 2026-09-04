@@ -83,10 +83,13 @@ final class FundusLibrary {
   static Future<FundusLibrary> create(
     Directory root, {
     String createdBy = 'Fundus',
+    File? databaseFile,
   }) async {
     await root.create(recursive: true);
     final manifestFile = _manifestFile(root);
-    if (await manifestFile.exists()) return open(root);
+    if (await manifestFile.exists()) {
+      return open(root, databaseFile: databaseFile);
+    }
     final manifest = LibraryManifest(
       libraryId: FundusId.generate(),
       formatVersion: LibraryManifest.currentFormatVersion,
@@ -97,7 +100,7 @@ final class FundusLibrary {
     final configuration = LibraryConfiguration();
     await configuration.write(_configurationFile(root));
     final database = FundusDatabase.openFile(
-      _databaseFile(root),
+      databaseFile ?? _databaseFile(root),
       sourceId: 'vault:${manifest.libraryId}',
     );
     final library = FundusLibrary._(
@@ -111,7 +114,10 @@ final class FundusLibrary {
     return library;
   }
 
-  static Future<FundusLibrary> open(Directory root) async {
+  static Future<FundusLibrary> open(
+    Directory root, {
+    File? databaseFile,
+  }) async {
     final manifestFile = _manifestFile(root);
     if (!await manifestFile.exists()) {
       throw FileSystemException(
@@ -128,7 +134,7 @@ final class FundusLibrary {
       throw StateError(compatibility.message);
     }
     final database = FundusDatabase.openFile(
-      _databaseFile(root),
+      databaseFile ?? _databaseFile(root),
       readOnly: compatibility.mode == LibraryOpenMode.readOnly,
       sourceId: 'vault:${manifest.libraryId}',
     );
