@@ -32,6 +32,7 @@ import 'library/work_content_list.dart';
 import 'library/work_annotation_list.dart';
 import 'library/fundus_breadcrumbs.dart';
 import 'library/fundus_library_catalog.dart';
+import 'library/fundus_media_source_gateway.dart';
 import 'library/library_view_preferences.dart';
 import 'library/collection_rules.dart';
 import 'library/media_content_schema.dart';
@@ -7679,9 +7680,24 @@ class _DetailPanelState extends State<_DetailPanel> {
       var publicationAnnotations =
           library?.loadAnnotations(work.id) ?? const WorkAnnotations();
       if (!mounted) return;
+      // Route local EPUB bytes through the same source gateway used by
+      // offline and remote readers. This keeps path validation and source
+      // identity in one place while preserving the existing reader API.
+      final publicationSource = library == null
+          ? null
+          : await FundusVaultSourceGateway(library.root).openPublicationSource(
+              FundusMediaAsset.vault(
+                id: file.fileId,
+                name: file.title,
+                sourceId: library.source.id,
+                relativePath: file.relativePath,
+                contentLength: file.size,
+              ),
+            );
       await showEpubReader(
         context,
-        path: file.absolutePath,
+        path: publicationSource == null ? file.absolutePath : null,
+        source: publicationSource,
         initialChapterIndex: initialChapterIndex,
         initialPosition:
             initialChapterIndex == null &&

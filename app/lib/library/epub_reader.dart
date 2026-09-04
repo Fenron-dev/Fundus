@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 
 import 'reflow_text_reader.dart';
 import 'publication_reader_settings.dart';
+import 'fundus_media_source_gateway.dart';
 
 bool supportsInternalEpubReader(String path) =>
     p.extension(path).toLowerCase() == '.epub';
@@ -43,6 +44,18 @@ Future<EpubPublication> loadEpubPublicationSource(
   } on PublicationSourceReadException catch (error) {
     throw EpubPackageException(error.message);
   }
+}
+
+/// Opens an EPUB through the same source gateway used by the other media
+/// readers.  Only the resulting bytes cross into the parser isolate; the
+/// gateway itself (and any native/network handles it owns) stays on the UI
+/// isolate.
+Future<EpubPublication> loadEpubPublicationAsset(
+  FundusSourceGateway gateway,
+  FundusMediaAsset asset,
+) async {
+  final source = await gateway.openPublicationSource(asset);
+  return loadEpubPublicationSource(source);
 }
 
 Future<void> showEpubReader(
