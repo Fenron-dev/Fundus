@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'fundus_remote_client.dart';
+import '../library/publication_reader_settings.dart';
 
 final class FundusOfflineTrack {
   const FundusOfflineTrack({
@@ -764,7 +765,7 @@ final class FundusOfflineStore {
             server,
             libraryId: library.id,
             workId: work.id,
-            deviceKey: Platform.operatingSystem,
+            deviceKey: await PublicationReaderSettings.deviceKey(),
             readerKind: readerKind,
           );
           if (profile != null) {
@@ -772,7 +773,7 @@ final class FundusOfflineStore {
               serverId: server.id,
               libraryId: library.id,
               workId: work.id,
-              deviceKey: Platform.operatingSystem,
+              deviceKey: await PublicationReaderSettings.deviceKey(),
               readerKind: readerKind,
               profile: profile,
             );

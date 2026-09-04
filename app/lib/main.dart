@@ -7714,6 +7714,7 @@ class _DetailPanelState extends State<_DetailPanel> {
     int? initialChapterIndex,
   }) async {
     final library = widget.library;
+    final readerDeviceKey = await PublicationReaderSettings.deviceKey();
     var resolvedProgress = progress;
     if (resolveConflict && library != null) {
       resolvedProgress = await _resolveLocalReaderProgress(work, progress);
@@ -7724,7 +7725,7 @@ class _DetailPanelState extends State<_DetailPanel> {
           ? null
           : await library.loadPortableReaderProfile(
               workId: work.id,
-              deviceKey: Platform.operatingSystem,
+              deviceKey: readerDeviceKey,
               readerKind: 'epub',
             );
       var readerProfile = portableProfile == null
@@ -7862,7 +7863,7 @@ class _DetailPanelState extends State<_DetailPanel> {
         if (library != null && !library.isReadOnly) {
           await library.savePortableReaderProfile(
             workId: work.id,
-            deviceKey: Platform.operatingSystem,
+            deviceKey: readerDeviceKey,
             readerKind: 'epub',
             profile: readerProfile.toJson(),
           );
@@ -8081,6 +8082,7 @@ class _DetailPanelState extends State<_DetailPanel> {
     String? startFileId,
   }) async {
     final library = widget.library;
+    final readerDeviceKey = await PublicationReaderSettings.deviceKey();
     final comics =
         files
             .where(
@@ -8122,7 +8124,7 @@ class _DetailPanelState extends State<_DetailPanel> {
         ? null
         : await library.loadPortableReaderProfile(
             workId: work.id,
-            deviceKey: Platform.operatingSystem,
+            deviceKey: readerDeviceKey,
             readerKind: 'comic',
           );
     var readerProfile = portableProfile == null
@@ -8229,7 +8231,7 @@ class _DetailPanelState extends State<_DetailPanel> {
         if (library != null && work != null && !library.isReadOnly) {
           await library.savePortableReaderProfile(
             workId: work.id,
-            deviceKey: Platform.operatingSystem,
+            deviceKey: readerDeviceKey,
             readerKind: 'comic',
             profile: readerProfile.toJson(),
           );

@@ -1,9 +1,10 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:fundus_core/fundus_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+import '../library/publication_reader_settings.dart';
 
 /// Language and subtitle defaults for video playback.
 ///
@@ -173,7 +174,7 @@ abstract final class VideoTrackPreferences {
     );
     final profile = await library.loadPortableReaderProfile(
       workId: workId,
-      deviceKey: Platform.operatingSystem,
+      deviceKey: await PublicationReaderSettings.deviceKey(),
       readerKind: _portableReaderKind,
     );
     if (profile == null) return result;
@@ -251,14 +252,15 @@ abstract final class VideoTrackPreferences {
     );
     if (library.isReadOnly) return;
     try {
+      final deviceKey = await PublicationReaderSettings.deviceKey();
       final existing = await library.loadPortableReaderProfile(
         workId: workId,
-        deviceKey: Platform.operatingSystem,
+        deviceKey: deviceKey,
         readerKind: _portableReaderKind,
       );
       await library.savePortableReaderProfile(
         workId: workId,
-        deviceKey: Platform.operatingSystem,
+        deviceKey: deviceKey,
         readerKind: _portableReaderKind,
         profile: updatePortableProfile(
           existing,

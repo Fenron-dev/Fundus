@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:fundus_core/fundus_core.dart';
@@ -84,9 +85,27 @@ final class ReflowReaderProfile {
 
 abstract final class PublicationReaderSettings {
   static const _legacyStorage = FlutterSecureStorage();
+  static const _deviceKeyStorageKey = 'fundus.reader.device-key.v1';
   static const _legacyComicProfileKey = 'fundus.reader.comic.profile.v1';
   static const _defaultProfileKey = 'default';
   static Future<void> _writes = Future.value();
+
+  /// Stable per-installation key used for portable reader profiles.
+  ///
+  /// Using only `Platform.operatingSystem` made every Android device share one
+  /// profile on a remote library.  A secure, opaque key keeps phone, tablet
+  /// and desktop preferences independent while remaining safe to put in the
+  /// library sidecar (the key contains no device-identifying data).
+  static Future<String> deviceKey() async {
+    await _writes;
+    final existing = await _legacyStorage.read(key: _deviceKeyStorageKey);
+    if (existing != null && existing.trim().isNotEmpty) return existing.trim();
+    final random = Random.secure();
+    final bytes = List<int>.generate(18, (_) => random.nextInt(256));
+    final value = 'reader-${base64UrlEncode(bytes).replaceAll('=', '')}';
+    await _legacyStorage.write(key: _deviceKeyStorageKey, value: value);
+    return value;
+  }
 
   static Future<PublicationReaderProfile> loadComicProfile({
     String? workId,

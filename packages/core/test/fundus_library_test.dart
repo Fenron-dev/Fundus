@@ -1249,6 +1249,28 @@ void main() {
       readerKind: 'epub',
     );
     expect(portableProfile?['font_size'], 22.0);
+    // A fresh installation gets a new opaque device key.  If this is the
+    // only profile in the sidecar it is safe to migrate it automatically.
+    final migrated = await library.loadPortableReaderProfile(
+      workId: work.id,
+      deviceKey: 'fresh-install-device',
+      readerKind: 'epub',
+    );
+    expect(migrated?['font_size'], 22.0);
+    await library.savePortableReaderProfile(
+      workId: work.id,
+      deviceKey: 'second-device',
+      readerKind: 'epub',
+      profile: const {'font_size': 18.0},
+    );
+    expect(
+      await library.loadPortableReaderProfile(
+        workId: work.id,
+        deviceKey: 'unknown-device',
+        readerKind: 'epub',
+      ),
+      isNull,
+    );
     final sidecar = Directory('${webnovels.path}/_fundus/files/fallback.epub');
     expect(
       await File('${sidecar.path}/notes.md').readAsString(),

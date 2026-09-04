@@ -9,7 +9,7 @@ bereitstellen.
 - `app/` — Flutter desktop and Android application
 - `packages/core/` — platform-independent model, database, scanner and import
 - `packages/server/` — embedded Shelf HTTP server
-- `Dokumentation/` — product concept and design source
+- `Dokumentation/` — private product concept and design source (not tracked)
 
 ## Aktueller Stand
 
@@ -127,8 +127,8 @@ dart analyze
 ```
 
 Für einen nativen macOS-Build werden eine vollständige Xcode-Installation und
-CocoaPods benötigt. Die vollständige Produktspezifikation steht in
-[`Dokumentation/KONZEPT.md`](Dokumentation/KONZEPT.md).
+CocoaPods benötigt. Produktkonzept und UI-Mockups bleiben bewusst lokal und
+werden nicht in diesem öffentlichen Repository veröffentlicht.
 
 Ein nicht signierter macOS-Vorschaubuild kann außerdem manuell über den Workflow
 `Build macOS Preview` erzeugt und anschließend als Actions-Artefakt geladen

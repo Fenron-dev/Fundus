@@ -359,7 +359,14 @@ final class FundusLibrary {
       if (value is! Map) return null;
       final devices = value['devices'];
       if (devices is! Map) return null;
-      final device = devices[deviceKey];
+      // A reinstall can generate a new opaque device key while the portable
+      // sidecar remains intact.  When the work has only ever been opened on
+      // one device, migrate that profile transparently.  With multiple
+      // devices we deliberately refuse to guess, so a phone never inherits a
+      // tablet's layout by accident.
+      final device =
+          devices[deviceKey] ??
+          (devices.length == 1 ? devices.values.first : null);
       if (device is! Map) return null;
       final profile = device[readerKind];
       return profile is Map
