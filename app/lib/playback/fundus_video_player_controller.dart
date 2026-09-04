@@ -427,24 +427,32 @@ final class FundusVideoPlayerController extends ChangeNotifier
     );
   }
 
-  Future<void> rememberAudioTrack(AudioTrack selected) async {
+  Future<void> rememberAudioTrack(
+    AudioTrack selected, {
+    VideoTrackPreferenceScope scope = VideoTrackPreferenceScope.episode,
+  }) async {
     final work = _work;
     final current = track;
     final library = _library;
     if (work == null || current == null || library == null) return;
+    final target = preferenceScopeTarget(
+      scope,
+      fileId: current.fileId,
+      season: current.episode?.season,
+    );
     final preference = await VideoTrackPreferences.loadForLibrary(
       library: library,
       kind: work.kind,
       workId: work.id,
-      fileId: current.fileId,
-      season: current.episode?.season,
+      fileId: target.fileId,
+      season: target.season,
     );
     await VideoTrackPreferences.saveForLibrary(
       library: library,
       kind: work.kind,
       workId: work.id,
-      fileId: current.fileId,
-      season: current.episode?.season,
+      fileId: target.fileId,
+      season: target.season,
       preference: preference.copyWith(
         audioLanguage: selected.language,
         audioTrackId: selected.id,
@@ -456,24 +464,30 @@ final class FundusVideoPlayerController extends ChangeNotifier
   Future<void> rememberSubtitlePreference({
     required bool enabled,
     SubtitleTrack? selected,
+    VideoTrackPreferenceScope scope = VideoTrackPreferenceScope.episode,
   }) async {
     final work = _work;
     final current = track;
     final library = _library;
     if (work == null || current == null || library == null) return;
+    final target = preferenceScopeTarget(
+      scope,
+      fileId: current.fileId,
+      season: current.episode?.season,
+    );
     final preference = await VideoTrackPreferences.loadForLibrary(
       library: library,
       kind: work.kind,
       workId: work.id,
-      fileId: current.fileId,
-      season: current.episode?.season,
+      fileId: target.fileId,
+      season: target.season,
     );
     await VideoTrackPreferences.saveForLibrary(
       library: library,
       kind: work.kind,
       workId: work.id,
-      fileId: current.fileId,
-      season: current.episode?.season,
+      fileId: target.fileId,
+      season: target.season,
       preference: preference.copyWith(
         subtitlesEnabled: enabled,
         subtitleLanguage: selected?.language,

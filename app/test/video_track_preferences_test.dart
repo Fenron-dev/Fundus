@@ -171,4 +171,31 @@ void main() {
       'ja',
     );
   });
+
+  test('preference scope targets preserve the hierarchy', () {
+    expect(
+      preferenceScopeTarget(
+        VideoTrackPreferenceScope.episode,
+        fileId: 'episode-7',
+        season: 2,
+      ),
+      (fileId: 'episode-7', season: 2),
+    );
+    expect(
+      preferenceScopeTarget(
+        VideoTrackPreferenceScope.season,
+        fileId: 'episode-7',
+        season: 2,
+      ),
+      (fileId: null, season: 2),
+    );
+    expect(
+      preferenceScopeTarget(
+        VideoTrackPreferenceScope.series,
+        fileId: 'episode-7',
+        season: 2,
+      ),
+      (fileId: null, season: null),
+    );
+  });
 }

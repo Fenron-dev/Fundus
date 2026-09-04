@@ -2067,8 +2067,10 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         title: work.title,
         capabilities: player.capabilities,
         initialPosition: initialPosition,
-        onAudioTrackSelected: player.rememberVideoAudioTrack,
-        onSubtitleTrackSelected: player.rememberVideoSubtitleTrack,
+        onAudioTrackSelected: (track, scope) =>
+            player.rememberVideoAudioTrack(track, scope: scope),
+        onSubtitleTrackSelected: (enabled, track, scope) =>
+            player.rememberVideoSubtitleTrack(enabled, track, scope: scope),
         onBookmarkAtCurrent: player.addBookmarkAtCurrent,
       );
     }

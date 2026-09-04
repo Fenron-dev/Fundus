@@ -1322,13 +1322,21 @@ final class FundusRemotePlayerController extends ChangeNotifier
     });
   }
 
-  Future<void> rememberVideoAudioTrack(AudioTrack selected) async {
+  Future<void> rememberVideoAudioTrack(
+    AudioTrack selected, {
+    VideoTrackPreferenceScope scope = VideoTrackPreferenceScope.episode,
+  }) async {
     final work = _work;
     final current = track;
     final server = _server;
     final library = _library;
     if (work == null || current == null || server == null || library == null)
       return;
+    final target = preferenceScopeTarget(
+      scope,
+      fileId: current.id,
+      season: current.episode?.season,
+    );
     final profile = await _loadVideoTrackProfile(
       server: server,
       library: library,
@@ -1338,12 +1346,12 @@ final class FundusRemotePlayerController extends ChangeNotifier
       await VideoTrackPreferences.load(
         kind: work.kind,
         workId: work.id,
-        fileId: current.id,
-        season: current.episode?.season,
+        fileId: target.fileId,
+        season: target.season,
       ),
       profile,
-      fileId: current.id,
-      season: current.episode?.season,
+      fileId: target.fileId,
+      season: target.season,
     );
     final updated = preference.copyWith(
       audioLanguage: selected.language,
@@ -1353,8 +1361,8 @@ final class FundusRemotePlayerController extends ChangeNotifier
     await VideoTrackPreferences.save(
       kind: work.kind,
       workId: work.id,
-      fileId: current.id,
-      season: current.episode?.season,
+      fileId: target.fileId,
+      season: target.season,
       preference: updated,
     );
     await _saveVideoTrackProfile(
@@ -1363,21 +1371,27 @@ final class FundusRemotePlayerController extends ChangeNotifier
       work: work,
       existing: profile,
       preference: updated,
-      fileId: current.id,
-      season: current.episode?.season,
+      fileId: target.fileId,
+      season: target.season,
     );
   }
 
   Future<void> rememberVideoSubtitleTrack(
     bool enabled,
-    SubtitleTrack? selected,
-  ) async {
+    SubtitleTrack? selected, {
+    VideoTrackPreferenceScope scope = VideoTrackPreferenceScope.episode,
+  }) async {
     final work = _work;
     final current = track;
     final server = _server;
     final library = _library;
     if (work == null || current == null || server == null || library == null)
       return;
+    final target = preferenceScopeTarget(
+      scope,
+      fileId: current.id,
+      season: current.episode?.season,
+    );
     final profile = await _loadVideoTrackProfile(
       server: server,
       library: library,
@@ -1387,12 +1401,12 @@ final class FundusRemotePlayerController extends ChangeNotifier
       await VideoTrackPreferences.load(
         kind: work.kind,
         workId: work.id,
-        fileId: current.id,
-        season: current.episode?.season,
+        fileId: target.fileId,
+        season: target.season,
       ),
       profile,
-      fileId: current.id,
-      season: current.episode?.season,
+      fileId: target.fileId,
+      season: target.season,
     );
     final updated = preference.copyWith(
       subtitlesEnabled: enabled,
@@ -1403,8 +1417,8 @@ final class FundusRemotePlayerController extends ChangeNotifier
     await VideoTrackPreferences.save(
       kind: work.kind,
       workId: work.id,
-      fileId: current.id,
-      season: current.episode?.season,
+      fileId: target.fileId,
+      season: target.season,
       preference: updated,
     );
     await _saveVideoTrackProfile(
@@ -1413,8 +1427,8 @@ final class FundusRemotePlayerController extends ChangeNotifier
       work: work,
       existing: profile,
       preference: updated,
-      fileId: current.id,
-      season: current.episode?.season,
+      fileId: target.fileId,
+      season: target.season,
     );
   }
 

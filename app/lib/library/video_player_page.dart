@@ -10,6 +10,7 @@ import '../playback/fundus_playback_controller.dart';
 import '../playback/fundus_video_playback_controller.dart';
 import '../playback/fundus_video_playback_session.dart';
 import '../playback/fundus_video_player_controller.dart';
+import '../playback/video_track_preferences.dart';
 
 Future<void> showFundusVideoPlayer(
   BuildContext context, {
@@ -33,8 +34,13 @@ Future<void> showFundusVideoPlayerForPlayer(
   Set<FundusPlaybackCapability>? capabilities,
   bool resumePlayback = true,
   Duration? initialPosition,
-  Future<void> Function(AudioTrack track)? onAudioTrackSelected,
-  Future<void> Function(bool enabled, SubtitleTrack? track)?
+  Future<void> Function(AudioTrack track, VideoTrackPreferenceScope scope)?
+  onAudioTrackSelected,
+  Future<void> Function(
+    bool enabled,
+    SubtitleTrack? track,
+    VideoTrackPreferenceScope scope,
+  )?
   onSubtitleTrackSelected,
   Future<void> Function({String? label, String? note})? onBookmarkAtCurrent,
 }) => Navigator.of(context).push<void>(
@@ -75,8 +81,16 @@ final class _FundusVideoPlayerPage extends StatefulWidget {
   final Set<FundusPlaybackCapability> capabilities;
   final bool resumePlayback;
   final Duration? initialPosition;
-  final Future<void> Function(AudioTrack track)? onAudioTrackSelected;
-  final Future<void> Function(bool enabled, SubtitleTrack? track)?
+  final Future<void> Function(
+    AudioTrack track,
+    VideoTrackPreferenceScope scope,
+  )?
+  onAudioTrackSelected;
+  final Future<void> Function(
+    bool enabled,
+    SubtitleTrack? track,
+    VideoTrackPreferenceScope scope,
+  )?
   onSubtitleTrackSelected;
   final Future<void> Function({String? label, String? note})?
   onBookmarkAtCurrent;
@@ -194,8 +208,15 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
                   subtitle: Text(track.language ?? ''),
                   onTap: () async {
                     await widget.player.setAudioTrack(track);
-                    await widget.fundusController?.rememberAudioTrack(track);
-                    await widget.onAudioTrackSelected?.call(track);
+                    if (!context.mounted) return;
+                    final scope = await _choosePreferenceScope(context);
+                    if (scope != null) {
+                      await widget.fundusController?.rememberAudioTrack(
+                        track,
+                        scope: scope,
+                      );
+                      await widget.onAudioTrackSelected?.call(track, scope);
+                    }
                     if (context.mounted) Navigator.pop(context);
                   },
                 ),
@@ -207,10 +228,19 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
                 title: const Text('Aus'),
                 onTap: () async {
                   await widget.player.setSubtitleTrack(SubtitleTrack.no());
-                  await widget.fundusController?.rememberSubtitlePreference(
-                    enabled: false,
-                  );
-                  await widget.onSubtitleTrackSelected?.call(false, null);
+                  if (!context.mounted) return;
+                  final scope = await _choosePreferenceScope(context);
+                  if (scope != null) {
+                    await widget.fundusController?.rememberSubtitlePreference(
+                      enabled: false,
+                      scope: scope,
+                    );
+                    await widget.onSubtitleTrackSelected?.call(
+                      false,
+                      null,
+                      scope,
+                    );
+                  }
                   if (context.mounted) Navigator.pop(context);
                 },
               ),
@@ -221,11 +251,20 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
                   subtitle: Text(track.language ?? ''),
                   onTap: () async {
                     await widget.player.setSubtitleTrack(track);
-                    await widget.fundusController?.rememberSubtitlePreference(
-                      enabled: true,
-                      selected: track,
-                    );
-                    await widget.onSubtitleTrackSelected?.call(true, track);
+                    if (!context.mounted) return;
+                    final scope = await _choosePreferenceScope(context);
+                    if (scope != null) {
+                      await widget.fundusController?.rememberSubtitlePreference(
+                        enabled: true,
+                        selected: track,
+                        scope: scope,
+                      );
+                      await widget.onSubtitleTrackSelected?.call(
+                        true,
+                        track,
+                        scope,
+                      );
+                    }
                     if (context.mounted) Navigator.pop(context);
                   },
                 ),
@@ -239,6 +278,40 @@ final class _FundusVideoPlayerPageState extends State<_FundusVideoPlayerPage> {
       ),
     );
   }
+
+  Future<VideoTrackPreferenceScope?> _choosePreferenceScope(
+    BuildContext context,
+  ) => showDialog<VideoTrackPreferenceScope>(
+    context: context,
+    builder: (context) => SimpleDialog(
+      title: const Text('Auswahl speichern für …'),
+      children: [
+        for (final scope in VideoTrackPreferenceScope.values)
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, scope),
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(switch (scope) {
+                VideoTrackPreferenceScope.episode => Icons.movie_outlined,
+                VideoTrackPreferenceScope.season =>
+                  Icons.video_library_outlined,
+                VideoTrackPreferenceScope.series =>
+                  Icons.folder_special_outlined,
+              }),
+              title: Text(scope.label),
+              subtitle: Text(switch (scope) {
+                VideoTrackPreferenceScope.episode =>
+                  'Nur die aktuell geöffnete Folge',
+                VideoTrackPreferenceScope.season =>
+                  'Als Standard für die aktuelle Staffel',
+                VideoTrackPreferenceScope.series =>
+                  'Als Standard für alle Folgen der Serie',
+              }),
+            ),
+          ),
+      ],
+    ),
+  );
 
   Future<void> _saveScreenshot(BuildContext context) async {
     try {

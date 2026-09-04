@@ -6,6 +6,30 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../library/publication_reader_settings.dart';
 
+/// Level at which a manually selected video track should be remembered.
+///
+/// The preference resolver still applies values from broad to specific.  This
+/// enum only makes the write target explicit to the player UI.
+enum VideoTrackPreferenceScope { episode, season, series }
+
+extension VideoTrackPreferenceScopeLabel on VideoTrackPreferenceScope {
+  String get label => switch (this) {
+    VideoTrackPreferenceScope.episode => 'Diese Folge',
+    VideoTrackPreferenceScope.season => 'Diese Staffel',
+    VideoTrackPreferenceScope.series => 'Diese Serie',
+  };
+}
+
+({String? fileId, int? season}) preferenceScopeTarget(
+  VideoTrackPreferenceScope scope, {
+  required String fileId,
+  int? season,
+}) => switch (scope) {
+  VideoTrackPreferenceScope.episode => (fileId: fileId, season: season),
+  VideoTrackPreferenceScope.season => (fileId: null, season: season),
+  VideoTrackPreferenceScope.series => (fileId: null, season: null),
+};
+
 /// Language and subtitle defaults for video playback.
 ///
 /// Preferences are layered: media-type default, series/work override and
