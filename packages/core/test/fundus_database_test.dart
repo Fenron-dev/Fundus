@@ -29,8 +29,32 @@ void main() {
     expect(database.tableExists('sources'), isTrue);
     expect(database.columnExists('files', 'source_id'), isTrue);
     expect(database.columnExists('files', 'availability'), isTrue);
+    expect(database.columnExists('files', 'offline_path'), isTrue);
     expect(database.columnExists('works', 'source_id'), isTrue);
     expect(database.columnExists('works', 'availability'), isTrue);
+  });
+
+  test('offline materialization keeps canonical file identity intact', () {
+    final database = FundusDatabase.inMemory(sourceId: 'vault:local');
+    addTearDown(database.close);
+    final fileId = database.upsertFile(
+      ScannedFile(
+        absolutePath: '/vault/Manga/Kapitel 1.cbz',
+        relativePath: 'Manga/Kapitel 1.cbz',
+        filename: 'Kapitel 1.cbz',
+        extension: 'cbz',
+        size: 42,
+        modifiedAt: DateTime.utc(2026, 9, 4),
+        mimeType: 'application/vnd.comicbook+zip',
+      ),
+    );
+
+    database.setFileOfflinePath(fileId, '/device/offline/work-1/0001.cbz');
+
+    expect(database.fileOfflinePath(fileId), '/device/offline/work-1/0001.cbz');
+    expect(database.sourceId, 'vault:local');
+    database.setFileOfflinePath(fileId, null);
+    expect(database.fileOfflinePath(fileId), isNull);
   });
 
   test('sources persist origin identity and availability independently', () {

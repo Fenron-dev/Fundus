@@ -135,7 +135,7 @@ final class FundusDatabase {
   FundusDatabase._(this._database, {String sourceId = 'local'})
     : _sourceId = sourceId;
 
-  static const schemaVersion = 11;
+  static const schemaVersion = 12;
   static const supportedContentSensitivities = {
     'general',
     'mature',
@@ -786,6 +786,7 @@ final class FundusDatabase {
       SELECT w.id, w.kind, w.title, w.series_name, w.series_sequence, w.added_at,
              w.metadata_json, w.status, w.source_id, w.availability,
              COUNT(content.id) AS file_count,
+             ${columnExists('files', 'offline_path') ? 'MAX(content.offline_path)' : 'NULL'} AS offline_path,
              COALESCE(cover.path, w.generated_cover_path) AS cover_path,
              progress.numeric_value AS progress_position,
              progress.position_kind AS progress_kind,
@@ -841,6 +842,7 @@ final class FundusDatabase {
               row['added_at'] as int,
             ),
             coverPath: row['cover_path'] as String?,
+            offlinePath: row['offline_path'] as String?,
             language: metadata['language'] as String?,
             subtitle: metadata['subtitle'] as String?,
             description: metadata['description'] as String?,
@@ -1693,6 +1695,33 @@ final class FundusDatabase {
       [workId],
     );
     return rows.isEmpty ? null : rows.first['source_path'] as String;
+  }
+
+  /// Returns the device-local materialization for a file, if one exists.
+  /// The catalog keeps the canonical source path separate from this optional
+  /// copy so an offline download never changes the source identity.
+  String? fileOfflinePath(String fileId) {
+    if (!columnExists('files', 'offline_path')) return null;
+    final rows = _database.select(
+      'SELECT offline_path FROM files WHERE id = ?',
+      [fileId],
+    );
+    return rows.isEmpty ? null : rows.first['offline_path'] as String?;
+  }
+
+  /// Associates a local materialization with a catalog file. This idempotent
+  /// metadata update intentionally does not rewrite the canonical source path.
+  void setFileOfflinePath(String fileId, String? offlinePath) {
+    if (!columnExists('files', 'offline_path')) return;
+    final normalized = offlinePath?.trim();
+    _database.execute(
+      'UPDATE files SET offline_path = ?, availability = ? WHERE id = ?',
+      [
+        normalized == null || normalized.isEmpty ? null : normalized,
+        normalized == null || normalized.isEmpty ? 'available' : 'offline',
+        fileId,
+      ],
+    );
   }
 
   String? workLanguage(String workId) {
@@ -2686,6 +2715,7 @@ final class FundusDatabase {
     if (_database.userVersion == 8 && !readOnly) _migrateToVersion9();
     if (_database.userVersion == 9 && !readOnly) _migrateToVersion10();
     if (_database.userVersion == 10 && !readOnly) _migrateToVersion11();
+    if (_database.userVersion == 11 && !readOnly) _migrateToVersion12();
   }
 
   void _migrateToVersion1() {
@@ -2901,6 +2931,26 @@ final class FundusDatabase {
       rethrow;
     }
   }
+
+  void _migrateToVersion12() {
+    _database.execute('BEGIN IMMEDIATE');
+    try {
+      if (tableExists('files') && !columnExists('files', 'offline_path')) {
+        _database.execute('ALTER TABLE files ADD COLUMN offline_path TEXT');
+      }
+      if (tableExists('files')) {
+        _database.execute(
+          'CREATE INDEX IF NOT EXISTS files_offline_path_idx '
+          'ON files(offline_path)',
+        );
+      }
+      _database.userVersion = 12;
+      _database.execute('COMMIT');
+    } catch (_) {
+      _database.execute('ROLLBACK');
+      rethrow;
+    }
+  }
 }
 
 const _version1Statements = <String>[
@@ -2918,6 +2968,7 @@ const _version1Statements = <String>[
     height INTEGER,
     duration_ms INTEGER,
     video_episode_json TEXT,
+    offline_path TEXT,
     file_modified_at INTEGER NOT NULL,
     indexed_at INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'available'

@@ -255,6 +255,13 @@ final class FundusLibrary {
     _database.deleteMissingWork(workId);
   }
 
+  /// Stores the path of a device-local copy without changing the canonical
+  /// path or source identity in the catalog.
+  void setFileOfflinePath({required String fileId, String? offlinePath}) {
+    _ensureWritable();
+    _database.setFileOfflinePath(fileId, offlinePath);
+  }
+
   List<LibraryPlaybackTrack> playbackTracks(String workId) {
     return _database
         .playbackTracks(workId)
