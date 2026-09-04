@@ -47,7 +47,11 @@ class FundusVideoDetailHero extends StatelessWidget {
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final scheme = Theme.of(context).colorScheme;
-      final wide = constraints.maxWidth >= 720;
+      // A detail sidebar can provide an unbounded width while its parent is
+      // laying out a scrollable column. Treat that as compact instead of
+      // selecting the two-column hero: otherwise the details column receives
+      // almost no width and titles are rendered one character per line.
+      final wide = constraints.hasBoundedWidth && constraints.maxWidth >= 720;
       final type = FundusMediaTypeRegistry.forWork(
         kind: work.kind,
         contentStyle: work.contentStyle,
