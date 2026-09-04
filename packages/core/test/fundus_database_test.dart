@@ -70,6 +70,48 @@ void main() {
     expect(database.fileOfflinePath(fileId), isNull);
   });
 
+  test('document covers are not exposed as playable content', () {
+    final database = FundusDatabase.inMemory(sourceId: 'vault:local');
+    addTearDown(database.close);
+    final cover = ScannedFile(
+      absolutePath: '/vault/Manga/Series/cover.webp',
+      relativePath: 'Manga/Series/cover.webp',
+      filename: 'cover.webp',
+      extension: 'webp',
+      size: 12,
+      modifiedAt: DateTime.utc(2026, 9, 4),
+      mimeType: 'image/webp',
+    );
+    final chapter = ScannedFile(
+      absolutePath: '/vault/Manga/Series/Chapter 001.cbz',
+      relativePath: 'Manga/Series/Chapter 001.cbz',
+      filename: 'Chapter 001.cbz',
+      extension: 'cbz',
+      size: 42,
+      modifiedAt: DateTime.utc(2026, 9, 4),
+      mimeType: 'application/vnd.comicbook+zip',
+    );
+    final fileIds = {
+      cover.relativePath: database.upsertFile(cover),
+      chapter.relativePath: database.upsertFile(chapter),
+    };
+    final workId = database.upsertDocumentCandidate(
+      DocumentImportCandidate(
+        kind: 'manga',
+        directory: 'Manga/Series',
+        title: 'Series',
+        files: [cover, chapter],
+        coverFile: cover,
+      ),
+      fileIds,
+    );
+
+    final tracks = database.playbackTracks(workId);
+    expect(tracks, hasLength(1));
+    expect(tracks.single.title, 'Chapter 001.cbz');
+    expect(database.listWorks().single.coverPath, 'Manga/Series/cover.webp');
+  });
+
   test('sources persist origin identity and availability independently', () {
     final database = FundusDatabase.inMemory();
     addTearDown(database.close);

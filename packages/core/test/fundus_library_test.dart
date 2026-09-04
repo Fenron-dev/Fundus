@@ -1033,12 +1033,12 @@ void main() {
     expect(events.last.workCount, 1);
     expect(work.kind, 'ttrpg_product');
     expect(work.title, 'Dragonlance');
-    expect(work.fileCount, 4);
+    expect(work.fileCount, 3);
     expect(work.coverPath, endsWith('cover.jpg'));
     expect(library.workDirectoryPath(work.id), product.path);
     expect(
       library.playbackTracks(work.id).map((file) => file.title),
-      containsAll(['Regelwerk.pdf', 'Ansalon.jpg', 'Brief.png', 'cover.jpg']),
+      containsAll(['Regelwerk.pdf', 'Ansalon.jpg', 'Brief.png']),
     );
   });
 
@@ -1150,16 +1150,12 @@ void main() {
     final work = library.listWorks().single;
     expect(work.kind, 'manga');
     expect(work.title, 'Rebirth');
-    expect(work.fileCount, 3);
+    expect(work.fileCount, 2);
     expect(work.coverPath, endsWith('cover.png'));
     expect(library.workDirectoryPath(work.id), manga.path);
     expect(
       library.playbackTracks(work.id).map((file) => file.title),
-      containsAll([
-        'cover.png',
-        'Rebirth - Kapitel 0280.cbz',
-        'Rebirth - Kapitel 0281.cbz',
-      ]),
+      containsAll(['Rebirth - Kapitel 0280.cbz', 'Rebirth - Kapitel 0281.cbz']),
     );
 
     final chapter = library
@@ -1314,10 +1310,8 @@ void main() {
       final files = library.playbackTracks(work.id);
       expect(work.kind, 'webnovel');
       expect(work.coverPath, endsWith('cover.webp'));
-      expect(
-        files.map((file) => file.title),
-        containsAll(['cover.webp', 'Die Testserie.epub']),
-      );
+      expect(files.map((file) => file.title), contains('Die Testserie.epub'));
+      expect(files, isNot(contains('cover.webp')));
     },
   );
 

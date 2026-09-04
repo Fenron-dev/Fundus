@@ -509,8 +509,22 @@ final class FundusDatabase {
       workId,
     ]);
     _database.execute('DELETE FROM work_files WHERE work_id = ?', [workId]);
-    for (var index = 0; index < candidate.files.length; index++) {
-      final fileId = fileIds[candidate.files[index].relativePath];
+    // Covers are presentation metadata, not readable content.  Keeping them
+    // out of the content relation prevents a cover.png from becoming the
+    // first manga chapter, EPUB chapter or video episode.  For the dedicated
+    // image library the image itself is the work's content, so it remains in
+    // the content relation even when it is also selected as the cover.
+    final contentFiles = candidate.kind == 'image'
+        ? candidate.files
+        : candidate.files
+              .where(
+                (file) =>
+                    candidate.coverFile == null ||
+                    file.relativePath != candidate.coverFile!.relativePath,
+              )
+              .toList(growable: false);
+    for (var index = 0; index < contentFiles.length; index++) {
+      final fileId = fileIds[contentFiles[index].relativePath];
       if (fileId == null) continue;
       _database.execute(
         'INSERT INTO work_files (work_id, file_id, position, role) VALUES (?, ?, ?, ?)',
