@@ -1409,7 +1409,13 @@ final class FundusOfflineStore {
       if (value is! Map) return null;
       final devices = value['devices'];
       if (devices is! Map) return null;
-      final device = devices[deviceKey];
+      // A reinstall can create a new opaque device key while the offline
+      // sidecar survives.  If this work has only one stored device profile,
+      // adopt it transparently; with multiple profiles we keep the explicit
+      // device separation and refuse to guess between phone and tablet.
+      final device =
+          devices[deviceKey] ??
+          (devices.length == 1 ? devices.values.first : null);
       if (device is! Map) return null;
       final profile = device[readerKind];
       return profile is Map

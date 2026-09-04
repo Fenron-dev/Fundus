@@ -258,6 +258,14 @@ void main() {
       );
       expect(profileBeforeAdoption?['layout'], 'webtoon');
       expect(profileBeforeAdoption?['page_scale'], 'fitWidth');
+      final reinstalledProfile = await portableStore.loadReaderProfile(
+        serverId: serverId,
+        libraryId: libraryId,
+        workId: workId,
+        deviceKey: 'new-installation-key',
+        readerKind: 'comic',
+      );
+      expect(reinstalledProfile, profileBeforeAdoption);
 
       expect(await portableStore.adoptFallbackDownloads(), 1);
       await deviceRoot.delete(recursive: true);
