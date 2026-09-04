@@ -22,10 +22,21 @@ final class LocalFileMediaByteSource implements FundusMediaByteSource {
 
   @override
   Future<Uint8List> read({int? start, int? end}) async {
-    final bytes = await file.readAsBytes();
-    final first = (start ?? 0).clamp(0, bytes.length);
-    final last = (end ?? bytes.length).clamp(first, bytes.length);
-    return Uint8List.sublistView(bytes, first, last);
+    if (!await file.exists()) {
+      throw FileSystemException(
+        'Die Mediendatei ist nicht verfügbar.',
+        file.path,
+      );
+    }
+    final size = await file.length();
+    final first = (start ?? 0).clamp(0, size) as int;
+    final last = (end ?? size).clamp(first, size) as int;
+    if (first == last) return Uint8List(0);
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in file.openRead(first, last)) {
+      builder.add(chunk);
+    }
+    return builder.takeBytes();
   }
 }
 
