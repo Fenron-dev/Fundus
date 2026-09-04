@@ -20,6 +20,7 @@ import 'fundus_remote_client.dart';
 import 'fundus_remote_stream_proxy.dart';
 import 'fundus_offline_store.dart';
 import '../playback/fundus_playback_controller.dart';
+import '../playback/fundus_video_playback_controller.dart';
 import '../playback/fundus_video_playback_session.dart';
 
 typedef FundusRemoteServerResolver =

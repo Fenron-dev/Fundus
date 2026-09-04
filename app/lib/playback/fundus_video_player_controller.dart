@@ -10,6 +10,7 @@ import 'playback_resume_policy.dart';
 import 'playback_autosave_settings.dart';
 import 'video_track_preferences.dart';
 import 'fundus_playback_controller.dart';
+import 'fundus_video_playback_controller.dart';
 import 'fundus_video_playback_session.dart';
 
 /// Local video playback kept separate from the audiobook controller.

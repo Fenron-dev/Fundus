@@ -7,6 +7,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../playback/fundus_playback_controller.dart';
+import '../playback/fundus_video_playback_controller.dart';
 import '../playback/fundus_video_player_controller.dart';
 
 Future<void> showFundusVideoPlayer(
