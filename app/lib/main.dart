@@ -222,6 +222,8 @@ class _FundusAppState extends State<FundusApp> {
   bool _loadingRemoteLibraries = false;
   bool _showHhh = false;
   bool _remoteBrowseMode = false;
+  String? _remoteBrowseSourceId;
+  String? _remoteBrowseLibraryName;
   Timer? _remoteHeartbeat;
   late final AppLifecycleListener _lifecycleListener;
 
@@ -325,9 +327,9 @@ class _FundusAppState extends State<FundusApp> {
                 _catalogEntries(),
               ).catalog,
               library: _library,
-              libraryName: _library?.root.path
-                  .split(Platform.pathSeparator)
-                  .last,
+              libraryName:
+                  _library?.root.path.split(Platform.pathSeparator).last ??
+                  _remoteBrowseLibraryName,
               indexEvent: _indexEvent,
               onRescan: _library == null || _busy || _scanning ? null : _scan,
               onClose: _library != null
@@ -352,6 +354,7 @@ class _FundusAppState extends State<FundusApp> {
               onOpenOfflineWork: _openOfflineWork,
               onOpenCatalogWork: _openCatalogWork,
               coverPathProvider: _remoteCoverPath,
+              initialSourceFilter: _remoteBrowseSourceId,
               showHhh: _showHhh,
               onHhhEnabledChanged: (enabled) async {
                 await HhhContentSettings.setEnabled(enabled);
@@ -1092,6 +1095,12 @@ class _FundusAppState extends State<FundusApp> {
       // offline and local entries then remain one filterable list instead of
       // switching to a second remote-only UI.
       _remoteBrowseMode = true;
+      _remoteBrowseSourceId =
+          'remote:${choice.server.id}/${choice.library.libraryId}';
+      _remoteBrowseLibraryName = _sourceDisplayName(
+        choice.server.name,
+        choice.library.name,
+      );
       _works = const <LibraryWorkSummary>[];
     });
   }
@@ -1100,6 +1109,8 @@ class _FundusAppState extends State<FundusApp> {
     if (!mounted) return;
     setState(() {
       _remoteBrowseMode = false;
+      _remoteBrowseSourceId = null;
+      _remoteBrowseLibraryName = null;
       _works = null;
     });
     unawaited(_loadRecentLibraries());
@@ -1765,6 +1776,7 @@ class LibraryShell extends StatefulWidget {
     this.onOpenOfflineWork,
     this.onOpenCatalogWork,
     this.coverPathProvider,
+    this.initialSourceFilter,
     this.showHhh = false,
     this.onHhhEnabledChanged,
     this.onOpenCollections,
@@ -1794,6 +1806,11 @@ class LibraryShell extends StatefulWidget {
   final OfflineWorkOpenCallback? onOpenOfflineWork;
   final CatalogWorkOpenCallback? onOpenCatalogWork;
   final CatalogCoverPathProvider? coverPathProvider;
+
+  /// Optional source id used when entering the shell from a source picker.
+  /// It is intentionally not persisted with view preferences: it describes
+  /// the current navigation context, not a device-wide layout choice.
+  final String? initialSourceFilter;
   final bool showHhh;
   final ValueChanged<bool>? onHhhEnabledChanged;
   final VoidCallback? onOpenCollections;
@@ -1837,6 +1854,7 @@ class _LibraryShellState extends State<LibraryShell> {
   @override
   void initState() {
     super.initState();
+    _sourceFilter = widget.initialSourceFilter;
     unawaited(_loadSavedViews());
     unawaited(_loadViewPreferences());
   }
@@ -1844,6 +1862,11 @@ class _LibraryShellState extends State<LibraryShell> {
   @override
   void didUpdateWidget(covariant LibraryShell oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialSourceFilter != widget.initialSourceFilter) {
+      _sourceFilter = widget.initialSourceFilter;
+      _selectedIndex = 0;
+      _inlineDetailWork = null;
+    }
     if (oldWidget.library != widget.library) unawaited(_loadSavedViews());
   }
 

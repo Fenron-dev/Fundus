@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fundus_core/fundus_core.dart';
 import 'package:fundus/library/media_byte_source.dart';
 
 void main() {
@@ -45,5 +46,37 @@ void main() {
     expect(await source.length(), 32);
     expect(await source.read(start: 7, end: 12), [7, 8, 9, 10, 11]);
     expect(await source.read(start: 32, end: 32), isEmpty);
+  });
+
+  test('publication adapter exposes the same bounded range contract', () async {
+    final source = MemoryMediaByteSource(
+      'memory:publication',
+      Uint8List.fromList([10, 11, 12, 13]),
+    );
+    final publication = PublicationMediaByteSource(
+      source,
+      kind: PublicationSourceKind.memory,
+      name: 'sample.epub',
+    );
+
+    expect(publication.name, 'sample.epub');
+    expect(await publication.length(), 4);
+    expect(await publication.read(const PublicationByteRange(1, 3)), [11, 12]);
+  });
+
+  test('publication adapter rejects an unavailable length', () async {
+    final source = RangedMediaByteSource(
+      id: 'remote:unknown-length',
+      readRange: ({start, end}) async => Uint8List.fromList([1]),
+    );
+    final publication = PublicationMediaByteSource(
+      source,
+      kind: PublicationSourceKind.remote,
+    );
+
+    expect(
+      publication.length(),
+      throwsA(isA<PublicationSourceReadException>()),
+    );
   });
 }
