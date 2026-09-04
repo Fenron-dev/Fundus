@@ -22,6 +22,7 @@ import 'fundus_offline_store.dart';
 import '../playback/fundus_playback_controller.dart';
 import '../playback/fundus_video_playback_controller.dart';
 import '../playback/fundus_video_playback_session.dart';
+import '../playback/playback_progress_write_gate.dart';
 
 typedef FundusRemoteServerResolver =
     Future<FundusRemoteServer> Function(FundusRemoteServer server);
@@ -209,6 +210,8 @@ final class FundusRemotePlayerController extends ChangeNotifier
   int _sessionRevision = 0;
   RepeatMode _repeatMode = RepeatMode.none;
   List<int> _shuffleOrder = const [];
+  final PlaybackProgressWriteGate _progressWriteGate =
+      PlaybackProgressWriteGate();
 
   FundusRemoteWork? get work => _work;
 
@@ -1113,15 +1116,24 @@ final class FundusRemotePlayerController extends ChangeNotifier
     if (actual > Duration.zero || _position == Duration.zero) {
       _position = actual;
     }
+    final measuredDuration = _duration > Duration.zero
+        ? _duration
+        : currentTrack.duration;
+    final effectiveDuration =
+        measuredDuration != null && measuredDuration < _position
+        ? _position
+        : measuredDuration;
+    if (!_progressWriteGate.shouldWrite(
+      workId: work.id,
+      fileId: currentTrack.id,
+      position: _position,
+      duration: effectiveDuration,
+      finished: finished,
+    )) {
+      return;
+    }
     _persisting = true;
     try {
-      final measuredDuration = _duration > Duration.zero
-          ? _duration
-          : currentTrack.duration;
-      final effectiveDuration =
-          measuredDuration != null && measuredDuration < _position
-          ? _position
-          : measuredDuration;
       if (!_playing) {
         try {
           final latest = await _withReconnect(
@@ -1166,6 +1178,13 @@ final class FundusRemotePlayerController extends ChangeNotifier
         if (_offlineWork == null) rethrow;
       }
       _lastPersistedAt = DateTime.now();
+      _progressWriteGate.markSaved(
+        workId: work.id,
+        fileId: currentTrack.id,
+        position: _position,
+        duration: effectiveDuration,
+        finished: finished,
+      );
       await _persistPlaybackSession();
     } catch (_) {
       _error = 'Fortschritt konnte nicht zum Server übertragen werden.';
