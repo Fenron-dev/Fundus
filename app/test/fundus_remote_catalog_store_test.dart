@@ -115,6 +115,58 @@ void main() {
     expect(await File('${directory.path}/remote-catalog.db').exists(), isTrue);
   });
 
+  test('upsertSource replaces only the selected source', () async {
+    final directory = await Directory.systemTemp.createTemp('fundus-catalog-');
+    addTearDown(() => directory.delete(recursive: true));
+    final store = FundusRemoteCatalogStore(
+      file: File('${directory.path}/remote-catalog.db'),
+    );
+    FundusRemoteCatalogSnapshot source(
+      String serverId,
+      String libraryId,
+      String title,
+    ) => FundusRemoteCatalogSnapshot(
+      serverId: serverId,
+      libraryId: libraryId,
+      serverName: serverId,
+      libraryName: libraryId,
+      fetchedAt: DateTime.utc(2026, 9, 4),
+      works: [
+        FundusRemoteWork(
+          id: '$serverId-work',
+          title: title,
+          authors: const [],
+          hasCover: false,
+          kind: 'video',
+          fileCount: 1,
+        ),
+      ],
+    );
+
+    await store.save([source('server-a', 'library-a', 'A1')]);
+    await store.upsertSource(source('server-a', 'library-a', 'A2'));
+    await store.upsertSource(source('server-b', 'library-b', 'B1'));
+
+    final loaded = await store.load();
+    expect(loaded, hasLength(2));
+    expect(
+      loaded
+          .singleWhere((item) => item.serverId == 'server-a')
+          .works
+          .single
+          .title,
+      'A2',
+    );
+    expect(
+      loaded
+          .singleWhere((item) => item.serverId == 'server-b')
+          .works
+          .single
+          .title,
+      'B1',
+    );
+  });
+
   test(
     'progress journal entries update the cached summary and cursor persists',
     () async {

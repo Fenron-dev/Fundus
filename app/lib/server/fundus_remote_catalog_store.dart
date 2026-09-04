@@ -234,6 +234,71 @@ final class FundusRemoteCatalogStore {
     }
   }
 
+  /// Replaces one source in the mirror without rewriting the other sources.
+  ///
+  /// Catalog refreshes run independently for each paired server. Updating a
+  /// single source atomically avoids dropping another server's newer metadata
+  /// when two refreshes overlap, and also lets the first full snapshot be
+  /// seeded before its journal delta is consumed.
+  Future<void> upsertSource(FundusRemoteCatalogSnapshot snapshot) async {
+    final target = await _resolvedFile();
+    await target.parent.create(recursive: true);
+    Database? database;
+    try {
+      database = _open(target);
+      database.execute('BEGIN IMMEDIATE');
+      try {
+        database.execute(
+          '''INSERT INTO remote_catalog_sources (
+               server_id, library_id, server_name, library_name,
+               fetched_at, etag, availability, last_seen_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(server_id, library_id) DO UPDATE SET
+               server_name = excluded.server_name,
+               library_name = excluded.library_name,
+               fetched_at = excluded.fetched_at,
+               etag = excluded.etag,
+               availability = excluded.availability,
+               last_seen_at = excluded.last_seen_at''',
+          [
+            snapshot.serverId,
+            snapshot.libraryId,
+            snapshot.serverName,
+            snapshot.libraryName,
+            snapshot.fetchedAt.toUtc().millisecondsSinceEpoch,
+            snapshot.etag,
+            snapshot.availability.name,
+            snapshot.lastSeenAt?.toUtc().millisecondsSinceEpoch,
+          ],
+        );
+        database.execute(
+          '''DELETE FROM remote_catalog_works
+             WHERE server_id = ? AND library_id = ?''',
+          [snapshot.serverId, snapshot.libraryId],
+        );
+        for (final work in snapshot.works) {
+          database.execute(
+            '''INSERT INTO remote_catalog_works (
+                 server_id, library_id, work_id, payload_json
+               ) VALUES (?, ?, ?, ?)''',
+            [
+              snapshot.serverId,
+              snapshot.libraryId,
+              work.id,
+              jsonEncode(work.toJson()),
+            ],
+          );
+        }
+        database.execute('COMMIT');
+      } on Object {
+        database.execute('ROLLBACK');
+        rethrow;
+      }
+    } finally {
+      database?.close();
+    }
+  }
+
   /// Returns the last server journal cursor acknowledged by this device.
   /// Cursors are kept per source so reconnecting one server never causes
   /// another server's changes to be skipped.

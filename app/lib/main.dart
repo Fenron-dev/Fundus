@@ -815,9 +815,11 @@ class _FundusAppState extends State<FundusApp> {
             availability: LibrarySourceAvailability.available,
             lastSeenAt: DateTime.now().toUtc(),
           );
-          // Seed the mirror first, then consume any catalog/progress journal
-          // entries that were created while the paginated snapshot was read.
-          // This also establishes a durable cursor for a newly paired source.
+          // Seed this source before consuming journal entries. Without this
+          // step, progress/catalog changes created while the paginated
+          // snapshot was read had no mirror row to apply to and were silently
+          // skipped while their cursor was still acknowledged.
+          await _remoteCatalogStore.upsertSource(fetchedSnapshot);
           final synced = await _refreshRemoteProgress(
             server,
             reference.libraryId,
