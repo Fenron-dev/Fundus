@@ -307,7 +307,15 @@ class _ServerSettings extends StatelessWidget {
                   'Der Schutz gilt für Bibliothek, Suche, Resume und Statistik.',
                 ),
                 value: hhhEnabled,
-                onChanged: onHhhEnabledChanged,
+                // The settings dialog can also be opened from a remote or
+                // embedded entry point which does not own the library shell.
+                // Do not render a disabled switch in that case: persist the
+                // device-local policy directly and notify the owner when one
+                // is available.
+                onChanged: (enabled) async {
+                  await HhhContentSettings.setEnabled(enabled);
+                  onHhhEnabledChanged?.call(enabled);
+                },
               ),
               const Divider(),
               HhhVisibilityModeSettingTile(
