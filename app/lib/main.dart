@@ -361,9 +361,11 @@ class _FundusAppState extends State<FundusApp> {
                   : (_remoteBrowseMode ? _closeRemoteBrowse : null),
               player: _player,
               onPlay: _library == null ? null : _startPlayback,
-              onOpenRemotePlayback: _library == null
-                  ? _startRemoteOrOfflinePlayback
-                  : null,
+              // Remote and offline entries can be shown alongside a local
+              // vault. Keep their playback entry point available in that
+              // mixed catalog as well; local works never use it because the
+              // detail panel only calls it for external source entries.
+              onOpenRemotePlayback: _startRemoteOrOfflinePlayback,
               onPlayPlaylist: _library == null ? null : _startPlaylist,
               onDeleteMissingWork: _library == null ? null : _deleteMissingWork,
               onMetadataChanged: (work) => setState(() {
@@ -4246,7 +4248,10 @@ class _LibraryShellState extends State<LibraryShell> {
 
   void _openExternalWork(LibraryWorkSummary work) {
     final offline = _offlineBySummaryId[work.id];
-    if (widget.onOpenRemotePlayback != null && _isVideoWorkKind(work.kind)) {
+    final hasRemoteSource = work.sourceId?.startsWith('remote:') == true;
+    if (widget.onOpenRemotePlayback != null &&
+        _isVideoWorkKind(work.kind) &&
+        (offline != null || hasRemoteSource)) {
       unawaited(widget.onOpenRemotePlayback!.call(work));
       return;
     }
@@ -6177,10 +6182,17 @@ class _AudiobookHero extends StatelessWidget {
 }
 
 class _DocumentHero extends StatelessWidget {
-  const _DocumentHero({required this.work, required this.directoryPath});
+  const _DocumentHero({
+    required this.work,
+    required this.directoryPath,
+    this.progress,
+    this.onOpen,
+  });
 
   final LibraryWorkSummary work;
   final String? directoryPath;
+  final LibraryPlaybackProgress? progress;
+  final VoidCallback? onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -6253,6 +6265,14 @@ class _DocumentHero extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ],
+        if (onOpen != null) ...[
+          const SizedBox(height: 18),
+          FilledButton.icon(
+            onPressed: onOpen,
+            icon: const Icon(Icons.menu_book_outlined),
+            label: Text(progress == null ? 'Öffnen' : 'Fortsetzen'),
           ),
         ],
       ],
@@ -6911,12 +6931,14 @@ class _DetailPanelState extends State<_DetailPanel> {
     final directoryPath =
         widget.library?.workDirectoryPath(selectedWork.id) ??
         widget.offlineWork?.directoryPath;
-    final workFiles = selectedWork.available
-        ? widget.library?.playbackTracks(selectedWork.id) ??
-              (widget.offlineWork == null
-                  ? null
-                  : _offlinePlaybackTracks(widget.offlineWork!))
-        : null;
+    final localTracks =
+        widget.library?.playbackTracks(selectedWork.id) ??
+        const <LibraryPlaybackTrack>[];
+    final workFiles = localTracks.isNotEmpty
+        ? localTracks
+        : widget.offlineWork == null
+        ? const <LibraryPlaybackTrack>[]
+        : _offlinePlaybackTracks(widget.offlineWork!);
     final progress = _progressFor(selectedWork);
     final mobilePlatform = Platform.isAndroid || Platform.isIOS;
     if (selectedWork.kind != 'audiobook' &&
@@ -6924,7 +6946,7 @@ class _DetailPanelState extends State<_DetailPanel> {
       return _buildMobilePublicationDetail(
         selectedWork,
         directoryPath,
-        workFiles ?? const [],
+        workFiles,
       );
     }
     return ListView(
@@ -6951,7 +6973,7 @@ class _DetailPanelState extends State<_DetailPanel> {
             coverBuilder: (_) => _WorkCover(work: selectedWork, iconSize: 84),
             collectionNames: _collectionsFor(selectedWork),
             onSelectCollection: widget.onSelectCollection,
-            onOpen: workFiles == null || workFiles.isEmpty
+            onOpen: workFiles.isEmpty
                 ? widget.onOpenExternal
                 : () => _openDocumentWork(selectedWork, workFiles),
             onLoadMetadata:
@@ -6966,7 +6988,14 @@ class _DetailPanelState extends State<_DetailPanel> {
             onSelectTag: widget.onSelectTag,
           )
         else
-          _DocumentHero(work: selectedWork, directoryPath: directoryPath),
+          _DocumentHero(
+            work: selectedWork,
+            directoryPath: directoryPath,
+            progress: progress,
+            onOpen: workFiles.isEmpty
+                ? widget.onOpenExternal
+                : () => _openDocumentWork(selectedWork, workFiles),
+          ),
         const SizedBox(height: 10),
         if (selectedWork.kind != 'audiobook' &&
             widget.library != null &&
@@ -6974,10 +7003,8 @@ class _DetailPanelState extends State<_DetailPanel> {
           Align(
             alignment: Alignment.centerRight,
             child: OutlinedButton.icon(
-              onPressed: () => _showLocalReaderProgressHistory(
-                selectedWork,
-                workFiles ?? const [],
-              ),
+              onPressed: () =>
+                  _showLocalReaderProgressHistory(selectedWork, workFiles),
               icon: const Icon(Icons.history),
               label: const Text('Gerätestände'),
             ),
@@ -7038,7 +7065,7 @@ class _DetailPanelState extends State<_DetailPanel> {
             ),
           ),
         ],
-        if (workFiles != null && workFiles.isNotEmpty) ...[
+        if (workFiles.isNotEmpty) ...[
           const SizedBox(height: 16),
           if (selectedWork.kind == 'audiobook')
             _AudioCompatibilityPanel(tracks: workFiles)
@@ -7068,9 +7095,7 @@ class _DetailPanelState extends State<_DetailPanel> {
             ),
           ],
         ],
-        if ((workFiles == null ||
-                workFiles.isEmpty ||
-                widget.offlineWork != null) &&
+        if ((workFiles.isEmpty || widget.offlineWork != null) &&
             widget.onOpenExternal != null) ...[
           const SizedBox(height: 14),
           SizedBox(
@@ -7108,7 +7133,6 @@ class _DetailPanelState extends State<_DetailPanel> {
         ],
         const SizedBox(height: 20),
         if (selectedWork.kind != 'audiobook' &&
-            workFiles != null &&
             _readableDocumentFiles(workFiles).isNotEmpty) ...[
           Text(
             'Lesezeichen & Markierungen',
