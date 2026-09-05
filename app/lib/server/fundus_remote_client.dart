@@ -714,14 +714,26 @@ final class FundusRemoteServerStore {
     );
   }
 
-  static String _defaultDeviceName() => switch (Platform.operatingSystem) {
-    'android' => 'Fundus auf Android',
-    'ios' => 'Fundus auf iOS',
-    'macos' => 'Fundus auf macOS',
-    'windows' => 'Fundus auf Windows',
-    'linux' => 'Fundus auf Linux',
-    _ => 'Fundus-Gerät',
-  };
+  static String _defaultDeviceName() {
+    final platform = switch (Platform.operatingSystem) {
+      'android' => 'Fundus auf Android',
+      'ios' => 'Fundus auf iOS',
+      'macos' => 'Fundus auf macOS',
+      'windows' => 'Fundus auf Windows',
+      'linux' => 'Fundus auf Linux',
+      _ => 'Fundus-Gerät',
+    };
+    // The opaque installation id is regenerated after an uninstall. A
+    // platform-provided hostname gives the portable reader-profile matcher a
+    // stable, human-readable fallback without requesting extra permissions.
+    final host = Platform.localHostname.trim();
+    if (host.isEmpty ||
+        host == 'localhost' ||
+        host == 'localhost.localdomain') {
+      return platform;
+    }
+    return '$platform · $host';
+  }
 
   static String _randomValue(int count) {
     final random = Random.secure();
