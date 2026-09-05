@@ -52,6 +52,7 @@ import 'server/fundus_peer_server_controller.dart';
 import 'server/fundus_peer_discovery.dart';
 import 'server/fundus_offline_store.dart';
 import 'server/fundus_remote_client.dart';
+import 'server/fundus_remote_player_controller.dart';
 import 'server/fundus_remote_catalog_store.dart';
 import 'server/fundus_remote_cover_cache.dart';
 import 'server/remote_servers_view.dart';
@@ -214,6 +215,7 @@ class _FundusAppState extends State<FundusApp> {
   ScanCancellationToken? _scanToken;
   Completer<void>? _scanCompletion;
   FundusPlayerController? _player;
+  FundusRemotePlayerController? _remotePlayer;
   String? _error;
   bool _busy = false;
   bool _scanning = false;
@@ -311,6 +313,7 @@ class _FundusAppState extends State<FundusApp> {
     _lifecycleListener.dispose();
     _remoteHeartbeat?.cancel();
     _player?.dispose();
+    _remotePlayer?.dispose();
     _library?.close();
     _peerServer.dispose();
     super.dispose();
@@ -358,6 +361,9 @@ class _FundusAppState extends State<FundusApp> {
                   : (_remoteBrowseMode ? _closeRemoteBrowse : null),
               player: _player,
               onPlay: _library == null ? null : _startPlayback,
+              onOpenRemotePlayback: _library == null
+                  ? _startRemoteOrOfflinePlayback
+                  : null,
               onPlayPlaylist: _library == null ? null : _startPlaylist,
               onDeleteMissingWork: _library == null ? null : _deleteMissingWork,
               onMetadataChanged: (work) => setState(() {
@@ -1490,6 +1496,132 @@ class _FundusAppState extends State<FundusApp> {
     );
   }
 
+  /// Opens a streamed or downloaded video in the same player route that is
+  /// used by a local vault.  The catalog/detail shell deliberately has no
+  /// transport-specific UI; falling back to the legacy remote-library route
+  /// here would make mobile jump between the new and old screens.
+  Future<void> _startRemoteOrOfflinePlayback(
+    LibraryWorkSummary work, {
+    String? startFileId,
+    Duration? startPosition,
+  }) async {
+    if (!_isVideoWorkKind(work.kind)) {
+      // EPUB/CBZ/PDF still use their format-specific readers until their
+      // direct remote reader entry points are migrated to the same contract.
+      return;
+    }
+    final sourceId = work.sourceId;
+    if (sourceId == null || !sourceId.startsWith('remote:')) return;
+    final source = sourceId.substring('remote:'.length).split('/');
+    if (source.length != 2 || source.any((part) => part.isEmpty)) return;
+
+    FundusOfflineWork? offlineWork;
+    for (final candidate in _offlineWorks) {
+      if (candidate.serverId == source[0] &&
+          candidate.libraryId == source[1] &&
+          candidate.workId == work.id) {
+        offlineWork = candidate;
+        break;
+      }
+    }
+
+    var server = _pairedServers[source[0]];
+    if (server == null && offlineWork == null) {
+      await _loadRemoteLibraries();
+      server = _pairedServers[source[0]];
+    }
+    if (server == null && offlineWork == null) {
+      final context = _navigatorKey.currentContext;
+      if (context != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Der Remote-Server ist nicht verbunden.'),
+          ),
+        );
+      }
+      return;
+    }
+    // An offline item can be played without a network connection.  The
+    // controller still needs a source identity for progress and annotations.
+    server ??= FundusRemoteServer(
+      id: source[0],
+      name: work.sourceServerName ?? source[0],
+      baseUri: Uri.parse('http://127.0.0.1'),
+      certificateFingerprint: '',
+      token: '',
+    );
+    final library = FundusRemoteLibrary(
+      id: source[1],
+      name: work.sourceLibraryName ?? source[1],
+      workCount: 1,
+    );
+    final remoteWork = FundusRemoteWork(
+      id: work.id,
+      title: work.title,
+      authors: work.authors.isEmpty ? [work.author] : work.authors,
+      hasCover: work.coverPath != null || work.coverVersion != null,
+      kind: work.kind,
+      subtitle: work.subtitle,
+      series: work.series,
+      seriesSequence: work.seriesSequence,
+      coverVersion: work.coverVersion,
+      narrators: work.narrators,
+      language: work.language,
+      description: work.description,
+      publisher: work.publisher,
+      publishedYear: work.publishedYear,
+      fileCount: work.fileCount,
+      progressPosition: work.progressPosition,
+      progressDuration: work.progressDuration,
+      progressTrackIndex: work.progressTrackIndex,
+      progressFinished: work.progressFinished,
+      contentSensitivity: work.contentSensitivity,
+      contentStyle: work.contentStyle,
+      tags: work.tags,
+      lastListenedAt: work.lastListenedAt,
+      providerMetadata: work.providerMetadata,
+    );
+    final player =
+        _remotePlayer ??
+        FundusRemotePlayerController(
+          deviceId: await _remoteStore.deviceId(),
+          deviceName: await _remoteStore.deviceName(),
+          offlineStore: _offlineStore,
+          onConflict: (conflict) {
+            final context = _navigatorKey.currentContext;
+            return context == null
+                ? Future.value(PlaybackConflictChoice.keepCurrent)
+                : resolvePlaybackConflict(context, conflict);
+          },
+          serverResolver: (current) async =>
+              _pairedServers[current.id] ?? current,
+        );
+    if (_remotePlayer == null && mounted)
+      setState(() => _remotePlayer = player);
+    await player.open(
+      server,
+      library,
+      remoteWork,
+      offlineWork: offlineWork,
+      startFileId: startFileId,
+      startPosition: startPosition,
+      autoPlay: false,
+    );
+    if (!mounted) return;
+    await showFundusVideoPlayerForPlayer(
+      context,
+      controller: player,
+      title: remoteWork.title,
+      capabilities: player.capabilities,
+      initialPosition: player.position,
+      onAudioTrackSelected: (track, scope) =>
+          player.rememberVideoAudioTrack(track, scope: scope),
+      onSubtitleTrackSelected: (enabled, track, scope) =>
+          player.rememberVideoSubtitleTrack(enabled, track, scope: scope),
+      onBookmarkAtCurrent: player.addBookmarkAtCurrent,
+    );
+  }
+
   Future<void> _startPlaylist(String playlistId) async {
     final library = _library;
     if (library == null) return;
@@ -1899,6 +2031,7 @@ class LibraryShell extends StatefulWidget {
     this.onClose,
     this.player,
     this.onPlay,
+    this.onOpenRemotePlayback,
     this.onPlayPlaylist,
     this.onDeleteMissingWork,
     this.onMetadataChanged,
@@ -1929,6 +2062,7 @@ class LibraryShell extends StatefulWidget {
   final VoidCallback? onClose;
   final FundusPlayerController? player;
   final WorkPlaybackCallback? onPlay;
+  final WorkPlaybackCallback? onOpenRemotePlayback;
   final PlaylistPlaybackCallback? onPlayPlaylist;
   final MissingWorkDeleteCallback? onDeleteMissingWork;
   final WorkMetadataChangedCallback? onMetadataChanged;
@@ -4112,13 +4246,21 @@ class _LibraryShellState extends State<LibraryShell> {
 
   void _openExternalWork(LibraryWorkSummary work) {
     final offline = _offlineBySummaryId[work.id];
+    if (widget.onOpenRemotePlayback != null && _isVideoWorkKind(work.kind)) {
+      unawaited(widget.onOpenRemotePlayback!.call(work));
+      return;
+    }
     if (offline != null) {
-      widget.onOpenOfflineWork?.call(offline);
+      final onOpenOfflineWork = widget.onOpenOfflineWork;
+      if (onOpenOfflineWork != null) {
+        onOpenOfflineWork(offline);
+      }
       return;
     }
     final entry = _entryForWork(work);
-    if (entry != null && entry.source.isRemote) {
-      unawaited(widget.onOpenCatalogWork?.call(entry));
+    final onOpenCatalogWork = widget.onOpenCatalogWork;
+    if (entry != null && entry.source.isRemote && onOpenCatalogWork != null) {
+      unawaited(onOpenCatalogWork(entry));
     }
   }
 
