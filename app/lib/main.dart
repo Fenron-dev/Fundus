@@ -7031,6 +7031,39 @@ class _DetailPanelState extends State<_DetailPanel> {
             label: const Text('Notiz speichern'),
           ),
         ),
+        if (_similarCandidates(selectedWork).isNotEmpty) ...[
+          const SizedBox(height: 20),
+          Text('Ähnliche Titel', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 6),
+          for (final candidate in _similarCandidates(selectedWork).take(6))
+            Card(
+              margin: const EdgeInsets.only(bottom: 6),
+              child: ListTile(
+                dense: true,
+                leading: candidate.work.coverPath == null
+                    ? const Icon(Icons.auto_awesome_outlined)
+                    : ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: Image.file(
+                          File(candidate.work.coverPath!),
+                          width: 34,
+                          height: 46,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) =>
+                              const Icon(Icons.broken_image_outlined),
+                        ),
+                      ),
+                title: Text(
+                  candidate.work.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text('${candidate.score} gemeinsame Tags'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _openSimilarWork(candidate.work),
+              ),
+            ),
+        ],
       ],
     );
   }
@@ -7494,7 +7527,9 @@ class _DetailPanelState extends State<_DetailPanel> {
     await _openDocument(file);
   }
 
-  Widget _similarWorks(LibraryWorkSummary work) {
+  List<({LibraryWorkSummary work, int score})> _similarCandidates(
+    LibraryWorkSummary work,
+  ) {
     final sourceTags = {...work.tags, ..._annotations.tags}
       ..remove(_favoriteTag);
     final candidates = <({LibraryWorkSummary work, int score})>[];
@@ -7509,6 +7544,27 @@ class _DetailPanelState extends State<_DetailPanel> {
       final score = right.score.compareTo(left.score);
       return score != 0 ? score : left.work.title.compareTo(right.work.title);
     });
+    return candidates;
+  }
+
+  Future<void> _openSimilarWork(LibraryWorkSummary work) =>
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (context) => Scaffold(
+            appBar: AppBar(title: Text(work.title)),
+            body: _DetailPanel(
+              work: work,
+              library: widget.library,
+              player: widget.player,
+              onPlay: widget.onPlay,
+              onMetadataChanged: widget.onMetadataChanged,
+            ),
+          ),
+        ),
+      );
+
+  Widget _similarWorks(LibraryWorkSummary work) {
+    final candidates = _similarCandidates(work);
     if (candidates.isEmpty) {
       return const Center(
         child: Padding(
@@ -7536,20 +7592,7 @@ class _DetailPanelState extends State<_DetailPanel> {
             title: Text(candidate.work.title),
             subtitle: Text('${candidate.score} gemeinsame Tag(s)'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (context) => Scaffold(
-                  appBar: AppBar(title: Text(candidate.work.title)),
-                  body: _DetailPanel(
-                    work: candidate.work,
-                    library: widget.library,
-                    player: widget.player,
-                    onPlay: widget.onPlay,
-                    onMetadataChanged: widget.onMetadataChanged,
-                  ),
-                ),
-              ),
-            ),
+            onTap: () => _openSimilarWork(candidate.work),
           ),
       ],
     );

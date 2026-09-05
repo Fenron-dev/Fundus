@@ -173,8 +173,8 @@ final class _VideoMetadataDialogState extends State<_VideoMetadataDialog> {
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: const Text('Film- und Seriendetails laden'),
-    content: SizedBox(
-      width: 680,
+    content: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 680),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [

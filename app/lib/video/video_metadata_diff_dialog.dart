@@ -146,8 +146,8 @@ Future<VideoMetadataDiffSelection?> showVideoMetadataDiffDialog(
         final allSelected = selected.length == values.length;
         return AlertDialog(
           title: Text('${incoming.provider.toUpperCase()} – Änderungen prüfen'),
-          content: SizedBox(
-            width: 720,
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
             child: SingleChildScrollView(
               child: Column(
                 children: [
