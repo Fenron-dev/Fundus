@@ -164,6 +164,7 @@ Future<void> showFundusRemoteServers(
   FundusPeerServerController? peerServer,
   FundusOfflineStore? offlineStore,
   FundusOfflineWork? initialOfflineWork,
+  FundusRemoteWork? initialWork,
   String? initialWorkId,
   bool closeAfterInitialOfflineWork = false,
   bool showHhh = false,
@@ -175,6 +176,7 @@ Future<void> showFundusRemoteServers(
       peerServer: peerServer,
       offlineStore: offlineStore,
       initialOfflineWork: initialOfflineWork,
+      initialWork: initialWork,
       initialWorkId: initialWorkId,
       closeAfterInitialOfflineWork: closeAfterInitialOfflineWork,
       showHhh: showHhh,
@@ -190,6 +192,7 @@ class FundusRemoteServersView extends StatefulWidget {
     this.peerServer,
     this.offlineStore,
     this.initialOfflineWork,
+    this.initialWork,
     this.initialWorkId,
     this.closeAfterInitialOfflineWork = false,
     this.showHhh = false,
@@ -200,6 +203,11 @@ class FundusRemoteServersView extends StatefulWidget {
   final FundusPeerServerController? peerServer;
   final FundusOfflineStore? offlineStore;
   final FundusOfflineWork? initialOfflineWork;
+
+  /// Summary from the unified catalog.  It lets the detail screen open even
+  /// when the server's (potentially very large) work list is stale or omits
+  /// the item that was just selected in the catalog mirror.
+  final FundusRemoteWork? initialWork;
   final String? initialWorkId;
   final bool closeAfterInitialOfflineWork;
   final bool showHhh;
@@ -368,19 +376,30 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             .where((library) => library.id == widget.initialLibraryId)
             .firstOrNull;
         if (initialLibrary != null) {
-          await _selectLibrary(initialLibrary);
-          if (widget.initialWorkId case final workId?) {
-            final initialWork = _works
-                .where((work) => work.id == workId)
-                .firstOrNull;
-            if (initialWork != null) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) {
-                  unawaited(
-                    _showWork(initialServer, initialLibrary, initialWork),
-                  );
-                }
-              });
+          final initialWork = widget.initialWork;
+          if (initialWork != null &&
+              (widget.initialWorkId == null ||
+                  widget.initialWorkId == initialWork.id)) {
+            // A catalog tap already knows the selected work.  Do not first
+            // download every work, playlist and saved view in a large
+            // remote library; load this detail directly and refresh the full
+            // list only when the user navigates back to the library.
+            await _selectInitialWork(initialLibrary, initialWork);
+          } else {
+            await _selectLibrary(initialLibrary);
+            if (widget.initialWorkId case final workId?) {
+              final selected = _works
+                  .where((work) => work.id == workId)
+                  .firstOrNull;
+              if (selected != null) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) {
+                    unawaited(
+                      _showWork(initialServer, initialLibrary, selected),
+                    );
+                  }
+                });
+              }
             }
           }
         }
@@ -679,6 +698,36 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         _busy = false;
       });
     }
+  }
+
+  Future<void> _selectInitialWork(
+    FundusRemoteLibrary library,
+    FundusRemoteWork summary,
+  ) async {
+    final server = _selectedServer;
+    if (server == null) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _selectedLibrary = library;
+      _works = const [];
+      _playlists = const [];
+      _collections = const [];
+      _selectedCollectionId = null;
+      _selectedGroup = null;
+      _selectedCredit = null;
+    });
+    if (!mounted) return;
+    setState(() {
+      _selectedServer = server;
+      _works = [summary];
+      _serverOnline = true;
+      _authorizationRequired = false;
+      _busy = false;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_showWork(server, library, summary));
+    });
   }
 
   Future<void> _removeServer(FundusRemoteServer server) async {
@@ -2548,6 +2597,8 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             server,
             (active) => _client.work(active, library.id, work),
           );
+          server = result.server;
+          work = result.value.work;
           detailTracks = result.value.tracks;
         } catch (_) {
           // Summary details remain usable if the server becomes unavailable.

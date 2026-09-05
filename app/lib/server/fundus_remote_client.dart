@@ -1421,8 +1421,12 @@ final class FundusRemoteClient {
     );
     final files = value['files'];
     final chapters = value['chapters'];
+    // The detail endpoint includes the authoritative artwork and metadata.
+    // Catalog mirrors may be older (or may not have carried a cover version),
+    // so do not keep rendering the stale summary after opening a work.
+    final detailWork = FundusRemoteWork.fromJson(value) ?? summary;
     return FundusRemoteWorkDetail(
-      work: summary,
+      work: detailWork,
       tracks: [
         for (final item in (files is List ? files : const []).whereType<Map>())
           if (item['id'] is String && item['title'] is String)

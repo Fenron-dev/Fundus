@@ -120,60 +120,93 @@ class _HhhVisibilityModeSettingTileState
   @override
   Widget build(BuildContext context) {
     final mode = _mode;
-    return ListTile(
-      leading: const Icon(Icons.shield_outlined),
-      title: const Text('HHH-Schutzmodus'),
-      subtitle: Text(
-        mode == null
-            ? 'Wird geladen …'
-            : switch (mode) {
-                HhhVisibilityMode.hidden =>
-                  'Vollständig ausgeblendet (keine Navigation oder Suche)',
-                HhhVisibilityMode.protected =>
-                  'Per PIN für 20 Minuten freigeben',
-                HhhVisibilityMode.visible => 'Auf diesem Gerät sichtbar',
-              },
-      ),
-      trailing: mode == null
-          ? const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : Wrap(
-              spacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                DropdownButton<HhhVisibilityMode>(
-                  value: mode,
-                  onChanged: _busy
-                      ? null
-                      : (value) {
-                          if (value != null) _select(value);
-                        },
-                  items: const [
-                    DropdownMenuItem(
-                      value: HhhVisibilityMode.hidden,
-                      child: Text('Ausblenden'),
-                    ),
-                    DropdownMenuItem(
-                      value: HhhVisibilityMode.protected,
-                      child: Text('Geschützt'),
-                    ),
-                    DropdownMenuItem(
-                      value: HhhVisibilityMode.visible,
-                      child: Text('Anzeigen'),
-                    ),
-                  ],
-                ),
-                if (mode == HhhVisibilityMode.protected)
-                  OutlinedButton.icon(
-                    onPressed: _busy ? null : _unlock,
-                    icon: const Icon(Icons.lock_open_outlined),
-                    label: const Text('Freigeben'),
+    final description = mode == null
+        ? 'Wird geladen …'
+        : switch (mode) {
+            HhhVisibilityMode.hidden =>
+              'Vollständig ausgeblendet (keine Navigation oder Suche)',
+            HhhVisibilityMode.protected => 'Per PIN für 20 Minuten freigeben',
+            HhhVisibilityMode.visible => 'Auf diesem Gerät sichtbar',
+          };
+    final controls = mode == null
+        ? const SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              DropdownButton<HhhVisibilityMode>(
+                value: mode,
+                onChanged: _busy
+                    ? null
+                    : (value) {
+                        if (value != null) _select(value);
+                      },
+                items: const [
+                  DropdownMenuItem(
+                    value: HhhVisibilityMode.hidden,
+                    child: Text('Ausblenden'),
                   ),
-              ],
+                  DropdownMenuItem(
+                    value: HhhVisibilityMode.protected,
+                    child: Text('Geschützt'),
+                  ),
+                  DropdownMenuItem(
+                    value: HhhVisibilityMode.visible,
+                    child: Text('Anzeigen'),
+                  ),
+                ],
+              ),
+              if (mode == HhhVisibilityMode.protected)
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _unlock,
+                  icon: const Icon(Icons.lock_open_outlined),
+                  label: const Text('Freigeben'),
+                ),
+            ],
+          );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow = constraints.maxWidth < 620;
+        if (narrow) {
+          return Card(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.shield_outlined),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Text(
+                          'HHH-Schutzmodus',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(description),
+                  const SizedBox(height: 10),
+                  Align(alignment: Alignment.centerLeft, child: controls),
+                ],
+              ),
             ),
+          );
+        }
+        return ListTile(
+          leading: const Icon(Icons.shield_outlined),
+          title: const Text('HHH-Schutzmodus'),
+          subtitle: Text(description),
+          trailing: controls,
+        );
+      },
     );
   }
 }
@@ -189,9 +222,24 @@ Future<void> showFundusServerSettings(
   VoidCallback? onExportDiagnostics,
 }) => showDialog<void>(
   context: context,
+  // The desktop dialog used to keep its desktop max-width constraints on
+  // phones as well.  That makes ListTile trailing controls consume almost
+  // the complete width and leaves the title/subtitle with only a handful of
+  // pixels (in the worst case one character per line).  Keep the same
+  // settings surface, but let it become a real full-screen page on mobile.
+  useSafeArea: false,
   builder: (context) => Dialog(
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 980, maxHeight: 820),
+    insetPadding: MediaQuery.sizeOf(context).width < 700
+        ? EdgeInsets.zero
+        : const EdgeInsets.all(24),
+    clipBehavior: Clip.antiAlias,
+    child: SizedBox(
+      width: MediaQuery.sizeOf(context).width < 700
+          ? MediaQuery.sizeOf(context).width
+          : 980,
+      height: MediaQuery.sizeOf(context).width < 700
+          ? MediaQuery.sizeOf(context).height
+          : 820,
       child: _ServerSettings(
         controller: controller,
         offlineStore: offlineStore,
