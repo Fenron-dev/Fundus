@@ -7711,7 +7711,10 @@ class _DetailPanelState extends State<_DetailPanel> {
   }) async {
     final library = widget.library;
     if (library == null) return;
-    final controller = FundusVideoPlayerController();
+    final readerDeviceName = await FundusRemoteServerStore().deviceName();
+    final controller = FundusVideoPlayerController(
+      deviceName: readerDeviceName,
+    );
     try {
       // The native video widget must only be created after the playlist and
       // its resume position have been restored. Creating it while `open` was
@@ -7830,6 +7833,7 @@ class _DetailPanelState extends State<_DetailPanel> {
   }) async {
     final library = widget.library;
     final readerDeviceKey = await PublicationReaderSettings.deviceKey();
+    final readerDeviceName = await FundusRemoteServerStore().deviceName();
     var resolvedProgress = progress;
     if (resolveConflict && library != null) {
       resolvedProgress = await _resolveLocalReaderProgress(work, progress);
@@ -7842,6 +7846,7 @@ class _DetailPanelState extends State<_DetailPanel> {
               workId: work.id,
               deviceKey: readerDeviceKey,
               readerKind: 'epub',
+              deviceName: readerDeviceName,
             );
       var readerProfile = portableProfile == null
           ? await PublicationReaderSettings.loadReflowProfile(workId: work.id)
@@ -7981,6 +7986,7 @@ class _DetailPanelState extends State<_DetailPanel> {
             deviceKey: readerDeviceKey,
             readerKind: 'epub',
             profile: readerProfile.toJson(),
+            deviceName: readerDeviceName,
           );
         }
       }
@@ -8198,6 +8204,7 @@ class _DetailPanelState extends State<_DetailPanel> {
   }) async {
     final library = widget.library;
     final readerDeviceKey = await PublicationReaderSettings.deviceKey();
+    final readerDeviceName = await FundusRemoteServerStore().deviceName();
     final comics =
         files
             .where(
@@ -8241,6 +8248,7 @@ class _DetailPanelState extends State<_DetailPanel> {
             workId: work.id,
             deviceKey: readerDeviceKey,
             readerKind: 'comic',
+            deviceName: readerDeviceName,
           );
     var readerProfile = portableProfile == null
         ? await PublicationReaderSettings.loadComicProfile(workId: work?.id)
@@ -8349,6 +8357,7 @@ class _DetailPanelState extends State<_DetailPanel> {
             deviceKey: readerDeviceKey,
             readerKind: 'comic',
             profile: readerProfile.toJson(),
+            deviceName: readerDeviceName,
           );
         }
         readerProfileDirty = false;

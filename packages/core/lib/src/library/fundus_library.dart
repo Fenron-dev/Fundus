@@ -348,6 +348,7 @@ final class FundusLibrary {
     required String workId,
     required String deviceKey,
     required String readerKind,
+    String? deviceName,
   }) async {
     final sourcePath = _database.workSourcePath(workId);
     if (sourcePath == null) return null;
@@ -365,8 +366,15 @@ final class FundusLibrary {
       // one device, migrate that profile transparently.  With multiple
       // devices we deliberately refuse to guess, so a phone never inherits a
       // tablet's layout by accident.
+      final namedDevice = deviceName?.trim();
+      final namedMatch = namedDevice == null || namedDevice.isEmpty
+          ? null
+          : devices.values.whereType<Map>().where((candidate) {
+              return candidate['device_name'] == namedDevice;
+            }).firstOrNull;
       final device =
           devices[deviceKey] ??
+          namedMatch ??
           (devices.length == 1 ? devices.values.first : null);
       if (device is! Map) return null;
       final profile = device[readerKind];
@@ -385,6 +393,7 @@ final class FundusLibrary {
     required String deviceKey,
     required String readerKind,
     required Map<String, Object?> profile,
+    String? deviceName,
   }) async {
     _ensureWritable();
     final sourcePath = _database.workSourcePath(workId);
@@ -411,6 +420,10 @@ final class FundusLibrary {
     final device = devices[deviceKey] is Map
         ? Map<String, Object?>.from(devices[deviceKey] as Map)
         : <String, Object?>{};
+    final normalizedDeviceName = deviceName?.trim();
+    if (normalizedDeviceName != null && normalizedDeviceName.isNotEmpty) {
+      device['device_name'] = normalizedDeviceName;
+    }
     device[readerKind] = profile;
     devices[deviceKey] = device;
     values['devices'] = devices;

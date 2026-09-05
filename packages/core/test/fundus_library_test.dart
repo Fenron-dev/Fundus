@@ -1292,6 +1292,7 @@ void main() {
       deviceKey: 'android',
       readerKind: 'epub',
       profile: const {'font_size': 22.0, 'content_width': 680.0},
+      deviceName: 'Samsung Tablet',
     );
     final portableProfile = await library.loadPortableReaderProfile(
       workId: work.id,
@@ -1305,6 +1306,7 @@ void main() {
       workId: work.id,
       deviceKey: 'fresh-install-device',
       readerKind: 'epub',
+      deviceName: 'Samsung Tablet',
     );
     expect(migrated?['font_size'], 22.0);
     await library.savePortableReaderProfile(
@@ -1312,12 +1314,14 @@ void main() {
       deviceKey: 'second-device',
       readerKind: 'epub',
       profile: const {'font_size': 18.0},
+      deviceName: 'Samsung Handy',
     );
     expect(
       await library.loadPortableReaderProfile(
         workId: work.id,
         deviceKey: 'unknown-device',
         readerKind: 'epub',
+        deviceName: 'Unbekanntes Gerät',
       ),
       isNull,
     );

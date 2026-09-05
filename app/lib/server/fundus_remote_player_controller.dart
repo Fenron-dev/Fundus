@@ -1575,6 +1575,7 @@ final class FundusRemotePlayerController extends ChangeNotifier
         workId: work.id,
         deviceKey: profileDeviceKey,
         readerKind: 'video-tracks',
+        deviceName: deviceName,
       );
     }
     try {
@@ -1585,6 +1586,7 @@ final class FundusRemotePlayerController extends ChangeNotifier
           workId: work.id,
           deviceKey: profileDeviceKey,
           readerKind: 'video-tracks',
+          deviceName: deviceName,
         ),
       );
     } catch (_) {
@@ -1617,6 +1619,7 @@ final class FundusRemotePlayerController extends ChangeNotifier
           deviceKey: profileDeviceKey,
           readerKind: 'video-tracks',
           profile: profile,
+          deviceName: deviceName,
         );
       } else {
         await _withReconnect(
@@ -1627,6 +1630,7 @@ final class FundusRemotePlayerController extends ChangeNotifier
             deviceKey: profileDeviceKey,
             readerKind: 'video-tracks',
             profile: profile,
+            deviceName: deviceName,
           ),
         );
       }

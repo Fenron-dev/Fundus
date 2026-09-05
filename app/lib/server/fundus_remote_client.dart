@@ -1733,10 +1733,14 @@ final class FundusRemoteClient {
     required String workId,
     required String deviceKey,
     required String readerKind,
+    String? deviceName,
   }) async {
+    final query = deviceName == null || deviceName.trim().isEmpty
+        ? ''
+        : '?device_name=${Uri.encodeQueryComponent(deviceName.trim())}';
     final value = await _json(
       server,
-      '/v1/libraries/$libraryId/reader-settings/$workId/$deviceKey/$readerKind',
+      '/v1/libraries/$libraryId/reader-settings/$workId/$deviceKey/$readerKind$query',
     );
     final profile = value['profile'];
     return profile is Map ? Map<String, Object?>.from(profile) : null;
@@ -1749,6 +1753,7 @@ final class FundusRemoteClient {
     required String deviceKey,
     required String readerKind,
     required Map<String, Object?> profile,
+    String? deviceName,
   }) async {
     await _request(
       server.baseUri.resolve(
@@ -1757,7 +1762,11 @@ final class FundusRemoteClient {
       fingerprint: server.certificateFingerprint,
       token: server.token,
       method: 'PUT',
-      body: jsonEncode({'profile': profile}),
+      body: jsonEncode({
+        'profile': profile,
+        if (deviceName != null && deviceName.trim().isNotEmpty)
+          'device_name': deviceName.trim(),
+      }),
     );
   }
 

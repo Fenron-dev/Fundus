@@ -3653,6 +3653,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       _lastDownloadUiUpdate = null;
     });
     try {
+      final readerDeviceName = await _store.deviceName();
       unawaited(
         FundusDiagnostics.instance.record('remote.download_started', {
           'server_id': server.id,
@@ -3668,6 +3669,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           library,
           work,
           trackIds: trackIds,
+          deviceName: readerDeviceName,
           onProgress: (completed, total) {
             if (!mounted) return;
             setState(() {
@@ -4357,6 +4359,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     bool skipServerLookup = false,
   }) async {
     final readerDeviceKey = await PublicationReaderSettings.deviceKey();
+    final readerDeviceName = await _store.deviceName();
     final comics =
         tracks
             .where((track) => track.title.toLowerCase().endsWith('.cbz'))
@@ -4431,6 +4434,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           workId: work.id,
           deviceKey: readerDeviceKey,
           readerKind: 'comic',
+          deviceName: readerDeviceName,
         );
         profileLoadedFromServer = portableProfile != null;
       } catch (_) {}
@@ -4443,6 +4447,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             workId: work.id,
             deviceKey: readerDeviceKey,
             readerKind: 'comic',
+            deviceName: readerDeviceName,
           );
     if (profileLoadedFromServer && offlineWork != null) {
       await _offlineStore.saveReaderProfile(
@@ -4452,6 +4457,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         deviceKey: readerDeviceKey,
         readerKind: 'comic',
         profile: portableProfile!,
+        deviceName: readerDeviceName,
       );
     }
     var profile = portableProfile == null
@@ -4735,6 +4741,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             deviceKey: readerDeviceKey,
             readerKind: 'comic',
             profile: profile.toJson(),
+            deviceName: readerDeviceName,
           );
         }
         if (!skipServerLookup) {
@@ -4748,6 +4755,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 deviceKey: readerDeviceKey,
                 readerKind: 'comic',
                 profile: profile.toJson(),
+                deviceName: readerDeviceName,
               ),
             );
             server = saved.server;
@@ -5041,6 +5049,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
     bool skipServerLookup = false,
   }) async {
     final readerDeviceKey = await PublicationReaderSettings.deviceKey();
+    final readerDeviceName = await _store.deviceName();
     final epubs =
         tracks
             .where((track) => track.title.toLowerCase().endsWith('.epub'))
@@ -5137,6 +5146,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
           workId: work.id,
           deviceKey: readerDeviceKey,
           readerKind: 'epub',
+          deviceName: readerDeviceName,
         );
         profileLoadedFromServer = portableProfile != null;
       } catch (_) {}
@@ -5149,6 +5159,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             workId: work.id,
             deviceKey: readerDeviceKey,
             readerKind: 'epub',
+            deviceName: readerDeviceName,
           );
     if (profileLoadedFromServer && offlineWork != null) {
       await _offlineStore.saveReaderProfile(
@@ -5158,6 +5169,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
         deviceKey: readerDeviceKey,
         readerKind: 'epub',
         profile: portableProfile!,
+        deviceName: readerDeviceName,
       );
     }
     var profile = portableProfile == null
@@ -5430,6 +5442,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             deviceKey: readerDeviceKey,
             readerKind: 'epub',
             profile: profile.toJson(),
+            deviceName: readerDeviceName,
           );
         }
         if (!skipServerLookup) {
@@ -5443,6 +5456,7 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 deviceKey: readerDeviceKey,
                 readerKind: 'epub',
                 profile: profile.toJson(),
+                deviceName: readerDeviceName,
               ),
             );
             server = saved.server;

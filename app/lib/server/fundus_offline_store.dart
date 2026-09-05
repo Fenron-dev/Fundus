@@ -597,8 +597,13 @@ final class FundusOfflineStore {
     Set<String>? trackIds,
     OfflineDownloadProgress? onProgress,
     OfflineDownloadTransferProgress? onTransfer,
+    String? deviceName,
   }) async {
     final detail = await client.work(server, library.id, work);
+    // Tests and headless download jobs may not have initialized Flutter's
+    // secure-storage platform channel. Keep the optional profile sync lazy so
+    // downloading media remains usable in those environments.
+    final readerDeviceName = deviceName?.trim();
     final selectedTracks = trackIds == null
         ? detail.tracks
         : detail.tracks
@@ -784,6 +789,7 @@ final class FundusOfflineStore {
             workId: work.id,
             deviceKey: await PublicationReaderSettings.deviceKey(),
             readerKind: readerKind,
+            deviceName: readerDeviceName,
           );
           if (profile != null) {
             await saveReaderProfile(
@@ -793,6 +799,7 @@ final class FundusOfflineStore {
               deviceKey: await PublicationReaderSettings.deviceKey(),
               readerKind: readerKind,
               profile: profile,
+              deviceName: readerDeviceName,
             );
           }
         } catch (_) {
@@ -1569,6 +1576,7 @@ final class FundusOfflineStore {
     required String workId,
     required String deviceKey,
     required String readerKind,
+    String? deviceName,
   }) async {
     final fallback = await _fallbackContaining(serverId, libraryId, workId);
     if (fallback != null) {
@@ -1578,6 +1586,7 @@ final class FundusOfflineStore {
         workId: workId,
         deviceKey: deviceKey,
         readerKind: readerKind,
+        deviceName: deviceName,
       );
     }
     final directory = await _workDirectory(serverId, libraryId, workId);
@@ -1592,8 +1601,15 @@ final class FundusOfflineStore {
       // sidecar survives.  If this work has only one stored device profile,
       // adopt it transparently; with multiple profiles we keep the explicit
       // device separation and refuse to guess between phone and tablet.
+      final namedDevice = deviceName?.trim();
+      final namedMatch = namedDevice == null || namedDevice.isEmpty
+          ? null
+          : devices.values.whereType<Map>().where((candidate) {
+              return candidate['device_name'] == namedDevice;
+            }).firstOrNull;
       final device =
           devices[deviceKey] ??
+          namedMatch ??
           (devices.length == 1 ? devices.values.first : null);
       if (device is! Map) return null;
       final profile = device[readerKind];
@@ -1614,6 +1630,7 @@ final class FundusOfflineStore {
     required String deviceKey,
     required String readerKind,
     required Map<String, Object?> profile,
+    String? deviceName,
   }) async {
     final fallback = await _fallbackContaining(serverId, libraryId, workId);
     if (fallback != null) {
@@ -1624,6 +1641,7 @@ final class FundusOfflineStore {
         deviceKey: deviceKey,
         readerKind: readerKind,
         profile: profile,
+        deviceName: deviceName,
       );
       return;
     }
@@ -1649,6 +1667,10 @@ final class FundusOfflineStore {
     final device = devices[deviceKey] is Map
         ? Map<String, Object?>.from(devices[deviceKey] as Map)
         : <String, Object?>{};
+    final normalizedDeviceName = deviceName?.trim();
+    if (normalizedDeviceName != null && normalizedDeviceName.isNotEmpty) {
+      device['device_name'] = normalizedDeviceName;
+    }
     device[readerKind] = profile;
     devices[deviceKey] = device;
     values['devices'] = devices;

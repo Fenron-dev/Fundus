@@ -33,8 +33,10 @@ final class FundusVideoPlayerController extends ChangeNotifier
     FundusPlaybackCapability.bookmarks,
   };
 
-  FundusVideoPlayerController({this.deviceId = 'desktop-local'})
-    : _player = Player() {
+  FundusVideoPlayerController({
+    this.deviceId = 'desktop-local',
+    this.deviceName = 'Dieses Gerät',
+  }) : _player = Player() {
     // Attach the native video output before a medium is opened. Creating it
     // only in the fullscreen route lets audio decode and seek correctly while
     // the resumed video decoder has no texture to render into.
@@ -113,6 +115,7 @@ final class FundusVideoPlayerController extends ChangeNotifier
 
   final Player _player;
   final String deviceId;
+  final String deviceName;
   late final VideoController _videoController;
   final List<StreamSubscription<Object?>> _subscriptions = [];
   FundusLibrary? _library;
@@ -249,6 +252,7 @@ final class FundusVideoPlayerController extends ChangeNotifier
         workId: work.id,
         fileId: track?.fileId,
         season: track?.episode?.season,
+        deviceName: deviceName,
       );
       unawaited(
         FundusDiagnostics.instance.record('video.resume_loaded', {
@@ -446,6 +450,7 @@ final class FundusVideoPlayerController extends ChangeNotifier
       workId: work.id,
       fileId: target.fileId,
       season: target.season,
+      deviceName: deviceName,
     );
     await VideoTrackPreferences.saveForLibrary(
       library: library,
@@ -453,6 +458,7 @@ final class FundusVideoPlayerController extends ChangeNotifier
       workId: work.id,
       fileId: target.fileId,
       season: target.season,
+      deviceName: deviceName,
       preference: preference.copyWith(
         audioLanguage: selected.language,
         audioTrackId: selected.id,
@@ -481,6 +487,7 @@ final class FundusVideoPlayerController extends ChangeNotifier
       workId: work.id,
       fileId: target.fileId,
       season: target.season,
+      deviceName: deviceName,
     );
     await VideoTrackPreferences.saveForLibrary(
       library: library,
@@ -488,6 +495,7 @@ final class FundusVideoPlayerController extends ChangeNotifier
       workId: work.id,
       fileId: target.fileId,
       season: target.season,
+      deviceName: deviceName,
       preference: preference.copyWith(
         subtitlesEnabled: enabled,
         subtitleLanguage: selected?.language,

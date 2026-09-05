@@ -208,6 +208,7 @@ abstract final class VideoTrackPreferences {
     required String workId,
     String? fileId,
     int? season,
+    String? deviceName,
   }) async {
     var result = await load(
       kind: kind,
@@ -219,6 +220,7 @@ abstract final class VideoTrackPreferences {
       workId: workId,
       deviceKey: await PublicationReaderSettings.deviceKey(),
       readerKind: _portableReaderKind,
+      deviceName: deviceName,
     );
     if (profile == null) return result;
     return overlayPortableProfile(
@@ -284,6 +286,7 @@ abstract final class VideoTrackPreferences {
     required String workId,
     String? fileId,
     int? season,
+    String? deviceName,
     required VideoTrackPreference preference,
   }) async {
     await save(
@@ -300,6 +303,7 @@ abstract final class VideoTrackPreferences {
         workId: workId,
         deviceKey: deviceKey,
         readerKind: _portableReaderKind,
+        deviceName: deviceName,
       );
       await library.savePortableReaderProfile(
         workId: workId,
@@ -311,6 +315,7 @@ abstract final class VideoTrackPreferences {
           fileId: fileId,
           season: season,
         ),
+        deviceName: deviceName,
       );
     } catch (_) {
       // Portable preferences are optional and must never prevent playback.

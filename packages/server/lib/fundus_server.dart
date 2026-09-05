@@ -1868,6 +1868,7 @@ final class FundusServerHandler {
       workId: workId,
       deviceKey: deviceKey,
       readerKind: readerKind,
+      deviceName: request.url.queryParameters['device_name'],
     );
     return _json({'profile': profile});
   }
@@ -1897,6 +1898,9 @@ final class FundusServerHandler {
       deviceKey: deviceKey,
       readerKind: readerKind,
       profile: Map<String, Object?>.from(profile),
+      deviceName: decoded?['device_name'] is String
+          ? decoded!['device_name'] as String
+          : null,
     );
     return _json({'profile': profile});
   }
