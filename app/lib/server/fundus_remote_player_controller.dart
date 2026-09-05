@@ -644,7 +644,7 @@ final class FundusRemotePlayerController extends ChangeNotifier
         );
         await _applyVideoTrackPreference(preference);
       }
-      if (useNativeVideoResume) {
+      if (useNativeVideoResume && autoPlay) {
         // Apply the resume after stream selection while the player is still
         // paused. Supplying Media.start can advance audio without priming the
         // video texture, especially for an already visited MKV/MP4. An
@@ -654,6 +654,13 @@ final class FundusRemotePlayerController extends ChangeNotifier
           _player,
           resumePosition,
         );
+        notifyListeners();
+      } else if (useNativeVideoResume) {
+        // Video routes are opened paused so their native surface can mount
+        // before the resume seek. Keeping the target in the shared controller
+        // lets the route perform one seek against the live texture instead of
+        // seeking once before mount and again after reopening the episode.
+        _position = resumePosition;
         notifyListeners();
       }
       if (autoPlay) await _player.play();

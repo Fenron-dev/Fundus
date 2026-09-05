@@ -271,8 +271,8 @@ final class FundusVideoPlayerController extends ChangeNotifier
       // Media.start hint is intentionally avoided here: on resumed files it
       // can position the audio decoder while leaving the video texture on a
       // black frame. An explicit paused seek primes both decoders reliably.
-      await FundusVideoPlaybackSession.waitForVideoParameters(_player);
-      if (resume > Duration.zero) {
+      if (resume > Duration.zero && autoPlay) {
+        await FundusVideoPlaybackSession.waitForVideoParameters(_player);
         final nativeDuration = _player.state.duration;
         final target = nativeDuration > Duration.zero && resume > nativeDuration
             ? nativeDuration
@@ -281,6 +281,13 @@ final class FundusVideoPlayerController extends ChangeNotifier
           _player,
           target,
         );
+      } else if (resume > Duration.zero) {
+        // The fullscreen route owns the native video surface. Seeking before
+        // that route is mounted can advance audio while the texture still
+        // points at the previous frame (black on a reopened title). Keep the
+        // target in the controller for the route, but perform the native seek
+        // exactly once after the surface is attached.
+        _position = resume;
       } else {
         _position = Duration.zero;
       }
