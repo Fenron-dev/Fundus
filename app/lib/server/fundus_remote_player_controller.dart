@@ -687,12 +687,11 @@ final class FundusRemotePlayerController extends ChangeNotifier
         );
       }
       _syncSystemMediaSession();
-      if (offlineWork != null) {
-        // Local playback is ready immediately. A reachable server may still
-        // contribute a newer position, but reconnect attempts must never hold
-        // up playback when the device is offline.
-        unawaited(_refreshProgressBeforeResume());
-      }
+      // For offline video the server may still have a newer position. Do not
+      // refresh and seek it before the fullscreen route mounts its native
+      // surface: an asynchronous seek at this point can advance audio
+      // against a stale texture and reproduce the black-frame resume race.
+      // The first play action performs the same refresh after mount.
       unawaited(
         FundusDiagnostics.instance.record('remote.playback_opened', {
           'work_id': work.id,
