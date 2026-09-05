@@ -8643,9 +8643,11 @@ class _DetailPanelState extends State<_DetailPanel> {
           selection.contains(VideoMetadataField.contentStyle)) {
         providerMetadata['content_style'] = candidate.contentStyle;
       }
-      if (candidate.season != null)
+      if (candidate.season != null &&
+          selection.contains(VideoMetadataField.structure))
         providerMetadata['season'] = candidate.season;
-      if (candidate.episodeCount != null) {
+      if (candidate.episodeCount != null &&
+          selection.contains(VideoMetadataField.structure)) {
         providerMetadata['episode_count'] = candidate.episodeCount;
       }
       if (candidate.runtimeMinutes != null &&

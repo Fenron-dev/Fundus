@@ -31,6 +31,7 @@ import '../library/work_annotation_list.dart';
 import '../library/video_detail_hero.dart';
 import '../library/video_player_page.dart';
 import '../video/video_metadata_dialog.dart';
+import '../video/video_metadata_diff_dialog.dart';
 import '../library/zip_archive_browser.dart';
 import '../playback/playback_sleep_timer_button.dart';
 import '../playback/playback_conflict_settings.dart';
@@ -3567,48 +3568,106 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
       anime: anime,
     );
     if (candidate == null || !mounted) return;
+    final current = WorkDetailViewModel.fromRemote(
+      work,
+      serverId: server.id,
+      libraryId: library.id,
+      serverName: server.name,
+      libraryName: library.name,
+      offlineAvailable: _offlineKeys.contains(
+        _offlineKey(server, library, work),
+      ),
+    ).summary;
+    final selection = await showVideoMetadataDiffDialog(
+      context,
+      current: current,
+      incoming: candidate,
+    );
+    if (selection == null || !mounted || selection.fields.isEmpty) return;
     try {
+      final providerMetadata = <String, Object?>{
+        ...work.providerMetadata,
+        // Provider identity is retained for a later refresh, while visible
+        // fields below remain user-selectable through the diff dialog.
+        'provider': candidate.provider,
+        'provider_id': candidate.providerId,
+        if (candidate.videoKind != null) 'video_kind': candidate.videoKind,
+        if (candidate.externalIds.isNotEmpty)
+          'external_ids': candidate.externalIds,
+      };
+      if (candidate.contentStyle != null &&
+          selection.contains(VideoMetadataField.contentStyle)) {
+        providerMetadata['content_style'] = candidate.contentStyle;
+      }
+      if (candidate.releaseYear != null &&
+          selection.contains(VideoMetadataField.year)) {
+        providerMetadata['release_year'] = candidate.releaseYear;
+      }
+      if (candidate.season != null &&
+          selection.contains(VideoMetadataField.structure)) {
+        providerMetadata['season'] = candidate.season;
+      }
+      if (candidate.episodeCount != null &&
+          selection.contains(VideoMetadataField.structure)) {
+        providerMetadata['episode_count'] = candidate.episodeCount;
+      }
+      if (candidate.runtimeMinutes != null &&
+          selection.contains(VideoMetadataField.runtime)) {
+        providerMetadata['runtime_minutes'] = candidate.runtimeMinutes;
+      }
+      if (candidate.isAdult != null &&
+          selection.contains(VideoMetadataField.sensitivity)) {
+        providerMetadata['is_adult'] = candidate.isAdult;
+      }
+      if (candidate.alternateTitles.isNotEmpty) {
+        providerMetadata['alternate_titles'] = candidate.alternateTitles;
+      }
+      if (candidate.backdropUrl != null &&
+          selection.contains(VideoMetadataField.artwork)) {
+        providerMetadata['backdrop_url'] = candidate.backdropUrl;
+      }
+      if (candidate.posterUrl != null &&
+          selection.contains(VideoMetadataField.artwork)) {
+        providerMetadata['poster_url'] = candidate.posterUrl;
+      }
+      if (candidate.credits.isNotEmpty &&
+          selection.contains(VideoMetadataField.credits)) {
+        providerMetadata['credits'] = [
+          for (final credit in candidate.credits) credit.toJson(),
+        ];
+      }
+      if (candidate.trailerUrl != null &&
+          selection.contains(VideoMetadataField.trailer)) {
+        providerMetadata['trailer_url'] = candidate.trailerUrl;
+      }
       final result = await _runWithReconnect(
         server,
         (active) => _client.updateWorkMetadata(
           active,
           libraryId: library.id,
           workId: work.id,
-          title: candidate.title,
+          title: selection.contains(VideoMetadataField.title)
+              ? candidate.title
+              : work.title,
           authors: work.authors.isEmpty ? const ['Unbekannt'] : work.authors,
-          description: candidate.description ?? work.description,
-          publishedYear: candidate.releaseYear ?? work.publishedYear,
-          contentSensitivity:
-              candidate.contentSensitivity ?? work.contentSensitivity,
-          contentStyle: candidate.contentStyle ?? work.contentStyle,
-          genres: candidate.genres.isEmpty ? null : candidate.genres,
-          providerMetadata: {
-            'provider': candidate.provider,
-            'provider_id': candidate.providerId,
-            if (candidate.videoKind != null) 'video_kind': candidate.videoKind,
-            if (candidate.contentStyle != null)
-              'content_style': candidate.contentStyle,
-            if (candidate.releaseYear != null)
-              'release_year': candidate.releaseYear,
-            if (candidate.season != null) 'season': candidate.season,
-            if (candidate.episodeCount != null)
-              'episode_count': candidate.episodeCount,
-            if (candidate.runtimeMinutes != null)
-              'runtime_minutes': candidate.runtimeMinutes,
-            if (candidate.isAdult != null) 'is_adult': candidate.isAdult,
-            if (candidate.alternateTitles.isNotEmpty)
-              'alternate_titles': candidate.alternateTitles,
-            if (candidate.backdropUrl != null)
-              'backdrop_url': candidate.backdropUrl,
-            if (candidate.credits.isNotEmpty)
-              'credits': [
-                for (final credit in candidate.credits) credit.toJson(),
-              ],
-            if (candidate.trailerUrl != null)
-              'trailer_url': candidate.trailerUrl,
-            if (candidate.externalIds.isNotEmpty)
-              'external_ids': candidate.externalIds,
-          },
+          description: selection.contains(VideoMetadataField.description)
+              ? candidate.description ?? work.description
+              : work.description,
+          publishedYear: selection.contains(VideoMetadataField.year)
+              ? candidate.releaseYear ?? work.publishedYear
+              : work.publishedYear,
+          contentSensitivity: selection.contains(VideoMetadataField.sensitivity)
+              ? candidate.contentSensitivity ?? work.contentSensitivity
+              : work.contentSensitivity,
+          contentStyle: selection.contains(VideoMetadataField.contentStyle)
+              ? candidate.contentStyle ?? work.contentStyle
+              : work.contentStyle,
+          genres:
+              selection.contains(VideoMetadataField.genres) &&
+                  candidate.genres.isNotEmpty
+              ? candidate.genres
+              : work.tags,
+          providerMetadata: providerMetadata,
         ),
       );
       if (!mounted) return;

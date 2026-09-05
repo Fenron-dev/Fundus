@@ -62,4 +62,43 @@ void main() {
     expect(result!.contains(VideoMetadataField.genres), isTrue);
     expect(result!.contains(VideoMetadataField.description), isFalse);
   });
+
+  testWidgets('structure changes are selectable independently', (tester) async {
+    final current = LibraryWorkSummary(
+      id: 'work',
+      kind: 'tv',
+      title: 'Series',
+      author: 'Studio',
+      fileCount: 1,
+      addedAt: DateTime(2020),
+      providerMetadata: const {'season': 1},
+    );
+    const incoming = VideoProviderCandidate(
+      provider: 'anilist',
+      providerId: '7',
+      title: 'Series',
+      season: 2,
+      episodeCount: 12,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () async {
+              await showVideoMetadataDiffDialog(
+                context,
+                current: current,
+                incoming: incoming,
+              );
+            },
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.text('Struktur'), findsOneWidget);
+    expect(find.textContaining('Staffel: 2'), findsOneWidget);
+  });
 }

@@ -13,6 +13,7 @@ enum VideoMetadataField {
   genres,
   contentStyle,
   sensitivity,
+  structure,
   runtime,
   artwork,
   credits,
@@ -78,6 +79,20 @@ Future<VideoMetadataDiffSelection?> showVideoMetadataDiffDialog(
     'Inhaltsschutz',
     current.contentSensitivity,
     incoming.contentSensitivity,
+  );
+  add(
+    VideoMetadataField.structure,
+    'Struktur',
+    {
+      if (current.providerMetadata['season'] != null)
+        'Staffel': current.providerMetadata['season'],
+      if (current.providerMetadata['episode_count'] != null)
+        'Folgen': current.providerMetadata['episode_count'],
+    },
+    {
+      if (incoming.season != null) 'Staffel': incoming.season,
+      if (incoming.episodeCount != null) 'Folgen': incoming.episodeCount,
+    },
   );
   add(
     VideoMetadataField.runtime,
@@ -227,7 +242,12 @@ String _displayValue(Object? value) {
   if (value is Iterable) {
     return value.map(_displayValue).where((item) => item.isNotEmpty).join(', ');
   }
-  if (value is Map) return value.isEmpty ? '' : '${value.length} Einträge';
+  if (value is Map) {
+    return value.entries
+        .map((entry) => '${entry.key}: ${_displayValue(entry.value)}')
+        .where((item) => item.trim().isNotEmpty)
+        .join(', ');
+  }
   final text = value.toString().trim();
   return text;
 }
