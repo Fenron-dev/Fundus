@@ -15,16 +15,44 @@ import '../playback/video_track_preferences.dart';
 Future<void> showFundusVideoPlayer(
   BuildContext context, {
   required FundusVideoPlaybackController controller,
-}) => showFundusVideoPlayerForPlayer(
-  context,
-  controller: controller,
-  fundusController: controller is FundusVideoPlayerController
+}) {
+  final localController = controller is FundusVideoPlayerController
       ? controller
-      : null,
-  title: controller.playbackWorkTitle ?? 'Video',
-  resumePlayback: true,
-  initialPosition: controller.position,
-);
+      : null;
+  return showFundusVideoPlayerForPlayer(
+    context,
+    controller: controller,
+    fundusController: localController,
+    title: controller.playbackWorkTitle ?? 'Video',
+    resumePlayback: true,
+    initialPosition: controller.position,
+    // Keep local and remote playback on the same preference contract. The
+    // remote route supplies equivalent callbacks below; without these local
+    // callbacks a newly selected language/subtitle was applied only for the
+    // current episode and could never be remembered for the next opening.
+    onAudioTrackSelected: localController == null
+        ? null
+        : (track, scope) => localController.rememberAudioTrack(
+            track,
+            scope: scope,
+          ),
+    onSubtitleTrackSelected: localController == null
+        ? null
+        : (enabled, track, scope) => localController.rememberSubtitlePreference(
+            enabled: enabled,
+            selected: track,
+            scope: scope,
+          ),
+    onBookmarkAtCurrent: localController == null
+        ? null
+        : ({String? label, String? note}) async {
+            await localController.addBookmarkAtCurrent(
+              label: label,
+              note: note,
+            );
+          },
+  );
+}
 
 Future<void> showFundusVideoPlayerForPlayer(
   BuildContext context, {
