@@ -17,6 +17,17 @@ final class FundusVideoPlaybackSession {
   static VideoController createVideoController(Player player) =>
       VideoController(player, configuration: configuration);
 
+  /// Returns whether a controller has already reached the requested resume
+  /// position closely enough that a second native seek is unnecessary.
+  ///
+  /// Kept as a pure helper so the threshold remains explicit and testable;
+  /// repeated seeks are particularly expensive for HTTP range streams.
+  static bool isResumePositionAligned(
+    Duration current,
+    Duration desired, {
+    Duration tolerance = const Duration(seconds: 2),
+  }) => desired <= Duration.zero || (current - desired).abs() <= tolerance;
+
   /// Wait until the native decoder has exposed dimensions before seeking a
   /// resumed item. Audio-only files and a few network containers legitimately
   /// never publish video parameters, so the timeout is intentionally soft.
@@ -58,11 +69,11 @@ final class FundusVideoPlaybackSession {
   /// Prime the native video surface after the player route has been mounted.
   ///
   /// A player can have a valid clock (and therefore resume audio at the right
-  /// timestamp) before the platform texture has received a frame.  Pausing,
-  /// seeking once after the surface is attached, and only then starting
-  /// playback avoids the audio-only/black-video state seen on resumed files.
-  /// The zero-position retry is deliberately limited to one pass so a slow
-  /// network stream cannot cause an endless seek loop.
+  /// timestamp) before the platform texture has received a frame.  The normal
+  /// path only pauses and resumes after the surface is attached because the
+  /// controller already performed a verified seek before mounting this route.
+  /// A seek is retained as a bounded fallback for a genuinely missing frame,
+  /// so a slow network stream cannot cause an endless seek loop.
   static Future<bool> primeVideoSurface({
     required Player player,
     required VideoController videoController,
@@ -94,25 +105,29 @@ final class FundusVideoPlaybackSession {
     } catch (_) {
       // The first frame is still pending; continue with the attach/prime path.
     }
-    if (firstFrameWasRendered && desired > Duration.zero) {
-      // A cached first-frame future does not guarantee that the newly mounted
-      // Texture has received a frame after a resume seek. Re-seek exactly once
-      // after the output is attached. This fixes the audio-only/black-texture
-      // state without the repeated seek loop that caused playback hitching.
+    final current = player.state.position;
+    final positionAligned = isResumePositionAligned(current, desired);
+
+    if (positionAligned) {
+      // The controller has already performed the verified resume seek before
+      // this route is mounted. Seeking a second time here is expensive for a
+      // range-backed stream and was the source of visible stalls whenever a
+      // user reopened an already visited episode. A pause/play cycle is enough
+      // to attach the current decoded frame to a newly mounted texture.
       if (!active()) return false;
       await player.pause();
       await Future<void>.delayed(const Duration(milliseconds: 60));
       if (!active()) return false;
-      await player.seek(desired);
-      if (!active()) return false;
       await player.play();
-      return true;
-    }
-
-    if (firstFrameWasRendered) {
-      if (!active()) return false;
-      await player.play();
-      return true;
+      if (firstFrameWasRendered) return true;
+      try {
+        await videoController.waitUntilFirstFrameRendered.timeout(timeout);
+        return true;
+      } catch (_) {
+        // Fall through to the one-time seek fallback below. This is reserved
+        // for a genuinely missing frame and is no longer part of the normal
+        // resume path.
+      }
     }
 
     // A new title does not need a synthetic seek to zero. Starting it
