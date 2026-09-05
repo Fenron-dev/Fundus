@@ -173,6 +173,20 @@ LibraryWorkSummary _offlineLibrarySummary(FundusOfflineWork work) {
   ).summary;
 }
 
+List<LibraryPlaybackTrack> _offlinePlaybackTracks(FundusOfflineWork work) => [
+  for (final track in work.tracks)
+    LibraryPlaybackTrack(
+      fileId: track.id,
+      relativePath: p.relative(track.path, from: work.directoryPath),
+      absolutePath: track.path,
+      title: track.title,
+      index: track.position,
+      size: track.size,
+      duration: track.duration,
+      audioMetadata: track.audioMetadata,
+    ),
+];
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
@@ -2290,11 +2304,7 @@ class _LibraryShellState extends State<LibraryShell> {
     final selectedCandidate = _showingGroups || works.isEmpty
         ? null
         : works[_selectedIndex.clamp(0, works.length - 1)];
-    final selected =
-        selectedCandidate != null &&
-            !_offlineBySummaryId.containsKey(selectedCandidate.id)
-        ? selectedCandidate
-        : null;
+    final selected = selectedCandidate;
     return Scaffold(
       bottomNavigationBar: widget.player == null || _playerExpanded
           ? null
@@ -2420,8 +2430,14 @@ class _LibraryShellState extends State<LibraryShell> {
                       child: _DetailPanel(
                         work: selected,
                         library: widget.library,
+                        offlineWork: selected == null
+                            ? null
+                            : _offlineBySummaryId[selected.id],
                         player: widget.player,
                         onPlay: widget.onPlay,
+                        onOpenExternal: selected == null
+                            ? null
+                            : () => _openExternalWork(selected),
                         onDeleteMissingWork: _deleteMissingWork,
                         onMetadataChanged: _metadataChanged,
                         onSelectAuthor: _showAuthor,
@@ -2833,11 +2849,6 @@ class _LibraryShellState extends State<LibraryShell> {
   }
 
   void _openDashboardWork(LibraryWorkSummary work) {
-    final offline = _offlineBySummaryId[work.id];
-    if (offline != null) {
-      widget.onOpenOfflineWork?.call(offline);
-      return;
-    }
     _openWorkDetails(work);
   }
 
@@ -2862,7 +2873,8 @@ class _LibraryShellState extends State<LibraryShell> {
                     '${offline.sourceServerName ?? offline.serverId} · '
                     '${offline.sourceLibraryName ?? offline.libraryId}',
                   ),
-                  onTap: () => widget.onOpenOfflineWork?.call(offline),
+                  onTap: () =>
+                      _openWorkDetails(_offlineLibrarySummary(offline)),
                 ),
               ),
           ],
@@ -4064,22 +4076,21 @@ class _LibraryShellState extends State<LibraryShell> {
   }
 
   void _selectWork(LibraryWorkSummary work, int index, bool detailAsDialog) {
+    setState(() => _selectedIndex = index);
+    if (!detailAsDialog && _detailPaneVisible) return;
+    _openWorkDetails(work);
+  }
+
+  void _openExternalWork(LibraryWorkSummary work) {
     final offline = _offlineBySummaryId[work.id];
     if (offline != null) {
       widget.onOpenOfflineWork?.call(offline);
       return;
     }
-    final source = _sourceForWork(work);
-    if (source?.isRemote == true) {
-      final entry = _entryForWork(work);
-      if (entry != null) {
-        unawaited(widget.onOpenCatalogWork?.call(entry));
-        return;
-      }
+    final entry = _entryForWork(work);
+    if (entry != null && entry.source.isRemote) {
+      unawaited(widget.onOpenCatalogWork?.call(entry));
     }
-    setState(() => _selectedIndex = index);
-    if (!detailAsDialog && _detailPaneVisible) return;
-    _openWorkDetails(work);
   }
 
   void _handleWorkTap(LibraryWorkSummary work, int index, bool detailAsDialog) {
@@ -4092,12 +4103,10 @@ class _LibraryShellState extends State<LibraryShell> {
     _lastTappedWorkId = work.id;
     _lastWorkTapAt = now;
     if (isDoubleTap) {
-      if (_sourceForWork(work)?.isRemote == true) {
-        final entry = _entryForWork(work);
-        if (entry != null) {
-          unawaited(widget.onOpenCatalogWork?.call(entry));
-          return;
-        }
+      if (_offlineBySummaryId.containsKey(work.id) ||
+          _sourceForWork(work)?.isRemote == true) {
+        _openExternalWork(work);
+        return;
       }
       _openInlineWorkDetails(work, index);
       return;
@@ -4119,8 +4128,10 @@ class _LibraryShellState extends State<LibraryShell> {
             child: _DetailPanel(
               work: work,
               library: widget.library,
+              offlineWork: _offlineBySummaryId[work.id],
               player: widget.player,
               onPlay: widget.onPlay,
+              onOpenExternal: () => _openExternalWork(work),
               onDeleteMissingWork: _deleteMissingWork,
               onMetadataChanged: _metadataChanged,
               onSelectAuthor: _showAuthor,
@@ -4157,8 +4168,10 @@ class _LibraryShellState extends State<LibraryShell> {
         child: _DetailPanel(
           work: work,
           library: widget.library,
+          offlineWork: _offlineBySummaryId[work.id],
           player: widget.player,
           onPlay: widget.onPlay,
+          onOpenExternal: () => _openExternalWork(work),
           onDeleteMissingWork: _deleteMissingWork,
           onMetadataChanged: _metadataChanged,
           onSelectAuthor: _showAuthor,
@@ -6527,8 +6540,10 @@ class _DetailPanel extends StatefulWidget {
   const _DetailPanel({
     required this.work,
     this.library,
+    this.offlineWork,
     this.player,
     this.onPlay,
+    this.onOpenExternal,
     this.onDeleteMissingWork,
     this.onMetadataChanged,
     this.onSelectAuthor,
@@ -6540,8 +6555,10 @@ class _DetailPanel extends StatefulWidget {
 
   final LibraryWorkSummary? work;
   final FundusLibrary? library;
+  final FundusOfflineWork? offlineWork;
   final FundusPlayerController? player;
   final WorkPlaybackCallback? onPlay;
+  final VoidCallback? onOpenExternal;
   final MissingWorkDeleteCallback? onDeleteMissingWork;
   final WorkMetadataChangedCallback? onMetadataChanged;
   final ValueChanged<String>? onSelectAuthor;
@@ -6604,7 +6621,8 @@ class _DetailPanelState extends State<_DetailPanel> {
   void didUpdateWidget(covariant _DetailPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.work?.id != widget.work?.id ||
-        oldWidget.library != widget.library) {
+        oldWidget.library != widget.library ||
+        oldWidget.offlineWork?.workId != widget.offlineWork?.workId) {
       _editedWork = null;
       _load();
     }
@@ -6630,6 +6648,31 @@ class _DetailPanelState extends State<_DetailPanel> {
         ? const WorkAnnotations()
         : library.loadAnnotations(work.id);
     _noteController.clear();
+  }
+
+  LibraryPlaybackProgress? _progressFor(LibraryWorkSummary work) {
+    final libraryProgress = widget.library?.loadProgress(work.id);
+    if (libraryProgress != null) return libraryProgress;
+    final remote = widget.offlineWork?.progress;
+    if (remote == null) return null;
+    return LibraryPlaybackProgress(
+      workId: work.id,
+      fileId: remote.fileId,
+      position:
+          remote.mediaPosition ??
+          MediaPosition(
+            kind: MediaPositionKind.time,
+            numericValue: remote.position.inMilliseconds / 1000,
+            total: remote.duration?.inMilliseconds == null
+                ? null
+                : remote.duration!.inMilliseconds / 1000,
+            fileId: remote.fileId,
+          ),
+      finished: remote.finished,
+      revision: remote.revision,
+      updatedAt: remote.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0),
+      deviceId: remote.deviceId ?? 'unknown',
+    );
   }
 
   void _attachPlayer() {
@@ -6694,10 +6737,16 @@ class _DetailPanelState extends State<_DetailPanel> {
     if (widget.work == null) return const _EmptyLibrary();
     final selectedWork = _editedWork ?? widget.work!;
     final canBookmark = _bookmarkAvailable;
-    final directoryPath = widget.library?.workDirectoryPath(selectedWork.id);
+    final directoryPath =
+        widget.library?.workDirectoryPath(selectedWork.id) ??
+        widget.offlineWork?.directoryPath;
     final workFiles = selectedWork.available
-        ? widget.library?.playbackTracks(selectedWork.id)
+        ? widget.library?.playbackTracks(selectedWork.id) ??
+              (widget.offlineWork == null
+                  ? null
+                  : _offlinePlaybackTracks(widget.offlineWork!))
         : null;
+    final progress = _progressFor(selectedWork);
     final mobilePlatform = Platform.isAndroid || Platform.isIOS;
     if (selectedWork.kind != 'audiobook' &&
         (mobilePlatform || MediaQuery.sizeOf(context).width < 760)) {
@@ -6732,7 +6781,7 @@ class _DetailPanelState extends State<_DetailPanel> {
             collectionNames: _collectionsFor(selectedWork),
             onSelectCollection: widget.onSelectCollection,
             onOpen: workFiles == null || workFiles.isEmpty
-                ? null
+                ? widget.onOpenExternal
                 : () => _openDocumentWork(selectedWork, workFiles),
             onLoadMetadata:
                 widget.library == null || widget.library!.isReadOnly || _saving
@@ -6830,11 +6879,7 @@ class _DetailPanelState extends State<_DetailPanel> {
                 child: FilledButton.icon(
                   onPressed: () => _openDocumentWork(selectedWork, workFiles),
                   icon: const Icon(Icons.menu_book_outlined),
-                  label: Text(
-                    widget.library?.loadProgress(selectedWork.id) == null
-                        ? 'Öffnen'
-                        : 'Fortsetzen',
-                  ),
+                  label: Text(progress == null ? 'Öffnen' : 'Fortsetzen'),
                 ),
               ),
               const SizedBox(height: 10),
@@ -6842,7 +6887,7 @@ class _DetailPanelState extends State<_DetailPanel> {
             _DocumentFilesPanel(
               files: workFiles,
               isVideo: _isVideoWorkKind(selectedWork.kind),
-              progress: widget.library?.loadProgress(selectedWork.id),
+              progress: progress,
               availability: !selectedWork.available
                   ? WorkContentAvailability.missing
                   : selectedWork.offline
@@ -6851,6 +6896,22 @@ class _DetailPanelState extends State<_DetailPanel> {
               onOpen: _openDocument,
             ),
           ],
+        ],
+        if ((workFiles == null ||
+                workFiles.isEmpty ||
+                widget.offlineWork != null) &&
+            widget.onOpenExternal != null) ...[
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: widget.onOpenExternal,
+              icon: const Icon(Icons.open_in_new),
+              label: Text(
+                widget.offlineWork == null ? 'Werk öffnen' : 'Offline öffnen',
+              ),
+            ),
+          ),
         ],
         if (selectedWork.kind == 'audiobook' &&
             widget.library != null &&
@@ -7079,7 +7140,7 @@ class _DetailPanelState extends State<_DetailPanel> {
         .where(FundusVideoPlayerController.isVideoTrack)
         .toList(growable: false);
     final openable = video ? videoFiles : readable;
-    final progress = widget.library?.loadProgress(work.id);
+    final progress = _progressFor(work);
     final detail = WorkDetailViewModel.fromLibrary(work);
     return Column(
       children: [
@@ -7121,7 +7182,7 @@ class _DetailPanelState extends State<_DetailPanel> {
                   onSelectPerson: widget.onSelectPerson,
                   onSelectTag: widget.onSelectTag,
                   onOpen: videoFiles.isEmpty
-                      ? null
+                      ? widget.onOpenExternal
                       : () => _openDocumentWork(work, videoFiles),
                   onLoadMetadata:
                       widget.library == null ||
@@ -7164,12 +7225,21 @@ class _DetailPanelState extends State<_DetailPanel> {
                   onToggleFavorite: widget.library == null || _saving
                       ? null
                       : _toggleFavorite,
-                  primaryAction: openable.isEmpty
+                  primaryAction:
+                      openable.isEmpty && widget.onOpenExternal == null
                       ? null
                       : WorkDetailHeaderAction(
-                          label: progress == null ? 'Lesen' : 'Fortsetzen',
-                          icon: Icons.menu_book_outlined,
-                          onPressed: () => _openDocumentWork(work, files),
+                          label: openable.isEmpty
+                              ? 'Werk öffnen'
+                              : progress == null
+                              ? 'Lesen'
+                              : 'Fortsetzen',
+                          icon: openable.isEmpty
+                              ? Icons.open_in_new
+                              : Icons.menu_book_outlined,
+                          onPressed: openable.isEmpty
+                              ? widget.onOpenExternal
+                              : () => _openDocumentWork(work, files),
                         ),
                   secondaryAction:
                       widget.library?.listProgressRevisions(work.id).isEmpty ??
@@ -7616,6 +7686,13 @@ class _DetailPanelState extends State<_DetailPanel> {
 
   Future<void> _openDocument(LibraryPlaybackTrack file) async {
     if (FundusVideoPlayerController.isVideoTrack(file)) {
+      // Offline and remote entries are opened through the owning transport so
+      // the same route can resolve the cached source and resume state. A
+      // generic document opener cannot play those paths reliably.
+      if (widget.library == null && widget.onOpenExternal != null) {
+        widget.onOpenExternal!();
+        return;
+      }
       final work = _editedWork ?? widget.work;
       if (work != null) {
         await _openVideoWork(work, startFileId: file.fileId);

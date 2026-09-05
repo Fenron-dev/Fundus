@@ -561,9 +561,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Wohnzimmer-Mac · Medien'), findsOneWidget);
 
-    expect(find.text('Offline Hörbuch'), findsOneWidget);
+    expect(find.text('Offline Hörbuch'), findsNWidgets(2));
     expect(find.text('Offline'), findsOneWidget);
-    await tester.tap(find.text('Offline Hörbuch'));
+    await tester.tap(find.text('Offline Hörbuch').first);
+    await tester.pumpAndSettle();
+    await tester.drag(
+      find.byKey(const ValueKey('detail-panel-scroll')),
+      const Offset(0, -500),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Offline öffnen'), findsOneWidget);
+    await tester.tap(find.text('Offline öffnen'));
     expect(opened, same(offline));
   });
 }
