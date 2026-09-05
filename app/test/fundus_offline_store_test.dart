@@ -148,6 +148,51 @@ void main() {
   );
 
   test(
+    'offline annotation journal survives for a streamed work without a manifest',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'fundus-streamed-journal-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final entry = LibrarySyncJournalEntry(
+        sequence: 0,
+        entity: 'note',
+        entityId: 'note-1',
+        operation: 'upsert',
+        payload: {
+          'work_id': 'streamed-work',
+          'id': 'note-1',
+          'markdown': 'Offline note',
+        },
+        revision: 2,
+        deviceId: 'phone',
+        operationId: 'offline-note-1',
+        createdAt: DateTime.utc(2026, 9, 5),
+      );
+      final store = FundusOfflineStore(root: root);
+      await store.queueSyncChange(
+        serverId: 'server',
+        libraryId: 'library',
+        workId: 'streamed-work',
+        entry: entry,
+      );
+
+      final restarted = FundusOfflineStore(root: root);
+      final pending = await restarted.pendingSyncChanges();
+      expect(pending.single.workId, 'streamed-work');
+      expect(pending.single.entry.operationId, 'offline-note-1');
+      expect(
+        await File(
+          '${root.path}/${sha256.convert(utf8.encode('server\u0000library\u0000streamed-work'))}/sync-context.json',
+        ).exists(),
+        isTrue,
+      );
+      await restarted.markSyncChangeSynced(pending.single);
+      expect(await restarted.pendingSyncChanges(), isEmpty);
+    },
+  );
+
+  test(
     'remote EPUB annotations remain available in the offline store',
     () async {
       final root = await Directory.systemTemp.createTemp(

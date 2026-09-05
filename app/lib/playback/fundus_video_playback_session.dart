@@ -35,6 +35,26 @@ final class FundusVideoPlaybackSession {
     }
   }
 
+  /// Waits until the [Video] route has a native texture and a non-empty
+  /// surface rectangle. The first-frame future is intentionally not used for
+  /// this: media-kit keeps that future for the lifetime of the native player,
+  /// while a fullscreen route can be mounted many times over that lifetime.
+  static Future<bool> waitForVideoOutput(
+    VideoController videoController, {
+    Duration timeout = const Duration(seconds: 2),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final id = videoController.id.value;
+      final rect = videoController.rect.value;
+      if (id != null && rect != null && rect.width > 1 && rect.height > 1) {
+        return true;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+    }
+    return false;
+  }
+
   /// Prime the native video surface after the player route has been mounted.
   ///
   /// A player can have a valid clock (and therefore resume audio at the right
@@ -58,11 +78,13 @@ final class FundusVideoPlaybackSession {
     final desired = target ?? player.state.position;
     if (!active()) return false;
 
-    // VideoController keeps the first-frame future for the lifetime of its
-    // native texture. Re-opening a work with the same player therefore does
-    // not need another pause/seek cycle once that texture has rendered once.
-    // Repeating that cycle was the source of a visible hitch on every resume
-    // even though the decoder already had a valid frame.
+    // The route may be a second (or later) fullscreen route for the same
+    // Player. Wait for its texture rather than trusting the one-shot
+    // first-frame future, which belongs to the native player and is already
+    // completed after the first route.
+    await waitForVideoOutput(videoController);
+    if (!active()) return false;
+
     var firstFrameWasRendered = false;
     try {
       await videoController.waitUntilFirstFrameRendered.timeout(
@@ -72,13 +94,19 @@ final class FundusVideoPlaybackSession {
     } catch (_) {
       // The first frame is still pending; continue with the attach/prime path.
     }
-    if (firstFrameWasRendered) {
+    if (firstFrameWasRendered && desired > Duration.zero) {
+      // A cached first-frame future does not guarantee that the newly mounted
+      // Texture has received a frame after a resume seek. Re-seek exactly once
+      // after the output is attached. This fixes the audio-only/black-texture
+      // state without the repeated seek loop that caused playback hitching.
       if (!active()) return false;
-      if (desired > Duration.zero &&
-          (player.state.position - desired).abs() >
-              const Duration(seconds: 2)) {
-        await player.seek(desired);
-      }
+      await player.seek(desired);
+      if (!active()) return false;
+      await player.play();
+      return true;
+    }
+
+    if (firstFrameWasRendered) {
       if (!active()) return false;
       await player.play();
       return true;
@@ -97,7 +125,7 @@ final class FundusVideoPlaybackSession {
       }
     }
     await player.pause();
-    await Future<void>.delayed(const Duration(milliseconds: 120));
+    await Future<void>.delayed(const Duration(milliseconds: 80));
     if (!active()) return false;
     await player.seek(desired);
     if (!active()) return false;
@@ -144,13 +172,16 @@ final class FundusVideoPlaybackSession {
   static Future<Duration> seekAndVerify(
     Player player,
     Duration target, {
-    int attempts = 6,
+    int attempts = 2,
     Duration tolerance = const Duration(seconds: 2),
   }) async {
     var actual = player.state.position;
     for (var attempt = 1; attempt <= attempts; attempt++) {
       await player.seek(target);
-      await Future<void>.delayed(Duration(milliseconds: 100 * attempt));
+      // Range-backed streams need time to complete the new request. Repeating
+      // seek commands every 100 ms can cancel that request and leaves the
+      // decoder with audio advancing while video is still buffering.
+      await Future<void>.delayed(Duration(milliseconds: 350 * attempt));
       actual = player.state.position;
       if ((actual - target).abs() <= tolerance) return actual;
     }

@@ -1161,6 +1161,23 @@ final class FundusOfflineStore {
     }
     final directory = await _workDirectory(serverId, libraryId, workId);
     await directory.create(recursive: true);
+    // A streamed work may not have an offline manifest at all. Keep a small
+    // owner record beside its journal so the change can still be discovered
+    // after an app restart and retried when the server is reachable again.
+    final manifest = File(p.join(directory.path, 'manifest.json'));
+    if (!await manifest.exists()) {
+      final context = File(p.join(directory.path, 'sync-context.json'));
+      if (!await context.exists()) {
+        await context.writeAsString(
+          jsonEncode({
+            'server_id': serverId,
+            'library_id': libraryId,
+            'work_id': workId,
+          }),
+          flush: true,
+        );
+      }
+    }
     final destination = File(p.join(directory.path, 'sync-journal.json'));
     final entries = await _readPendingSyncEntries(destination);
     if (entries.any((item) => item.operationId == entry.operationId)) return;
@@ -1172,23 +1189,25 @@ final class FundusOfflineStore {
   /// store and any legacy fallback store, de-duplicated by operation id.
   Future<List<FundusOfflinePendingSyncChange>> pendingSyncChanges() async {
     final byOperation = <String, FundusOfflinePendingSyncChange>{};
-    for (final work in await listAll()) {
-      final directory = await _workDirectory(
-        work.serverId,
-        work.libraryId,
-        work.workId,
-      );
-      final file = File(p.join(directory.path, 'sync-journal.json'));
-      for (final entry in await _readPendingSyncEntries(file)) {
-        byOperation.putIfAbsent(
-          entry.operationId,
-          () => FundusOfflinePendingSyncChange(
-            serverId: work.serverId,
-            libraryId: work.libraryId,
-            workId: work.workId,
-            entry: entry,
-          ),
-        );
+    final root = await _root();
+    if (await root.exists()) {
+      await for (final entity in root.list()) {
+        if (entity is! Directory) continue;
+        final file = File(p.join(entity.path, 'sync-journal.json'));
+        if (!await file.exists()) continue;
+        final owner = await _syncOwner(entity);
+        if (owner == null) continue;
+        for (final entry in await _readPendingSyncEntries(file)) {
+          byOperation.putIfAbsent(
+            entry.operationId,
+            () => FundusOfflinePendingSyncChange(
+              serverId: owner['server_id']!,
+              libraryId: owner['library_id']!,
+              workId: owner['work_id']!,
+              entry: entry,
+            ),
+          );
+        }
       }
     }
     for (final fallback in _fallbacks) {
@@ -1201,6 +1220,32 @@ final class FundusOfflineStore {
       (left, right) => left.entry.createdAt.compareTo(right.entry.createdAt),
     );
     return result;
+  }
+
+  Future<Map<String, String>?> _syncOwner(Directory directory) async {
+    for (final name in const ['manifest.json', 'sync-context.json']) {
+      final file = File(p.join(directory.path, name));
+      if (!await file.exists()) continue;
+      try {
+        final value = jsonDecode(await file.readAsString());
+        if (value is! Map ||
+            value['server_id'] is! String ||
+            value['library_id'] is! String ||
+            value['work_id'] is! String) {
+          continue;
+        }
+        return {
+          'server_id': value['server_id'] as String,
+          'library_id': value['library_id'] as String,
+          'work_id': value['work_id'] as String,
+        };
+      } on FormatException {
+        continue;
+      } on FileSystemException {
+        return null;
+      }
+    }
+    return null;
   }
 
   Future<void> markSyncChangeSynced(
