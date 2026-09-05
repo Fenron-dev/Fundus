@@ -57,6 +57,7 @@ import 'server/fundus_remote_cover_cache.dart';
 import 'server/remote_servers_view.dart';
 import 'server/server_settings.dart';
 import 'video/video_metadata_dialog.dart';
+import 'video/video_metadata_diff_dialog.dart';
 
 const _favoriteTag = 'Favorit';
 const _sourceFilterLocal = 'kind:local';
@@ -8614,52 +8615,98 @@ class _DetailPanelState extends State<_DetailPanel> {
       anime: anime,
     );
     if (candidate == null || !mounted) return;
+    final selection = await showVideoMetadataDiffDialog(
+      context,
+      current: work,
+      incoming: candidate,
+    );
+    if (selection == null || !mounted || selection.fields.isEmpty) return;
     setState(() => _saving = true);
     try {
+      final providerMetadata = <String, Object?>{
+        ...work.providerMetadata,
+        // The provider identity is safe to update once the user has accepted
+        // at least one field. It is needed for a later refresh, while the
+        // visible/manual classification remains controlled by its own diff
+        // checkbox below.
+        'provider': candidate.provider,
+        'provider_id': candidate.providerId,
+        if (candidate.videoKind != null) 'video_kind': candidate.videoKind,
+        if (candidate.externalIds.isNotEmpty)
+          'external_ids': candidate.externalIds,
+      };
+      if (candidate.releaseYear != null &&
+          selection.contains(VideoMetadataField.year)) {
+        providerMetadata['release_year'] = candidate.releaseYear;
+      }
+      if (candidate.contentStyle != null &&
+          selection.contains(VideoMetadataField.contentStyle)) {
+        providerMetadata['content_style'] = candidate.contentStyle;
+      }
+      if (candidate.season != null)
+        providerMetadata['season'] = candidate.season;
+      if (candidate.episodeCount != null) {
+        providerMetadata['episode_count'] = candidate.episodeCount;
+      }
+      if (candidate.runtimeMinutes != null &&
+          selection.contains(VideoMetadataField.runtime)) {
+        providerMetadata['runtime_minutes'] = candidate.runtimeMinutes;
+      }
+      if (candidate.isAdult != null &&
+          selection.contains(VideoMetadataField.sensitivity)) {
+        providerMetadata['is_adult'] = candidate.isAdult;
+      }
+      if (candidate.alternateTitles.isNotEmpty) {
+        providerMetadata['alternate_titles'] = candidate.alternateTitles;
+      }
+      if (candidate.backdropUrl != null &&
+          selection.contains(VideoMetadataField.artwork)) {
+        providerMetadata['backdrop_url'] = candidate.backdropUrl;
+      }
+      if (candidate.credits.isNotEmpty &&
+          selection.contains(VideoMetadataField.credits)) {
+        providerMetadata['credits'] = [
+          for (final credit in candidate.credits) credit.toJson(),
+        ];
+      }
+      if (candidate.trailerUrl != null &&
+          selection.contains(VideoMetadataField.trailer)) {
+        providerMetadata['trailer_url'] = candidate.trailerUrl;
+      }
       var updated = await library.updateWorkMetadata(
         workId: work.id,
-        title: candidate.title,
+        title: selection.contains(VideoMetadataField.title)
+            ? candidate.title
+            : work.title,
         authors: work.authors.isNotEmpty ? work.authors : [work.author],
         subtitle: work.subtitle,
         series: work.series,
         seriesSequence: work.seriesSequence,
         narrators: work.narrators,
         language: work.language,
-        description: candidate.description ?? work.description,
+        description: selection.contains(VideoMetadataField.description)
+            ? candidate.description ?? work.description
+            : work.description,
         publisher: work.publisher,
-        publishedYear: candidate.releaseYear ?? work.publishedYear,
-        contentSensitivity:
-            candidate.contentSensitivity ?? work.contentSensitivity,
-        genres: candidate.genres.isEmpty ? work.genres : candidate.genres,
-        contentStyle: candidate.contentStyle ?? work.contentStyle,
-        providerMetadata: {
-          'provider': candidate.provider,
-          'provider_id': candidate.providerId,
-          if (candidate.videoKind != null) 'video_kind': candidate.videoKind,
-          if (candidate.contentStyle != null)
-            'content_style': candidate.contentStyle,
-          if (candidate.releaseYear != null)
-            'release_year': candidate.releaseYear,
-          if (candidate.season != null) 'season': candidate.season,
-          if (candidate.episodeCount != null)
-            'episode_count': candidate.episodeCount,
-          if (candidate.runtimeMinutes != null)
-            'runtime_minutes': candidate.runtimeMinutes,
-          if (candidate.isAdult != null) 'is_adult': candidate.isAdult,
-          if (candidate.alternateTitles.isNotEmpty)
-            'alternate_titles': candidate.alternateTitles,
-          if (candidate.backdropUrl != null)
-            'backdrop_url': candidate.backdropUrl,
-          if (candidate.credits.isNotEmpty)
-            'credits': [
-              for (final credit in candidate.credits) credit.toJson(),
-            ],
-          if (candidate.trailerUrl != null) 'trailer_url': candidate.trailerUrl,
-          if (candidate.externalIds.isNotEmpty)
-            'external_ids': candidate.externalIds,
-        },
+        publishedYear: selection.contains(VideoMetadataField.year)
+            ? candidate.releaseYear ?? work.publishedYear
+            : work.publishedYear,
+        contentSensitivity: selection.contains(VideoMetadataField.sensitivity)
+            ? candidate.contentSensitivity ?? work.contentSensitivity
+            : work.contentSensitivity,
+        genres:
+            selection.contains(VideoMetadataField.genres) &&
+                candidate.genres.isNotEmpty
+            ? candidate.genres
+            : work.genres,
+        contentStyle: selection.contains(VideoMetadataField.contentStyle)
+            ? candidate.contentStyle ?? work.contentStyle
+            : work.contentStyle,
+        providerMetadata: providerMetadata,
       );
-      final poster = candidate.posterUrl;
+      final poster = selection.contains(VideoMetadataField.artwork)
+          ? candidate.posterUrl
+          : null;
       if (poster != null) {
         try {
           final response = await http
