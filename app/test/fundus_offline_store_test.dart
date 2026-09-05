@@ -9,6 +9,75 @@ import 'package:fundus_core/fundus_core.dart';
 
 void main() {
   test(
+    'offline sync journal survives restart and acknowledges one change',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'fundus-offline-journal-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final store = FundusOfflineStore(root: root);
+      final entry = LibrarySyncJournalEntry(
+        sequence: 0,
+        entity: 'bookmark',
+        entityId: 'bookmark-1',
+        operation: 'upsert',
+        payload: {
+          'work_id': 'novel',
+          'id': 'bookmark-1',
+          'file_id': 'novel.epub',
+          'position': const MediaPosition(
+            kind: MediaPositionKind.epubCfi,
+            numericValue: 2,
+            fileId: 'novel.epub',
+            elementId: 'paragraph-2',
+          ).toJson(),
+        },
+        revision: 1,
+        deviceId: 'tablet',
+        operationId: 'offline-bookmark-1',
+        createdAt: DateTime.utc(2026, 9, 5),
+      );
+      // A downloaded work is required so the pending operation can be found
+      // again without depending on an in-memory list.
+      final workDirectory = Directory(
+        '${root.path}/${sha256.convert(utf8.encode('server\u0000library\u0000novel'))}',
+      );
+      await workDirectory.create(recursive: true);
+      await File('${workDirectory.path}/0000.epub').writeAsBytes(const [1]);
+      await File('${workDirectory.path}/manifest.json').writeAsString(
+        jsonEncode({
+          'server_id': 'server',
+          'library_id': 'library',
+          'work_id': 'novel',
+          'title': 'Novel',
+          'kind': 'webnovel',
+          'downloaded_at': DateTime.utc(2026, 9, 5).toIso8601String(),
+          'tracks': [
+            {
+              'id': 'novel.epub',
+              'title': 'Novel.epub',
+              'path': '0000.epub',
+              'position': 0,
+            },
+          ],
+        }),
+      );
+      await store.queueSyncChange(
+        serverId: 'server',
+        libraryId: 'library',
+        workId: 'novel',
+        entry: entry,
+      );
+      final pending = await FundusOfflineStore(root: root).pendingSyncChanges();
+      expect(pending.map((item) => item.entry.operationId), [
+        'offline-bookmark-1',
+      ]);
+      await store.markSyncChangeSynced(pending.single);
+      expect(await store.pendingSyncChanges(), isEmpty);
+    },
+  );
+
+  test(
     'server acknowledgement replaces only an explicitly discarded pending position',
     () async {
       final root = await Directory.systemTemp.createTemp(

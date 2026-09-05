@@ -713,6 +713,7 @@ class _FundusAppState extends State<FundusApp> {
       servers = await _peerDiscovery.relocate(servers);
       await _remoteStore.save(servers);
       await _syncOfflineProgress(servers);
+      await _syncOfflineAnnotations(servers);
       await Future.wait([
         for (final server in servers)
           () async {
@@ -1132,6 +1133,46 @@ class _FundusAppState extends State<FundusApp> {
         await _offlineStore.markProgressSynced(pending);
       } catch (_) {
         // Bleibt bis zum nächsten App-/Netzwerkstart in der lokalen Queue.
+      }
+    }
+  }
+
+  /// Flushes annotation/tag changes made while a downloaded work was offline.
+  /// Progress has a dedicated queue because it is written much more often;
+  /// notes, bookmarks and highlights use the shared journal contract so the
+  /// server can apply them idempotently and preserve conflict semantics.
+  Future<void> _syncOfflineAnnotations(List<FundusRemoteServer> servers) async {
+    final byId = {for (final server in servers) server.id: server};
+    final pending = await _offlineStore.pendingSyncChanges();
+    if (pending.isEmpty) return;
+    final grouped = <String, List<FundusOfflinePendingSyncChange>>{};
+    for (final change in pending) {
+      grouped
+          .putIfAbsent('${change.serverId}\u0000${change.libraryId}', () => [])
+          .add(change);
+    }
+    for (final group in grouped.values) {
+      final first = group.first;
+      final server = byId[first.serverId];
+      if (server == null) continue;
+      try {
+        for (var offset = 0; offset < group.length; offset += 500) {
+          final batch = group.skip(offset).take(500).toList(growable: false);
+          final result = await _remoteClient.pushSyncChanges(
+            server,
+            first.libraryId,
+            batch.map((item) => item.entry),
+          );
+          final acknowledged = result.applied + result.ignored;
+          if (acknowledged < batch.length) break;
+          for (final item in batch) {
+            await _offlineStore.markSyncChangeSynced(item);
+          }
+        }
+      } catch (_) {
+        // Keep the journal until the server is reachable and accepts the
+        // operation. The next library refresh retries the same idempotent
+        // batch without losing the local annotation.
       }
     }
   }

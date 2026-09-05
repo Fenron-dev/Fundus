@@ -252,6 +252,34 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
   bool _serverOnline = false;
   bool _authorizationRequired = false;
 
+  Future<void> _queueOfflineAnnotationChange({
+    required String serverId,
+    required String libraryId,
+    required String workId,
+    required String entity,
+    required String entityId,
+    required String operation,
+    required Map<String, Object?> payload,
+  }) async {
+    final createdAt = DateTime.now().toUtc();
+    await _offlineStore.queueSyncChange(
+      serverId: serverId,
+      libraryId: libraryId,
+      workId: workId,
+      entry: LibrarySyncJournalEntry(
+        sequence: 0,
+        entity: entity,
+        entityId: entityId,
+        operation: operation,
+        payload: payload,
+        revision: createdAt.microsecondsSinceEpoch,
+        deviceId: await _store.deviceId(),
+        operationId: 'offline-${FundusId.generate()}',
+        createdAt: createdAt,
+      ),
+    );
+  }
+
   List<FundusRemoteWork> _visibleWorks(Iterable<FundusRemoteWork> works) =>
       widget.showHhh
       ? works.toList(growable: false)
@@ -2683,12 +2711,28 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             );
             return merged;
           } catch (_) {
-            return _offlineStore.saveWorkNote(
+            final local = await _offlineStore.saveWorkNote(
               serverId: server.id,
               libraryId: library.id,
               workId: work.id,
               markdown: markdown,
             );
+            final note = local.notes.last;
+            await _queueOfflineAnnotationChange(
+              serverId: server.id,
+              libraryId: library.id,
+              workId: work.id,
+              entity: 'note',
+              entityId: note.id,
+              operation: 'upsert',
+              payload: {
+                'work_id': work.id,
+                'id': note.id,
+                'markdown': note.markdown,
+                'updated_at': note.createdAt.toUtc().toIso8601String(),
+              },
+            );
+            return local;
           }
         },
         onSaveTags: (tags) async {
@@ -2725,12 +2769,22 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
             );
             return merged;
           } catch (_) {
-            return _offlineStore.replaceWorkTags(
+            final local = await _offlineStore.replaceWorkTags(
               serverId: server.id,
               libraryId: library.id,
               workId: work.id,
               tags: tags,
             );
+            await _queueOfflineAnnotationChange(
+              serverId: server.id,
+              libraryId: library.id,
+              workId: work.id,
+              entity: 'work_tags',
+              entityId: work.id,
+              operation: 'upsert',
+              payload: {'work_id': work.id, 'tags': local.tags},
+            );
+            return local;
           }
         },
       );
@@ -4533,7 +4587,26 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 workId: work.id,
                 annotations: comicAnnotations,
               );
-            } catch (_) {}
+            } catch (_) {
+              final bookmark = local.bookmarks.last;
+              await _queueOfflineAnnotationChange(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                entity: 'bookmark',
+                entityId: bookmark.id,
+                operation: 'upsert',
+                payload: {
+                  'work_id': work.id,
+                  'id': bookmark.id,
+                  'file_id': track.id,
+                  'position': position.toJson(),
+                  'label': bookmark.label,
+                  'note': bookmark.note,
+                  'created_at': bookmark.createdAt.toUtc().toIso8601String(),
+                },
+              );
+            }
           }
           return comicAnnotations;
         },
@@ -4555,7 +4628,17 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 highlight: false,
               );
               comicAnnotations = _mergeAnnotations(work, local, remote);
-            } catch (_) {}
+            } catch (_) {
+              await _queueOfflineAnnotationChange(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                entity: 'bookmark',
+                entityId: bookmarkId,
+                operation: 'delete',
+                payload: {'work_id': work.id, 'id': bookmarkId},
+              );
+            }
           }
           return comicAnnotations;
         },
@@ -4582,7 +4665,23 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 workId: work.id,
                 annotations: comicAnnotations,
               );
-            } catch (_) {}
+            } catch (_) {
+              final note = local.notes.last;
+              await _queueOfflineAnnotationChange(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                entity: 'note',
+                entityId: note.id,
+                operation: 'upsert',
+                payload: {
+                  'work_id': work.id,
+                  'id': note.id,
+                  'markdown': note.markdown,
+                  'updated_at': note.createdAt.toUtc().toIso8601String(),
+                },
+              );
+            }
           }
           return comicAnnotations;
         },
@@ -5148,7 +5247,26 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 workId: work.id,
                 annotations: annotations,
               );
-            } catch (_) {}
+            } catch (_) {
+              final bookmark = local.bookmarks.last;
+              await _queueOfflineAnnotationChange(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                entity: 'bookmark',
+                entityId: bookmark.id,
+                operation: 'upsert',
+                payload: {
+                  'work_id': work.id,
+                  'id': bookmark.id,
+                  'file_id': track.id,
+                  'position': position.toJson(),
+                  'label': bookmark.label,
+                  'note': bookmark.note,
+                  'created_at': bookmark.createdAt.toUtc().toIso8601String(),
+                },
+              );
+            }
           }
           return annotations;
         },
@@ -5183,7 +5301,27 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 workId: work.id,
                 annotations: annotations,
               );
-            } catch (_) {}
+            } catch (_) {
+              final highlight = local.highlights.last;
+              await _queueOfflineAnnotationChange(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                entity: 'highlight',
+                entityId: highlight.id,
+                operation: 'upsert',
+                payload: {
+                  'work_id': work.id,
+                  'id': highlight.id,
+                  'file_id': track.id,
+                  'position': position.toJson(),
+                  'quote': highlight.quote,
+                  'color': highlight.color,
+                  'note': highlight.note,
+                  'created_at': highlight.createdAt.toUtc().toIso8601String(),
+                },
+              );
+            }
           }
           return annotations;
         },
@@ -5211,7 +5349,17 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 workId: work.id,
                 annotations: annotations,
               );
-            } catch (_) {}
+            } catch (_) {
+              await _queueOfflineAnnotationChange(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                entity: 'bookmark',
+                entityId: id,
+                operation: 'delete',
+                payload: {'work_id': work.id, 'id': id},
+              );
+            }
           }
           return annotations;
         },
@@ -5239,7 +5387,17 @@ class _FundusRemoteServersViewState extends State<FundusRemoteServersView> {
                 workId: work.id,
                 annotations: annotations,
               );
-            } catch (_) {}
+            } catch (_) {
+              await _queueOfflineAnnotationChange(
+                serverId: server.id,
+                libraryId: library.id,
+                workId: work.id,
+                entity: 'highlight',
+                entityId: id,
+                operation: 'delete',
+                payload: {'work_id': work.id, 'id': id},
+              );
+            }
           }
           return annotations;
         },

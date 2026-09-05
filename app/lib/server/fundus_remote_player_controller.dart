@@ -1454,6 +1454,15 @@ final class FundusRemotePlayerController extends ChangeNotifier
       fileId: current.id,
       label: current.title,
     );
+    final bookmark = LibraryBookmark(
+      id: FundusId.generate(),
+      workId: work.id,
+      fileId: current.id,
+      mediaPosition: position,
+      label: label,
+      note: note,
+      createdAt: DateTime.now().toUtc(),
+    );
     if (_offlineWork != null) {
       final annotations = await _offlineStore.loadAnnotations(
         serverId: server.id,
@@ -1467,41 +1476,91 @@ final class FundusRemotePlayerController extends ChangeNotifier
         annotations: WorkAnnotations(
           tags: annotations.tags,
           notes: annotations.notes,
-          bookmarks: [
-            ...annotations.bookmarks,
-            LibraryBookmark(
-              id: FundusId.generate(),
-              workId: work.id,
-              fileId: current.id,
-              mediaPosition: position,
-              label: label,
-              note: note,
-              createdAt: DateTime.now(),
-            ),
-          ],
+          bookmarks: [...annotations.bookmarks, bookmark],
           highlights: annotations.highlights,
         ),
       );
+      await _queueOfflineBookmark(
+        server: server,
+        library: library,
+        work: work,
+        bookmark: bookmark,
+      );
       return;
     }
-    final result = await _withReconnect(
-      (active) => _client.saveBookmark(
-        active,
+    try {
+      final result = await _withReconnect(
+        (active) => _client.saveBookmark(
+          active,
+          libraryId: library.id,
+          workId: work.id,
+          fileId: current.id,
+          position: position,
+          label: label,
+          note: note,
+        ),
+      );
+      await _offlineStore.cacheAnnotations(
+        serverId: server.id,
         libraryId: library.id,
         workId: work.id,
-        fileId: current.id,
-        position: position,
-        label: label,
-        note: note,
-      ),
-    );
-    await _offlineStore.cacheAnnotations(
-      serverId: server.id,
-      libraryId: library.id,
-      workId: work.id,
-      annotations: result,
-    );
+        annotations: result,
+      );
+    } catch (_) {
+      final annotations = await _offlineStore.loadAnnotations(
+        serverId: server.id,
+        libraryId: library.id,
+        workId: work.id,
+      );
+      await _offlineStore.cacheAnnotations(
+        serverId: server.id,
+        libraryId: library.id,
+        workId: work.id,
+        annotations: WorkAnnotations(
+          tags: annotations.tags,
+          notes: annotations.notes,
+          bookmarks: [...annotations.bookmarks, bookmark],
+          highlights: annotations.highlights,
+        ),
+      );
+      await _queueOfflineBookmark(
+        server: server,
+        library: library,
+        work: work,
+        bookmark: bookmark,
+      );
+    }
   }
+
+  Future<void> _queueOfflineBookmark({
+    required FundusRemoteServer server,
+    required FundusRemoteLibrary library,
+    required FundusRemoteWork work,
+    required LibraryBookmark bookmark,
+  }) => _offlineStore.queueSyncChange(
+    serverId: server.id,
+    libraryId: library.id,
+    workId: work.id,
+    entry: LibrarySyncJournalEntry(
+      sequence: 0,
+      entity: 'bookmark',
+      entityId: bookmark.id,
+      operation: 'upsert',
+      payload: {
+        'work_id': work.id,
+        'id': bookmark.id,
+        'file_id': bookmark.fileId,
+        'position': bookmark.mediaPosition.toJson(),
+        'label': bookmark.label,
+        'note': bookmark.note,
+        'created_at': bookmark.createdAt.toUtc().toIso8601String(),
+      },
+      revision: bookmark.createdAt.microsecondsSinceEpoch,
+      deviceId: deviceId,
+      operationId: 'offline-${bookmark.id}',
+      createdAt: bookmark.createdAt,
+    ),
+  );
 
   Future<Map<String, Object?>?> _loadVideoTrackProfile({
     required FundusRemoteServer server,

@@ -122,6 +122,23 @@ final class FundusOfflinePendingProgress {
   final MediaPosition? mediaPosition;
 }
 
+/// A durable annotation/tag change that still needs to reach the paired
+/// library.  It deliberately reuses the shared journal wire model so offline
+/// and online changes follow the same idempotency and conflict rules.
+final class FundusOfflinePendingSyncChange {
+  const FundusOfflinePendingSyncChange({
+    required this.serverId,
+    required this.libraryId,
+    required this.workId,
+    required this.entry,
+  });
+
+  final String serverId;
+  final String libraryId;
+  final String workId;
+  final LibrarySyncJournalEntry entry;
+}
+
 typedef OfflineDownloadProgress = void Function(int completed, int total);
 typedef OfflineDownloadTransferProgress =
     void Function(
@@ -1123,6 +1140,94 @@ final class FundusOfflineStore {
     required WorkAnnotations annotations,
   }) => _saveAnnotations(serverId, libraryId, workId, annotations);
 
+  /// Queues a change next to the downloaded work.  The file is intentionally
+  /// separate from annotations.json: a reconnect can acknowledge individual
+  /// operations without rewriting the user's cached annotations.
+  Future<void> queueSyncChange({
+    required String serverId,
+    required String libraryId,
+    required String workId,
+    required LibrarySyncJournalEntry entry,
+  }) async {
+    final fallback = await _fallbackContaining(serverId, libraryId, workId);
+    if (fallback != null) {
+      await fallback.queueSyncChange(
+        serverId: serverId,
+        libraryId: libraryId,
+        workId: workId,
+        entry: entry,
+      );
+      return;
+    }
+    final directory = await _workDirectory(serverId, libraryId, workId);
+    await directory.create(recursive: true);
+    final destination = File(p.join(directory.path, 'sync-journal.json'));
+    final entries = await _readPendingSyncEntries(destination);
+    if (entries.any((item) => item.operationId == entry.operationId)) return;
+    entries.add(entry);
+    await _writePendingSyncEntries(destination, entries);
+  }
+
+  /// Returns pending offline annotation/tag operations from the primary
+  /// store and any legacy fallback store, de-duplicated by operation id.
+  Future<List<FundusOfflinePendingSyncChange>> pendingSyncChanges() async {
+    final byOperation = <String, FundusOfflinePendingSyncChange>{};
+    for (final work in await listAll()) {
+      final directory = await _workDirectory(
+        work.serverId,
+        work.libraryId,
+        work.workId,
+      );
+      final file = File(p.join(directory.path, 'sync-journal.json'));
+      for (final entry in await _readPendingSyncEntries(file)) {
+        byOperation.putIfAbsent(
+          entry.operationId,
+          () => FundusOfflinePendingSyncChange(
+            serverId: work.serverId,
+            libraryId: work.libraryId,
+            workId: work.workId,
+            entry: entry,
+          ),
+        );
+      }
+    }
+    for (final fallback in _fallbacks) {
+      for (final pending in await fallback.pendingSyncChanges()) {
+        byOperation.putIfAbsent(pending.entry.operationId, () => pending);
+      }
+    }
+    final result = byOperation.values.toList(growable: false);
+    result.sort(
+      (left, right) => left.entry.createdAt.compareTo(right.entry.createdAt),
+    );
+    return result;
+  }
+
+  Future<void> markSyncChangeSynced(
+    FundusOfflinePendingSyncChange pending,
+  ) async {
+    final directory = await _workDirectory(
+      pending.serverId,
+      pending.libraryId,
+      pending.workId,
+    );
+    final destination = File(p.join(directory.path, 'sync-journal.json'));
+    if (!await destination.exists()) {
+      for (final fallback in _fallbacks) {
+        await fallback.markSyncChangeSynced(pending);
+      }
+      return;
+    }
+    final entries = (await _readPendingSyncEntries(destination))
+        .where((entry) => entry.operationId != pending.entry.operationId)
+        .toList(growable: false);
+    if (entries.isEmpty) {
+      await destination.delete();
+      return;
+    }
+    await _writePendingSyncEntries(destination, entries);
+  }
+
   Future<void> _saveAnnotations(
     String serverId,
     String libraryId,
@@ -1176,6 +1281,35 @@ final class FundusOfflineStore {
       }),
       flush: true,
     );
+    if (await destination.exists()) await destination.delete();
+    await partial.rename(destination.path);
+  }
+
+  static Future<List<LibrarySyncJournalEntry>> _readPendingSyncEntries(
+    File file,
+  ) async {
+    if (!await file.exists()) return <LibrarySyncJournalEntry>[];
+    try {
+      final value = jsonDecode(await file.readAsString());
+      if (value is! List) return <LibrarySyncJournalEntry>[];
+      return value
+          .map(LibrarySyncJournalEntry.fromJson)
+          .whereType<LibrarySyncJournalEntry>()
+          .toList(growable: true);
+    } on FileSystemException {
+      return <LibrarySyncJournalEntry>[];
+    } on FormatException {
+      return <LibrarySyncJournalEntry>[];
+    }
+  }
+
+  static Future<void> _writePendingSyncEntries(
+    File destination,
+    List<LibrarySyncJournalEntry> entries,
+  ) async {
+    final partial = File('${destination.path}.part');
+    final encoded = jsonEncode([for (final entry in entries) entry.toJson()]);
+    await partial.writeAsString(encoded, flush: true);
     if (await destination.exists()) await destination.delete();
     await partial.rename(destination.path);
   }
