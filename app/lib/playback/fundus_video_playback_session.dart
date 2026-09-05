@@ -100,6 +100,9 @@ final class FundusVideoPlaybackSession {
       // after the output is attached. This fixes the audio-only/black-texture
       // state without the repeated seek loop that caused playback hitching.
       if (!active()) return false;
+      await player.pause();
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      if (!active()) return false;
       await player.seek(desired);
       if (!active()) return false;
       await player.play();
